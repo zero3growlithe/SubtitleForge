@@ -79,12 +79,19 @@
 
             <Grid Grid.Column="0">
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="*" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="204" />
+                    <RowDefinition Height="*" MinHeight="150" />
+                    <RowDefinition Height="6" />
+                    <RowDefinition Height="204" MinHeight="110" />
                 </Grid.RowDefinitions>
+
+                <!-- ── Preview, transport, cue strip and track toolbar ──────── -->
+                <Grid Grid.Row="0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
 
                 <Border Grid.Row="0" Background="Black" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1">
                     <Grid>
@@ -152,9 +159,20 @@
                     <Button x:Name="TrackColorButton" Content="Colour…" Click="TrackColorClick" />
                     <Button x:Name="UndoTrackButton" Content="Undo" MinWidth="0" Padding="10,4" Click="UndoClick" />
                 </WrapPanel>
+                </Grid>
+
+                <!-- ── Drag to trade height between the preview and the tracks ── -->
+                <GridSplitter Grid.Row="1"
+                              HorizontalAlignment="Stretch"
+                              VerticalAlignment="Stretch"
+                              ResizeDirection="Rows"
+                              ResizeBehavior="PreviousAndNext"
+                              Background="{StaticResource PanelBorderBrush}"
+                              ShowsPreview="False"
+                              Cursor="SizeNS" />
 
                 <!-- ── Multitrack timeline (waveforms + video thumbnails) ── -->
-                <Border Grid.Row="4"
+                <Border Grid.Row="2"
                         Background="{StaticResource PanelBackgroundBrush}"
                         BorderBrush="{StaticResource PanelBorderBrush}"
                         BorderThickness="1">

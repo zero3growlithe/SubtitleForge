@@ -42,6 +42,10 @@ namespace SubtitleForge
         private double playbackAnchorSeconds;
         private TimelineSegment? currentVideoSegment;
         private TimelineSegment? fallbackVideoSegment;
+        private string? videoProxyPath;
+        private VideoMetrics videoMetrics;
+        private CancellationTokenSource? proxyCancellation;
+        private bool projectDirty;
         private string? currentVideoPath;
         private double? pendingVideoSeekSeconds;
         private bool pendingVideoPlay;
@@ -286,7 +290,17 @@ namespace SubtitleForge
             RememberDirectory(path);
             durationSeconds = 0.0;
             EmptyHintText.Visibility = Visibility.Collapsed;
-            Title = "SubtitleForge — " + Path.GetFileName(path) + " — " + App.VersionDescription;
+
+            if (proxyCancellation != null)
+            {
+                proxyCancellation.Cancel();
+                proxyCancellation = null;
+            }
+
+            videoProxyPath = null;
+            videoMetrics = new VideoMetrics();
+            projectDirty = false;
+            UpdateTitleState();
 
             StopTimelinePlayback();
             DisposeAudioPlayers();
@@ -336,6 +350,9 @@ namespace SubtitleForge
             SetStatus("Loaded " + Path.GetFileName(path) + " — probing duration…");
             UpdateCommandStates();
             UpdateOverlay(TimeSpan.Zero);
+
+            projectDirty = false;
+            UpdateTitleState();
 
             _ = ProbeDurationAsync(path);
         }
@@ -763,6 +780,25 @@ namespace SubtitleForge
         {
             CueCountText.Text = cues.Count.ToString(CultureInfo.InvariantCulture)
                 + (cues.Count == 1 ? " cue" : " cues");
+            MarkProjectDirty();
+        }
+
+        private void MarkProjectDirty()
+        {
+            if (projectDirty)
+            {
+                return;
+            }
+
+            projectDirty = true;
+            UpdateTitleState();
+        }
+
+        private void UpdateTitleState()
+        {
+            string name = string.IsNullOrEmpty(videoPath) ? "no media" : Path.GetFileName(videoPath);
+            string title = "SubtitleForge — " + name + " — " + App.VersionDescription;
+            Title = projectDirty ? title + " *" : title;
         }
 
         private void CueListSelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1536,15 +1572,21 @@ namespace SubtitleForge
             {
                 try
                 {
-                    double rate = await MediaInspector.GetFrameRateAsync(ffprobe, path, CancellationToken.None).ConfigureAwait(true);
-                    if (rate > 0.5)
+                    // One probe call answers everything the timeline needs: pixel size for the
+                    // proxy decision, frame rate for the , and . stepping.
+                    VideoMetrics probed = await MediaInspector
+                        .GetVideoMetricsAsync(ffprobe, path, CancellationToken.None)
+                        .ConfigureAwait(true);
+                    videoMetrics = probed;
+
+                    if (probed.FrameRate > 0.5)
                     {
-                        frameStepSeconds = 1.0 / rate;
+                        frameStepSeconds = 1.0 / probed.FrameRate;
                     }
                 }
                 catch (Exception exception)
                 {
-                    CrashLog.Write(exception, "FrameRateProbe");
+                    CrashLog.Write(exception, "VideoMetricsProbe");
                 }
             }
 
@@ -1554,16 +1596,37 @@ namespace SubtitleForge
                 return;
             }
 
+            // Waveform and thumbnails used to run one after the other, which is why the timeline
+            // took so long. They are independent ffmpeg jobs, so run them together.
+            Task waveformTask = BuildWaveformAsync(ffmpeg, path, audioSegment);
+            Task thumbnailTask = LoadThumbnailsAsync(ffmpeg, videoSegment, total);
+            await Task.WhenAll(waveformTask, thumbnailTask).ConfigureAwait(true);
+
+            TrackTimelineView.Refresh();
+            UpdateTimelineDuration();
+            UpdateCommandStates();
+            SetStatus("Timeline ready. Space plays, Ctrl+Shift+D splits, Ctrl+Z undoes.");
+
+            // Decoding 1080p+ frames is what makes scrubbing stutter: give the preview a cached
+            // 540p proxy in the background and switch to it when it is ready.
+            StartProxyBuild(ffmpeg, path);
+        }
+
+        private async Task BuildWaveformAsync(string ffmpegPath, string path, TimelineSegment segment)
+        {
             try
             {
-                short[] samples = await AudioSampleLoader.LoadAsync(ffmpeg, path, CancellationToken.None).ConfigureAwait(true);
+                short[] samples = await AudioSampleLoader
+                    .LoadAsync(ffmpegPath, path, CancellationToken.None)
+                    .ConfigureAwait(true);
+
                 if (!string.Equals(videoPath, path, StringComparison.OrdinalIgnoreCase))
                 {
                     return;
                 }
 
-                audioSegment.Samples = samples;
-                audioSegment.RebuildPeaks();
+                segment.Samples = samples;
+                segment.RebuildPeaks();
                 TrackTimelineView.Refresh();
             }
             catch (Exception exception)
@@ -1571,13 +1634,87 @@ namespace SubtitleForge
                 CrashLog.Write(exception, "TimelineAudio");
                 SetStatus("The audio waveform could not be built: " + exception.Message);
             }
+        }
 
-            await LoadThumbnailsAsync(ffmpeg, videoSegment, total).ConfigureAwait(true);
+        private void StartProxyBuild(string ffmpegPath, string sourcePath)
+        {
+            if (proxyCancellation != null)
+            {
+                proxyCancellation.Cancel();
+            }
 
-            TrackTimelineView.Refresh();
-            UpdateTimelineDuration();
-            UpdateCommandStates();
-            SetStatus("Timeline ready. Space plays, Ctrl+Shift+D splits, Ctrl+Z undoes.");
+            CancellationTokenSource cancellation = new CancellationTokenSource();
+            proxyCancellation = cancellation;
+            CancellationToken token = cancellation.Token;
+            VideoMetrics metrics = videoMetrics;
+
+            _ = Task.Run(async delegate
+            {
+                string? proxy = await ProxyMediaBuilder
+                    .BuildAsync(ffmpegPath, sourcePath, metrics, token)
+                    .ConfigureAwait(false);
+
+                if (string.IsNullOrEmpty(proxy) || token.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                Dispatcher.BeginInvoke(new Action(delegate
+                {
+                    if (token.IsCancellationRequested
+                        || !string.Equals(videoPath, sourcePath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return;
+                    }
+
+                    videoProxyPath = proxy;
+
+                    // Hand the preview over to the proxy without moving the playhead.
+                    currentVideoSegment = null;
+                    SafeSeek(TimeSpan.FromSeconds(TrackTimelineView.PlayheadSeconds));
+                    SetStatus("Preview is now decoding a 540p proxy — seeking and playback stay smooth. Export still uses the original file.");
+                }));
+            });
+        }
+
+        private async void StartProxyForCurrentVideoAsync()
+        {
+            string sourcePath = videoPath ?? string.Empty;
+            if (string.IsNullOrEmpty(sourcePath) || !File.Exists(sourcePath))
+            {
+                return;
+            }
+
+            string? ffmpeg = FfmpegLocator.Resolve("ffmpeg", App.Settings.FfmpegDirectory);
+            string? ffprobe = FfmpegLocator.Resolve("ffprobe", App.Settings.FfmpegDirectory);
+            if (ffmpeg == null || ffprobe == null)
+            {
+                return;
+            }
+
+            VideoMetrics metrics = videoMetrics;
+            if (!metrics.HasVideo)
+            {
+                try
+                {
+                    metrics = await MediaInspector
+                        .GetVideoMetricsAsync(ffprobe, sourcePath, CancellationToken.None)
+                        .ConfigureAwait(true);
+                    videoMetrics = metrics;
+                }
+                catch (Exception exception)
+                {
+                    CrashLog.Write(exception, "VideoMetricsProbe");
+                    return;
+                }
+            }
+
+            if (!metrics.HasVideo || metrics.Height <= ProxyMediaBuilder.ProxyHeight)
+            {
+                return;
+            }
+
+            StartProxyBuild(ffmpeg, sourcePath);
         }
 
         private async Task LoadThumbnailsAsync(string ffmpegPath, TimelineSegment segment, double sourceDuration)
@@ -1634,6 +1771,7 @@ namespace SubtitleForge
 
         private void AfterTimelineStructureChanged()
         {
+            MarkProjectDirty();
             PruneAudioPlayers();
             UpdateTimelineDuration();
             UpdateCommandStates();
@@ -2470,7 +2608,7 @@ namespace SubtitleForge
             SaveProject(true);
         }
 
-        private void SaveProject(bool forcePrompt)
+        private bool SaveProject(bool forcePrompt)
         {
             string? target = projectPath;
             if (forcePrompt || string.IsNullOrEmpty(target))
@@ -2485,7 +2623,7 @@ namespace SubtitleForge
 
                 if (dialog.ShowDialog(this) != true)
                 {
-                    return;
+                    return false;
                 }
 
                 target = dialog.FileName;
@@ -2493,7 +2631,7 @@ namespace SubtitleForge
 
             if (string.IsNullOrEmpty(target))
             {
-                return;
+                return false;
             }
 
             try
@@ -2555,7 +2693,10 @@ namespace SubtitleForge
 
                 ProjectFile.Save(target, data);
                 projectPath = target;
+                projectDirty = false;
+                UpdateTitleState();
                 SetStatus("Project saved to " + Path.GetFileName(target) + ".");
+                return true;
             }
             catch (Exception exception)
             {
@@ -2567,6 +2708,7 @@ namespace SubtitleForge
                     "SubtitleForge — saving failed",
                     MessageBoxButton.OK,
                     MessageBoxImage.Error);
+                return false;
             }
         }
 
@@ -2718,9 +2860,17 @@ namespace SubtitleForge
                 timelineInitialized = true;
                 fallbackVideoSegment = null;
                 projectPath = path;
+                videoProxyPath = null;
+                videoMetrics = new VideoMetrics();
+                projectDirty = false;
+                UpdateTitleState();
                 AfterTimelineStructureChanged();
                 SetStatus("Project loaded: " + Path.GetFileName(path) + " — " + tracks.Count.ToString(CultureInfo.InvariantCulture) + " tracks, "
                     + cues.Count.ToString(CultureInfo.InvariantCulture) + " cues.");
+
+                projectDirty = false;
+                UpdateTitleState();
+                StartProxyForCurrentVideoAsync();
             }
             catch (Exception exception)
             {
@@ -3158,6 +3308,18 @@ namespace SubtitleForge
             currentVideoSegment = segment;
 
             string? path = segment == null ? null : segment.SourcePath;
+
+            // The preview prefers the cached 540p proxy of the project's own video file; clips
+            // that point at other files play from the original.
+            if (!string.IsNullOrEmpty(path)
+                && !string.IsNullOrEmpty(videoProxyPath)
+                && !string.IsNullOrEmpty(videoPath)
+                && string.Equals(path, videoPath, StringComparison.OrdinalIgnoreCase)
+                && File.Exists(videoProxyPath))
+            {
+                path = videoProxyPath;
+            }
+
             if (string.IsNullOrEmpty(path) || !File.Exists(path))
             {
                 try
@@ -3833,7 +3995,36 @@ namespace SubtitleForge
             }
 
             StopTimelinePlayback();
+
+            if (projectDirty && tracks.Count > 0 && !isBusy)
+            {
+                MessageBoxResult answer = MessageBox.Show(
+                    this,
+                    "Save the project before closing?",
+                    "SubtitleForge",
+                    MessageBoxButton.YesNoCancel,
+                    MessageBoxImage.Question);
+
+                if (answer == MessageBoxResult.Cancel)
+                {
+                    e.Cancel = true;
+                    return;
+                }
+
+                if (answer == MessageBoxResult.Yes && !SaveProject(false))
+                {
+                    // Saving failed or was cancelled in the file dialog: keep the app open so
+                    // nothing is lost silently.
+                    e.Cancel = true;
+                    return;
+                }
+            }
+
             DisposeAudioPlayers();
+            if (proxyCancellation != null)
+            {
+                proxyCancellation.Cancel();
+            }
 
             if (isBusy && operationCancellation != null)
             {

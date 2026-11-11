@@ -55,12 +55,27 @@ Everything runs on your machine. No cloud, no API keys, no uploads.
   (or below the last one) to give it a track of its own.
 - **Drag the ruler or an empty lane** to scrub the playhead; drag a lane's **name** to
   reorder whole tracks. `Shift`+drag on a clip scrubs instead of moving it.
+- **Drag the bar between the preview and the tracks** to make the video smaller and give the
+  timeline more room (or the other way round).
 - **Seeking repaints the preview** whether playback is running or paused — the frame under
   the playhead is shown for both video lanes and a black frame for gaps.
 - Subtitles are built from **all** audio clips on the timeline and merged in playback order.
 - `Ctrl+S` (or `Save project`) saves the project; `Open project…` loads one.
 
+### Performance
+
+- Building the timeline no longer decodes the whole movie. The thumbnail strip comes from a
+  handful of **parallel keyframe seeks** (one short ffmpeg per thumbnail, seek in front of the
+  input), and the waveform and the thumbnails are produced **at the same time** instead of one
+  after the other.
+- The preview plays a **cached 540p H.264 proxy** built in the background on first open
+  (`%LocalAppData%\SubtitleForge\proxies`), which makes seeking and playback smooth even for
+  4K sources. Export, burn-in and transcription always use the original full-resolution file.
+  Videos that are 540p or smaller skip the proxy entirely.
+
 ### Projects
+
+Closing the window with unsaved edits asks whether to save the project first.
 
 `.sfproj` files are JSON. Media is only **referenced** — the video path and any imported
 audio path — while microphone takes are exported next to the project as

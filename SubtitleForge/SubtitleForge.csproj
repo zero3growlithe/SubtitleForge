@@ -31,6 +31,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- 2.2.1 is the last NAudio line with a net6.0-windows7.0 asset; NAudio 3.x ships net9.0 only. -->
+    <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="Whisper.net" Version="1.9.1" />
     <PackageReference Include="Whisper.net.Runtime" Version="1.9.1" />
     <!-- Windows-only CUDA 12 natives (the cross-platform meta package also drags in a 544 MB

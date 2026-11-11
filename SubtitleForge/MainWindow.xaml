@@ -1,6 +1,7 @@
 <Window x:Class="SubtitleForge.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:SubtitleForge.Controls"
         Title="SubtitleForge"
         Height="840"
         Width="1340"
@@ -8,6 +9,7 @@
         MinWidth="1120"
         Background="{StaticResource WindowBackgroundBrush}"
         WindowStartupLocation="CenterScreen"
+        PreviewKeyDown="WindowPreviewKeyDown"
         Closing="WindowClosing">
 
     <Grid Margin="10">
@@ -76,6 +78,8 @@
                     <RowDefinition Height="*" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="204" />
                 </Grid.RowDefinitions>
 
                 <Border Grid.Row="0" Background="Black" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1">
@@ -131,6 +135,31 @@
                             Background="Transparent"
                             MouseLeftButtonDown="TimelineCanvasMouseLeftButtonDown"
                             SizeChanged="TimelineCanvasSizeChanged" />
+                </Border>
+
+                <!-- ── Track toolbar ─────────────────────────────────────── -->
+                <WrapPanel Grid.Row="3" Orientation="Horizontal" Margin="0,6,0,6">
+                    <Button x:Name="AddAudioTrackButton" Content="+ Audio track" Click="AddAudioTrackClick" />
+                    <Button x:Name="RecordButton" Content="● Record" MinWidth="98" Click="RecordClick" />
+                    <Button x:Name="SplitTrackButton" Content="Split at playhead" Click="SplitTrackClick" />
+                    <Button x:Name="DeleteTrackButton" Content="Delete track" Click="DeleteTrackClick" />
+                    <Button x:Name="RenameTrackButton" Content="Rename…" Click="RenameTrackClick" />
+                    <Button x:Name="TrackColorButton" Content="Colour…" Click="TrackColorClick" />
+                    <Button x:Name="UndoTrackButton" Content="Undo" MinWidth="0" Padding="10,4" Click="UndoClick" />
+                </WrapPanel>
+
+                <!-- ── Multitrack timeline (waveforms + video thumbnails) ── -->
+                <Border Grid.Row="4"
+                        Background="{StaticResource PanelBackgroundBrush}"
+                        BorderBrush="{StaticResource PanelBorderBrush}"
+                        BorderThickness="1">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <controls:TrackTimeline x:Name="TrackTimelineView"
+                                                TrackMouseDown="TrackTimelineMouseDown"
+                                                TrackReorderRequested="TrackTimelineReorder"
+                                                TrackContextMenuRequested="TrackTimelineContextMenu"
+                                                SeekRequested="TrackTimelineSeek" />
+                    </ScrollViewer>
                 </Border>
             </Grid>
 

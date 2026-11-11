@@ -27,6 +27,23 @@ Everything runs on your machine. No cloud, no API keys, no uploads.
 - **Open existing** `.srt` / `.vtt` to edit them with the same tools.
 - **Models…** dialog: shows every model, its size on disk and whether it is downloaded,
   with per-model `Delete`, `Delete all`, and a shortcut to the models folder.
+- **Multitrack timeline** under the cue strip: the video track (with preview frames every
+  few percent of the clip) plus any number of audio tracks rendered as waveforms.
+  Tracks can be added, renamed, recoloured (the waveform colour is derived from the
+  background so it always contrasts), drag-reordered, split at the playhead and deleted —
+  every one of those changes is undoable.
+- **Record from the microphone** straight onto the selected audio track, starting at the
+  playhead, with the waveform growing live as you speak. One press records, the next
+  stops; `Ctrl+Z` restores the track exactly as it was before the take.
+
+### Shortcuts
+
+- `Space` — play / pause
+- `,` / `.` — step one frame back / forward (frame rate read from the file)
+- `←` / `→` — seek one second back / forward
+- `Ctrl+Shift+D` — split every selected track at the playhead
+- `Ctrl+Z` — undo the last track edit (add, delete, split, reorder, rename, recolour, record)
+- double-click a track header — rename it; right-click a track — colour / split / delete
 
 ## Requirements
 

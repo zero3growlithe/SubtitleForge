@@ -10,9 +10,11 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 using Microsoft.Win32;
+using SubtitleForge.Controls;
 using SubtitleForge.Models;
 using Path = System.IO.Path;
 using SubtitleForge.Services;
@@ -35,6 +37,21 @@ namespace SubtitleForge
         private bool isUpdatingCueEditor;
         private bool suppressSliderSeek;
 
+        private readonly ObservableCollection<TimelineTrack> tracks = new ObservableCollection<TimelineTrack>();
+        private readonly UndoStack undoStack = new UndoStack();
+        private readonly MicrophoneRecorder microphoneRecorder = new MicrophoneRecorder();
+
+        private TimelineTrack? recordingTrack;
+        private short[]? recordingUndoSamples;
+        private float[]? recordingUndoPeaks;
+        private double recordingUndoDuration;
+        private int recordingStartSample;
+        private int recordingWritten;
+        private int nextAudioTrackNumber = 1;
+        private bool isRecording;
+        private bool timelineInitialized;
+        private double frameStepSeconds = 1.0 / 30.0;
+
         public MainWindow()
         {
             InitializeComponent();
@@ -48,10 +65,15 @@ namespace SubtitleForge
 
             Title = "SubtitleForge — " + App.VersionDescription;
 
+            TrackTimelineView.Tracks = tracks;
+            undoStack.Changed += OnUndoStackChanged;
+            microphoneRecorder.SamplesAvailable += OnMicrophoneSamples;
+
             LoadSettingsIntoUi();
             UpdateCueCount();
             UpdateCommandStates();
             DrawTimeline();
+            UpdateTimelineDuration();
         }
 
         private SubtitleCue? SelectedCue
@@ -233,6 +255,11 @@ namespace SubtitleForge
 
         private void LoadVideo(string path)
         {
+            if (isRecording)
+            {
+                StopRecording();
+            }
+
             videoPath = path;
             RememberDirectory(path);
             durationSeconds = 0.0;
@@ -256,6 +283,17 @@ namespace SubtitleForge
             PlayPauseButton.Content = "▶ Play";
             isPlaying = false;
             playbackTimer.Stop();
+
+            timelineInitialized = false;
+            tracks.Clear();
+            undoStack.Clear();
+            nextAudioTrackNumber = 1;
+            frameStepSeconds = 1.0 / 30.0;
+            TrackTimelineView.PlayheadSeconds = 0.0;
+            TrackTimelineView.TotalDuration = 1.0;
+            UpdateTimelineDuration();
+            UpdateCommandStates();
+
             SetStatus("Loaded " + Path.GetFileName(path) + " — probing duration…");
             UpdateCommandStates();
             UpdateOverlay(TimeSpan.Zero);
@@ -280,6 +318,7 @@ namespace SubtitleForge
                     durationSeconds = seconds;
                     ApplyDurationToUi();
                     SetStatus("Loaded " + Path.GetFileName(path) + " (" + SubtitleCue.FormatTimestamp(TimeSpan.FromSeconds(seconds)) + ").");
+                    await EnsureTimelineAsync().ConfigureAwait(true);
                 }
             }
             catch (Exception exception)
@@ -298,6 +337,7 @@ namespace SubtitleForge
             PositionSlider.Maximum = durationSeconds;
             DurationText.Text = SubtitleCue.FormatTimestamp(TimeSpan.FromSeconds(durationSeconds));
             DrawTimeline();
+            UpdateTimelineDuration();
         }
 
         private void VideoMediaOpened(object sender, RoutedEventArgs e)
@@ -313,6 +353,11 @@ namespace SubtitleForge
 
                 VideoElement.Position = TimeSpan.Zero;
                 VideoElement.Pause();
+
+                if (!timelineInitialized)
+                {
+                    _ = EnsureTimelineAsync();
+                }
             }
             catch (Exception exception)
             {
@@ -340,17 +385,25 @@ namespace SubtitleForge
 
         private void PlayPauseClick(object sender, RoutedEventArgs e)
         {
+            TogglePlayPause();
+        }
+
+        private void TogglePlayPause()
+        {
             if (string.IsNullOrEmpty(videoPath))
             {
                 return;
             }
 
+            if (isRecording)
+            {
+                SetStatus("Stop the recording before playing the video.");
+                return;
+            }
+
             if (isPlaying)
             {
-                VideoElement.Pause();
-                isPlaying = false;
-                PlayPauseButton.Content = "▶ Play";
-                playbackTimer.Stop();
+                PausePlayback();
                 return;
             }
 
@@ -368,6 +421,22 @@ namespace SubtitleForge
             isPlaying = true;
             PlayPauseButton.Content = "❚❚ Pause";
             playbackTimer.Start();
+        }
+
+        private void PausePlayback()
+        {
+            try
+            {
+                VideoElement.Pause();
+            }
+            catch (Exception exception)
+            {
+                CrashLog.Write(exception, "PausePlayback");
+            }
+
+            isPlaying = false;
+            PlayPauseButton.Content = "▶ Play";
+            playbackTimer.Stop();
         }
 
         private void StopClick(object sender, RoutedEventArgs e)
@@ -567,6 +636,8 @@ namespace SubtitleForge
 
         private void UpdatePlayhead(double positionSeconds)
         {
+            TrackTimelineView.PlayheadSeconds = positionSeconds;
+
             if (playheadLine == null)
             {
                 return;
@@ -1370,7 +1441,864 @@ namespace SubtitleForge
             return style;
         }
 
+        // ── Multitrack timeline ────────────────────────────────────────────
+
+        private async Task EnsureTimelineAsync()
+        {
+            if (timelineInitialized || string.IsNullOrEmpty(videoPath) || durationSeconds <= 0.0)
+            {
+                return;
+            }
+
+            timelineInitialized = true;
+            string path = videoPath;
+            double total = durationSeconds;
+
+            TimelineTrack videoTrack = new TimelineTrack(TrackKind.Video, Path.GetFileName(path), TrackColors.VideoDefault);
+            videoTrack.StartSeconds = 0.0;
+            videoTrack.SourceOffsetSeconds = 0.0;
+            videoTrack.DurationSeconds = total;
+            videoTrack.SourceDuration = total;
+            videoTrack.SourcePath = path;
+            videoTrack.IsSelected = true;
+            tracks.Add(videoTrack);
+
+            TimelineTrack audioTrack = new TimelineTrack(
+                TrackKind.Audio,
+                "Audio " + nextAudioTrackNumber.ToString(CultureInfo.InvariantCulture),
+                TrackColors.AudioDefault);
+            nextAudioTrackNumber++;
+            audioTrack.StartSeconds = 0.0;
+            audioTrack.DurationSeconds = total;
+            audioTrack.IsSelected = true;
+            tracks.Add(audioTrack);
+
+            UpdateTimelineDuration();
+            UpdateCommandStates();
+            SetStatus("Building the timeline…");
+
+            string? ffmpeg = FfmpegLocator.Resolve("ffmpeg", App.Settings.FfmpegDirectory);
+            string? ffprobe = FfmpegLocator.Resolve("ffprobe", App.Settings.FfmpegDirectory);
+
+            if (ffprobe != null)
+            {
+                try
+                {
+                    double rate = await MediaInspector.GetFrameRateAsync(ffprobe, path, CancellationToken.None).ConfigureAwait(true);
+                    if (rate > 0.5)
+                    {
+                        frameStepSeconds = 1.0 / rate;
+                    }
+                }
+                catch (Exception exception)
+                {
+                    CrashLog.Write(exception, "FrameRateProbe");
+                }
+            }
+
+            if (ffmpeg == null)
+            {
+                SetStatus("ffmpeg was not found, so the timeline has no waveform and no preview frames.");
+                return;
+            }
+
+            try
+            {
+                short[] samples = await AudioSampleLoader.LoadAsync(ffmpeg, path, CancellationToken.None).ConfigureAwait(true);
+                if (!string.Equals(videoPath, path, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+
+                audioTrack.Samples = samples;
+                audioTrack.RebuildPeaks();
+                TrackTimelineView.Refresh();
+            }
+            catch (Exception exception)
+            {
+                CrashLog.Write(exception, "TimelineAudio");
+                SetStatus("The audio waveform could not be built: " + exception.Message);
+            }
+
+            try
+            {
+                double width = TrackTimelineView.ActualWidth > 240.0 ? TrackTimelineView.ActualWidth : 900.0;
+                int thumbnailCount = (int)Math.Round(width / 72.0);
+                if (thumbnailCount < 6)
+                {
+                    thumbnailCount = 6;
+                }
+
+                if (thumbnailCount > 48)
+                {
+                    thumbnailCount = 48;
+                }
+
+                List<BitmapSource> extracted = await ThumbnailExtractor
+                    .ExtractAsync(ffmpeg, path, total, thumbnailCount, 56, CancellationToken.None)
+                    .ConfigureAwait(true);
+
+                if (string.Equals(videoPath, path, StringComparison.OrdinalIgnoreCase) && extracted.Count > 0)
+                {
+                    videoTrack.Thumbnails = extracted.ToArray();
+                }
+            }
+            catch (Exception exception)
+            {
+                CrashLog.Write(exception, "TimelineThumbnails");
+            }
+
+            TrackTimelineView.Refresh();
+            UpdateTimelineDuration();
+            UpdateCommandStates();
+            SetStatus("Timeline ready. Space plays, Ctrl+Shift+D splits, Ctrl+Z undoes.");
+        }
+
+        private void UpdateTimelineDuration()
+        {
+            double total = durationSeconds;
+            foreach (TimelineTrack track in tracks)
+            {
+                if (track.EndSeconds > total)
+                {
+                    total = track.EndSeconds;
+                }
+            }
+
+            TrackTimelineView.TotalDuration = total > 0.0 ? total : 1.0;
+            TrackTimelineView.Refresh();
+        }
+
+        private List<TimelineTrack> SelectedTracks
+        {
+            get
+            {
+                List<TimelineTrack> selection = new List<TimelineTrack>();
+                foreach (TimelineTrack track in tracks)
+                {
+                    if (track.IsSelected)
+                    {
+                        selection.Add(track);
+                    }
+                }
+
+                return selection;
+            }
+        }
+
+        private TimelineTrack? FirstSelectedAudioTrack
+        {
+            get
+            {
+                foreach (TimelineTrack track in tracks)
+                {
+                    if (track.Kind == TrackKind.Audio && track.IsSelected)
+                    {
+                        return track;
+                    }
+                }
+
+                foreach (TimelineTrack track in tracks)
+                {
+                    if (track.Kind == TrackKind.Audio)
+                    {
+                        return track;
+                    }
+                }
+
+                return null;
+            }
+        }
+
+        private int CountAudioTracks()
+        {
+            int count = 0;
+            foreach (TimelineTrack track in tracks)
+            {
+                if (track.Kind == TrackKind.Audio)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        private void SelectOnly(TimelineTrack track)
+        {
+            foreach (TimelineTrack candidate in tracks)
+            {
+                candidate.IsSelected = ReferenceEquals(candidate, track);
+            }
+
+            TrackTimelineView.Refresh();
+        }
+
+        private void SeekToSeconds(double seconds)
+        {
+            double total = durationSeconds > 0.0 ? durationSeconds : EstimatedDuration();
+            if (seconds < 0.0)
+            {
+                seconds = 0.0;
+            }
+
+            if (total > 0.0 && seconds > total)
+            {
+                seconds = total;
+            }
+
+            TimeSpan position = TimeSpan.FromSeconds(seconds);
+            suppressSliderSeek = true;
+            PositionSlider.Value = seconds;
+            suppressSliderSeek = false;
+            PositionText.Text = SubtitleCue.FormatTimestamp(position);
+            SafeSeek(position);
+            UpdateOverlay(position);
+            UpdatePlayhead(seconds);
+        }
+
+        private void SeekBy(double deltaSeconds)
+        {
+            SeekToSeconds(CurrentPosition.TotalSeconds + deltaSeconds);
+        }
+
+        private void StepFrames(int frameCount)
+        {
+            SeekToSeconds(CurrentPosition.TotalSeconds + (frameCount * frameStepSeconds));
+        }
+
+        private void TrackTimelineSeek(object? sender, double seconds)
+        {
+            SeekToSeconds(seconds);
+        }
+
+        private void TrackTimelineMouseDown(object? sender, TrackMouseDownEventArgs e)
+        {
+            if (e.ClickCount == 2 && e.IsHeader)
+            {
+                BeginRename(e.Track);
+                return;
+            }
+
+            if (e.ControlPressed)
+            {
+                e.Track.IsSelected = !e.Track.IsSelected;
+            }
+            else
+            {
+                SelectOnly(e.Track);
+            }
+
+            UpdateCommandStates();
+            SeekToSeconds(e.Seconds);
+        }
+
+        private void TrackTimelineReorder(object? sender, TrackReorderEventArgs e)
+        {
+            int from = e.FromIndex;
+            if (from < 0 || from >= tracks.Count)
+            {
+                return;
+            }
+
+            int target = e.ToIndex > from ? e.ToIndex - 1 : e.ToIndex;
+            if (target < 0)
+            {
+                target = 0;
+            }
+
+            if (target >= tracks.Count)
+            {
+                target = tracks.Count - 1;
+            }
+
+            if (target == from)
+            {
+                return;
+            }
+
+            TimelineTrack moved = tracks[from];
+            tracks.RemoveAt(from);
+            tracks.Insert(target, moved);
+
+            UndoStackPush("reorder tracks", delegate
+            {
+                tracks.Remove(moved);
+                int restoreIndex = from > tracks.Count ? tracks.Count : from;
+                tracks.Insert(restoreIndex, moved);
+                UpdateTimelineDuration();
+            });
+
+            UpdateTimelineDuration();
+            UpdateCommandStates();
+            SetStatus("Moved " + moved.Name + " to position " + (target + 1).ToString(CultureInfo.InvariantCulture) + ".");
+        }
+
+        private void TrackTimelineContextMenu(object? sender, TimelineTrack track)
+        {
+            SelectOnly(track);
+            UpdateCommandStates();
+
+            ContextMenu menu = new ContextMenu();
+
+            MenuItem renameItem = new MenuItem();
+            renameItem.Header = "Rename…";
+            renameItem.Click += delegate { BeginRename(track); };
+            menu.Items.Add(renameItem);
+
+            MenuItem colorItem = new MenuItem();
+            colorItem.Header = "Background colour";
+            for (int index = 0; index < TrackColors.Count; index++)
+            {
+                Color paletteColor = TrackColors.GetColor(index);
+                MenuItem entry = new MenuItem();
+                entry.Header = TrackColors.GetName(index);
+
+                Rectangle swatch = new Rectangle();
+                swatch.Width = 14.0;
+                swatch.Height = 14.0;
+                swatch.RadiusX = 2.0;
+                swatch.RadiusY = 2.0;
+                swatch.Fill = new SolidColorBrush(paletteColor);
+                entry.Icon = swatch;
+
+                TimelineTrack target = track;
+                Color chosen = paletteColor;
+                entry.Click += delegate { ApplyTrackColor(target, chosen); };
+                colorItem.Items.Add(entry);
+            }
+
+            menu.Items.Add(colorItem);
+
+            MenuItem splitItem = new MenuItem();
+            splitItem.Header = "Split at playhead (Ctrl+Shift+D)";
+            splitItem.Click += delegate { SplitSelectedTracks(); };
+            menu.Items.Add(splitItem);
+
+            MenuItem deleteItem = new MenuItem();
+            deleteItem.Header = "Delete track";
+            deleteItem.Click += delegate { DeleteSelectedTracks(); };
+
+            menu.Items.Add(new Separator());
+            menu.Items.Add(deleteItem);
+
+            menu.PlacementTarget = TrackTimelineView;
+            menu.IsOpen = true;
+        }
+
+        // ── Track commands ─────────────────────────────────────────────────
+
+        private void AddAudioTrackClick(object sender, RoutedEventArgs e)
+        {
+            TimelineTrack track = AddAudioTrack();
+            SetStatus("Added " + track.Name + ".");
+        }
+
+        private TimelineTrack AddAudioTrack()
+        {
+            TimelineTrack track = new TimelineTrack(
+                TrackKind.Audio,
+                "Audio " + nextAudioTrackNumber.ToString(CultureInfo.InvariantCulture),
+                TrackColors.NextAudioColor(CountAudioTracks()));
+            nextAudioTrackNumber++;
+
+            track.StartSeconds = 0.0;
+            track.DurationSeconds = durationSeconds;
+            tracks.Add(track);
+            SelectOnly(track);
+
+            UndoStackPush("add " + track.Name, delegate
+            {
+                tracks.Remove(track);
+                UpdateTimelineDuration();
+                UpdateCommandStates();
+            });
+
+            UpdateTimelineDuration();
+            UpdateCommandStates();
+            return track;
+        }
+
+        private void RenameTrackClick(object sender, RoutedEventArgs e)
+        {
+            List<TimelineTrack> selection = SelectedTracks;
+            if (selection.Count == 0)
+            {
+                SetStatus("Select a track to rename.");
+                return;
+            }
+
+            BeginRename(selection[0]);
+        }
+
+        private void BeginRename(TimelineTrack track)
+        {
+            TextInputDialog dialog = new TextInputDialog("Rename track", "Track name", track.Name);
+            dialog.Owner = this;
+            if (dialog.ShowDialog() != true)
+            {
+                return;
+            }
+
+            string updated = dialog.ResponseText;
+            if (updated.Length == 0 || string.Equals(updated, track.Name, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            string previous = track.Name;
+            track.Name = updated;
+
+            UndoStackPush("rename track", delegate
+            {
+                track.Name = previous;
+                TrackTimelineView.Refresh();
+            });
+
+            SetStatus("Renamed to " + updated + ".");
+        }
+
+        private void TrackColorClick(object sender, RoutedEventArgs e)
+        {
+            List<TimelineTrack> selection = SelectedTracks;
+            if (selection.Count == 0)
+            {
+                SetStatus("Select a track to recolour.");
+                return;
+            }
+
+            ShowColorMenu(TrackColorButton, selection[0]);
+        }
+
+        private void ShowColorMenu(FrameworkElement anchor, TimelineTrack track)
+        {
+            ContextMenu menu = new ContextMenu();
+
+            for (int index = 0; index < TrackColors.Count; index++)
+            {
+                Color paletteColor = TrackColors.GetColor(index);
+                MenuItem entry = new MenuItem();
+                entry.Header = TrackColors.GetName(index);
+
+                Rectangle swatch = new Rectangle();
+                swatch.Width = 14.0;
+                swatch.Height = 14.0;
+                swatch.RadiusX = 2.0;
+                swatch.RadiusY = 2.0;
+                swatch.Fill = new SolidColorBrush(paletteColor);
+                entry.Icon = swatch;
+
+                TimelineTrack target = track;
+                Color chosen = paletteColor;
+                entry.Click += delegate { ApplyTrackColor(target, chosen); };
+                menu.Items.Add(entry);
+            }
+
+            menu.PlacementTarget = anchor;
+            menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+            menu.IsOpen = true;
+        }
+
+        private void ApplyTrackColor(TimelineTrack track, Color color)
+        {
+            Color previous = track.BackgroundColor;
+            if (previous == color)
+            {
+                return;
+            }
+
+            track.BackgroundColor = color;
+
+            UndoStackPush("track colour", delegate
+            {
+                track.BackgroundColor = previous;
+                TrackTimelineView.Refresh();
+            });
+
+            TrackTimelineView.Refresh();
+            SetStatus("Colour changed for " + track.Name + " (waveform colour follows automatically).");
+        }
+
+        private void SplitTrackClick(object sender, RoutedEventArgs e)
+        {
+            SplitSelectedTracks();
+        }
+
+        private void SplitSelectedTracks()
+        {
+            List<TimelineTrack> selection = SelectedTracks;
+            if (selection.Count == 0)
+            {
+                SetStatus("Select the track (or tracks) you want to split.");
+                return;
+            }
+
+            double position = CurrentPosition.TotalSeconds;
+
+            List<int> indexes = new List<int>();
+            List<TimelineTrack> heads = new List<TimelineTrack>();
+            List<TimelineTrack> tails = new List<TimelineTrack>();
+            List<double> previousDurations = new List<double>();
+
+            foreach (TimelineTrack track in selection)
+            {
+                int index = tracks.IndexOf(track);
+                if (index < 0)
+                {
+                    continue;
+                }
+
+                double previousDuration = track.DurationSeconds;
+                TimelineTrack? tail = track.SplitAt(position);
+                if (tail == null)
+                {
+                    continue;
+                }
+
+                indexes.Add(index);
+                heads.Add(track);
+                tails.Add(tail);
+                previousDurations.Add(previousDuration);
+            }
+
+            if (tails.Count == 0)
+            {
+                SetStatus("The playhead is not inside any selected track — move it first.");
+                return;
+            }
+
+            for (int item = indexes.Count - 1; item >= 0; item--)
+            {
+                tracks.Insert(indexes[item] + 1, tails[item]);
+                tails[item].IsSelected = true;
+                heads[item].IsSelected = false;
+            }
+
+            UndoStackPush("split " + tails.Count.ToString(CultureInfo.InvariantCulture) + " track(s)", delegate
+            {
+                for (int item = tails.Count - 1; item >= 0; item--)
+                {
+                    tracks.Remove(tails[item]);
+                    heads[item].DurationSeconds = previousDurations[item];
+                }
+
+                foreach (TimelineTrack head in heads)
+                {
+                    head.IsSelected = true;
+                }
+
+                UpdateTimelineDuration();
+                UpdateCommandStates();
+            });
+
+            UpdateTimelineDuration();
+            UpdateCommandStates();
+            SetStatus("Split " + tails.Count.ToString(CultureInfo.InvariantCulture) + " track(s) at "
+                + SubtitleCue.FormatTimestamp(TimeSpan.FromSeconds(position)) + ".");
+        }
+
+        private void DeleteTrackClick(object sender, RoutedEventArgs e)
+        {
+            DeleteSelectedTracks();
+        }
+
+        private void DeleteSelectedTracks()
+        {
+            List<TimelineTrack> selection = SelectedTracks;
+            if (selection.Count == 0)
+            {
+                SetStatus("Select the track (or tracks) you want to delete.");
+                return;
+            }
+
+            List<int> indexes = new List<int>();
+            List<TimelineTrack> removed = new List<TimelineTrack>();
+
+            foreach (TimelineTrack track in selection)
+            {
+                indexes.Add(tracks.IndexOf(track));
+                removed.Add(track);
+            }
+
+            for (int item = removed.Count - 1; item >= 0; item--)
+            {
+                tracks.RemoveAt(indexes[item]);
+            }
+
+            UndoStackPush("delete " + removed.Count.ToString(CultureInfo.InvariantCulture) + " track(s)", delegate
+            {
+                for (int item = 0; item < removed.Count; item++)
+                {
+                    int insertIndex = indexes[item] < 0 ? 0 : indexes[item];
+                    if (insertIndex > tracks.Count)
+                    {
+                        insertIndex = tracks.Count;
+                    }
+
+                    tracks.Insert(insertIndex, removed[item]);
+                    removed[item].IsSelected = true;
+                }
+
+                UpdateTimelineDuration();
+                UpdateCommandStates();
+            });
+
+            UpdateTimelineDuration();
+            UpdateCommandStates();
+            SetStatus("Deleted " + removed.Count.ToString(CultureInfo.InvariantCulture)
+                + " track(s). Ctrl+Z brings them back.");
+        }
+
+        // ── Microphone recording ───────────────────────────────────────────
+
+        private void RecordClick(object sender, RoutedEventArgs e)
+        {
+            if (isRecording)
+            {
+                StopRecording();
+                return;
+            }
+
+            StartRecording();
+        }
+
+        private void StartRecording()
+        {
+            TimelineTrack? target = FirstSelectedAudioTrack;
+            if (target == null)
+            {
+                SetStatus("Add an audio track first — the recording overwrites the selected one.");
+                return;
+            }
+
+            if (isPlaying)
+            {
+                PausePlayback();
+            }
+
+            target.PrepareForWrite();
+            recordingUndoSamples = (short[])target.Samples.Clone();
+            recordingUndoPeaks = (float[])target.Peaks.Clone();
+            recordingUndoDuration = target.DurationSeconds;
+
+            recordingStartSample = target.TimelineToSampleIndex(CurrentPosition.TotalSeconds);
+            if (recordingStartSample < 0)
+            {
+                recordingStartSample = 0;
+            }
+
+            recordingWritten = 0;
+            recordingTrack = target;
+
+            try
+            {
+                microphoneRecorder.Start();
+            }
+            catch (Exception exception)
+            {
+                CrashLog.Write(exception, "RecordStart");
+                recordingTrack = null;
+                recordingUndoSamples = null;
+                recordingUndoPeaks = null;
+                SetStatus("The microphone could not be opened: " + exception.Message);
+                return;
+            }
+
+            isRecording = true;
+            RecordButton.Content = "■ Stop recording";
+            VideoElement.IsMuted = true;
+            UpdateCommandStates();
+            SetStatus("Recording into " + target.Name + " at "
+                + SubtitleCue.FormatTimestamp(CurrentPosition) + " — press Record again to stop.");
+        }
+
+        private void StopRecording()
+        {
+            microphoneRecorder.Stop();
+
+            isRecording = false;
+            RecordButton.Content = "● Record";
+            VideoElement.IsMuted = false;
+
+            TimelineTrack? track = recordingTrack;
+            recordingTrack = null;
+
+            int written = recordingWritten;
+            short[]? undoSamples = recordingUndoSamples;
+            float[]? undoPeaks = recordingUndoPeaks;
+            double undoDuration = recordingUndoDuration;
+            recordingUndoSamples = null;
+            recordingUndoPeaks = null;
+            recordingWritten = 0;
+
+            if (track != null && written > 0 && undoSamples != null && undoPeaks != null)
+            {
+                TimelineTrack target = track;
+                short[] samplesSnapshot = undoSamples;
+                float[] peaksSnapshot = undoPeaks;
+
+                UndoStackPush("record into " + track.Name, delegate
+                {
+                    target.Samples = samplesSnapshot;
+                    target.Peaks = peaksSnapshot;
+                    target.SharesSamples = false;
+                    target.DurationSeconds = undoDuration;
+                    UpdateTimelineDuration();
+                    TrackTimelineView.Refresh();
+                });
+            }
+
+            UpdateTimelineDuration();
+            UpdateCommandStates();
+
+            if (track != null)
+            {
+                double seconds = written / (double)TimelineTrack.SampleRate;
+                SetStatus("Recorded " + seconds.ToString("0.0", CultureInfo.InvariantCulture) + " s into "
+                    + track.Name + ". Ctrl+Z undoes the whole take.");
+            }
+        }
+
+        private void OnMicrophoneSamples(object? sender, MicrophoneSamplesEventArgs e)
+        {
+            short[] buffer = e.Samples;
+            Dispatcher.BeginInvoke(new Action(delegate { AppendRecordingSamples(buffer); }));
+        }
+
+        private void AppendRecordingSamples(short[] incoming)
+        {
+            TimelineTrack? track = recordingTrack;
+            if (track == null || incoming.Length == 0)
+            {
+                return;
+            }
+
+            int writeIndex = recordingStartSample + recordingWritten;
+            track.EnsureCapacity(writeIndex + incoming.Length);
+            Array.Copy(incoming, 0, track.Samples, writeIndex, incoming.Length);
+            recordingWritten += incoming.Length;
+            track.UpdatePeaks(writeIndex, incoming.Length);
+
+            double endSeconds = track.SampleIndexToTimeline(writeIndex + incoming.Length);
+            if (endSeconds > track.EndSeconds)
+            {
+                track.DurationSeconds = endSeconds - track.StartSeconds;
+            }
+
+            TrackTimelineView.Refresh();
+        }
+
+        // ── Undo ───────────────────────────────────────────────────────────
+
+        private void UndoClick(object sender, RoutedEventArgs e)
+        {
+            UndoLastAction();
+        }
+
+        private void UndoLastAction()
+        {
+            string description;
+            if (!undoStack.TryUndo(out description))
+            {
+                SetStatus("Nothing to undo.");
+                return;
+            }
+
+            TrackTimelineView.Refresh();
+            UpdateTimelineDuration();
+            UpdateCommandStates();
+            SetStatus("Undid: " + description + ".");
+        }
+
+        private void UndoStackPush(string description, Action undo)
+        {
+            undoStack.Push(new DelegateUndoAction(description, undo));
+        }
+
+        private void OnUndoStackChanged(object? sender, EventArgs e)
+        {
+            UndoTrackButton.IsEnabled = undoStack.CanUndo;
+        }
+
+        // ── Keyboard shortcuts ─────────────────────────────────────────────
+
+        private bool IsTextInputFocused()
+        {
+            DependencyObject? focused = Keyboard.FocusedElement as DependencyObject;
+            if (focused == null)
+            {
+                return false;
+            }
+
+            if (focused is TextBox)
+            {
+                return true;
+            }
+
+            if (focused is PasswordBox)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        private void WindowPreviewKeyDown(object sender, KeyEventArgs e)
+        {
+            if (IsTextInputFocused())
+            {
+                return;
+            }
+
+            bool control = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
+            bool shift = (Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift;
+
+            if (control && shift && e.Key == Key.D)
+            {
+                SplitSelectedTracks();
+                e.Handled = true;
+                return;
+            }
+
+            if (control && !shift && e.Key == Key.Z)
+            {
+                UndoLastAction();
+                e.Handled = true;
+                return;
+            }
+
+            if (control || shift)
+            {
+                return;
+            }
+
+            switch (e.Key)
+            {
+                case Key.Space:
+                    TogglePlayPause();
+                    e.Handled = true;
+                    break;
+                case Key.OemComma:
+                    StepFrames(-1);
+                    e.Handled = true;
+                    break;
+                case Key.OemPeriod:
+                    StepFrames(1);
+                    e.Handled = true;
+                    break;
+                case Key.Left:
+                    SeekBy(-1.0);
+                    e.Handled = true;
+                    break;
+                case Key.Right:
+                    SeekBy(1.0);
+                    e.Handled = true;
+                    break;
+            }
+        }
+
         // ── Shared helpers ─────────────────────────────────────────────────
+
 
         private bool EnsureCuesAvailable()
         {
@@ -1462,6 +2390,15 @@ namespace SubtitleForge
             MergeCueButton.IsEnabled = !isBusy && CueList.SelectedItem != null;
             DeleteCueButton.IsEnabled = !isBusy && CueList.SelectedItem != null;
             AddCueButton.IsEnabled = !isBusy;
+
+            bool hasSelection = SelectedTracks.Count > 0;
+            AddAudioTrackButton.IsEnabled = !isBusy && hasVideo;
+            RecordButton.IsEnabled = !isBusy && hasVideo && (isRecording || hasSelection || tracks.Count > 0);
+            SplitTrackButton.IsEnabled = !isBusy && hasSelection;
+            DeleteTrackButton.IsEnabled = !isBusy && hasSelection;
+            RenameTrackButton.IsEnabled = !isBusy && hasSelection;
+            TrackColorButton.IsEnabled = !isBusy && hasSelection;
+            UndoTrackButton.IsEnabled = !isBusy && undoStack.CanUndo;
         }
 
         private static void TryDeleteFile(string path)
@@ -1497,6 +2434,13 @@ namespace SubtitleForge
 
                 operationCancellation.Cancel();
             }
+
+            if (isRecording)
+            {
+                StopRecording();
+            }
+
+            microphoneRecorder.Dispose();
 
             ApplyUiToSettings();
             App.Settings.Save();

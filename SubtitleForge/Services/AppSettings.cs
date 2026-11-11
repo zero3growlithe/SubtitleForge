@@ -1,0 +1,204 @@
+using System;
+using System.IO;
+using System.Text.Json;
+
+namespace SubtitleForge.Services
+{
+    /// <summary>
+    /// User preferences, stored as JSON under %AppData%\SubtitleForge\settings.json.
+    /// </summary>
+    public class AppSettings
+    {
+        public string ModelFileName { get; set; } = "ggml-small.bin";
+
+        public string Language { get; set; } = "auto";
+
+        public bool TranslateToEnglish { get; set; } = false;
+
+        public bool UseGpu { get; set; } = true;
+
+        public int Threads { get; set; } = Math.Max(2, Math.Min(8, Environment.ProcessorCount - 1));
+
+        public bool SkipNonSpeech { get; set; } = true;
+
+        public int MaximumCharactersPerCue { get; set; } = 48;
+
+        public double MaximumCueDurationSeconds { get; set; } = 7.0;
+
+        public double MinimumCueDurationSeconds { get; set; } = 0.6;
+
+        public double MinimumGapSeconds { get; set; } = 0.04;
+
+        public string? FfmpegDirectory { get; set; }
+
+        public string FontName { get; set; } = "Segoe UI";
+
+        public int FontSize { get; set; } = 20;
+
+        public int MarginVertical { get; set; } = 40;
+
+        public int OutlineThickness { get; set; } = 1;
+
+        public string BurnPreset { get; set; } = "medium";
+
+        public int BurnCrf { get; set; } = 20;
+
+        public string? LastDirectory { get; set; }
+
+        public static string SettingsPath
+        {
+            get
+            {
+                string folder = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    "SubtitleForge");
+                return Path.Combine(folder, "settings.json");
+            }
+        }
+
+        public static AppSettings Load()
+        {
+            try
+            {
+                string path = SettingsPath;
+                if (File.Exists(path))
+                {
+                    string json = File.ReadAllText(path);
+                    AppSettings? loaded = JsonSerializer.Deserialize<AppSettings>(json);
+                    if (loaded != null)
+                    {
+                        loaded.Sanitize();
+                        return loaded;
+                    }
+                }
+            }
+            catch (Exception exception)
+            {
+                CrashLog.Write(exception, "AppSettings.Load");
+            }
+
+            AppSettings settings = new AppSettings();
+            settings.Sanitize();
+            return settings;
+        }
+
+        public void Save()
+        {
+            try
+            {
+                Sanitize();
+                string path = SettingsPath;
+                string? folder = Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(folder) && !Directory.Exists(folder))
+                {
+                    Directory.CreateDirectory(folder);
+                }
+
+                JsonSerializerOptions options = new JsonSerializerOptions { WriteIndented = true };
+                File.WriteAllText(path, JsonSerializer.Serialize(this, options));
+            }
+            catch (Exception exception)
+            {
+                CrashLog.Write(exception, "AppSettings.Save");
+            }
+        }
+
+        private void Sanitize()
+        {
+            if (string.IsNullOrWhiteSpace(ModelFileName))
+            {
+                ModelFileName = "ggml-small.bin";
+            }
+
+            if (string.IsNullOrWhiteSpace(Language))
+            {
+                Language = "auto";
+            }
+
+            if (Threads < 1)
+            {
+                Threads = 1;
+            }
+
+            if (Threads > 16)
+            {
+                Threads = 16;
+            }
+
+            if (MaximumCharactersPerCue < 16)
+            {
+                MaximumCharactersPerCue = 16;
+            }
+
+            if (MaximumCharactersPerCue > 200)
+            {
+                MaximumCharactersPerCue = 200;
+            }
+
+            if (MaximumCueDurationSeconds < 1.0)
+            {
+                MaximumCueDurationSeconds = 1.0;
+            }
+
+            if (MaximumCueDurationSeconds > 30.0)
+            {
+                MaximumCueDurationSeconds = 30.0;
+            }
+
+            if (MinimumCueDurationSeconds < 0.2)
+            {
+                MinimumCueDurationSeconds = 0.2;
+            }
+
+            if (MinimumCueDurationSeconds > MaximumCueDurationSeconds)
+            {
+                MinimumCueDurationSeconds = MaximumCueDurationSeconds;
+            }
+
+            if (MinimumGapSeconds < 0.0)
+            {
+                MinimumGapSeconds = 0.0;
+            }
+
+            if (FontSize < 8)
+            {
+                FontSize = 8;
+            }
+
+            if (FontSize > 120)
+            {
+                FontSize = 120;
+            }
+
+            if (MarginVertical < 0)
+            {
+                MarginVertical = 0;
+            }
+
+            if (OutlineThickness < 0)
+            {
+                OutlineThickness = 0;
+            }
+
+            if (BurnCrf < 0)
+            {
+                BurnCrf = 0;
+            }
+
+            if (BurnCrf > 51)
+            {
+                BurnCrf = 51;
+            }
+
+            if (string.IsNullOrWhiteSpace(BurnPreset))
+            {
+                BurnPreset = "medium";
+            }
+
+            if (string.IsNullOrWhiteSpace(FontName))
+            {
+                FontName = "Segoe UI";
+            }
+        }
+    }
+}

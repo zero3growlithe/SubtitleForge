@@ -1,0 +1,217 @@
+<Window x:Class="SubtitleForge.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="SubtitleForge"
+        Height="840"
+        Width="1340"
+        MinHeight="640"
+        MinWidth="1120"
+        Background="{StaticResource WindowBackgroundBrush}"
+        WindowStartupLocation="CenterScreen"
+        Closing="WindowClosing">
+
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- ── Transcription toolbar ─────────────────────────────────────── -->
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
+            <Button x:Name="OpenVideoButton" Content="Open video…" Click="OpenVideoClick" />
+            <Button x:Name="ImportSubtitlesButton" Content="Open subtitles…" Click="ImportSubtitlesClick" />
+            <Rectangle Width="1" Margin="6,2,12,2" Fill="{StaticResource PanelBorderBrush}" />
+            <TextBlock Text="Model" Style="{StaticResource SectionLabelStyle}" />
+            <ComboBox x:Name="ModelComboBox" Width="232" SelectionChanged="ModelSelectionChanged" />
+            <TextBlock Text="Language" Style="{StaticResource SectionLabelStyle}" />
+            <ComboBox x:Name="LanguageComboBox" Width="132" SelectionChanged="LanguageSelectionChanged" />
+            <CheckBox x:Name="GpuCheckBox" Content="GPU (CUDA)" />
+            <CheckBox x:Name="TranslateCheckBox" Content="Translate → EN" />
+            <Button x:Name="TranscribeButton" Content="Transcribe" Style="{StaticResource AccentButtonStyle}" Click="TranscribeClick" />
+            <Button x:Name="CancelButton" Content="Cancel" Click="CancelClick" IsEnabled="False" />
+        </StackPanel>
+
+        <!-- ── Export toolbar ────────────────────────────────────────────── -->
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8">
+            <Button x:Name="SaveSrtButton" Content="Save .srt" Click="SaveSrtClick" />
+            <Button x:Name="SaveVttButton" Content="Save .vtt" Click="SaveVttClick" />
+            <Button x:Name="SaveAssButton" Content="Save .ass" Click="SaveAssClick" />
+            <Button x:Name="BurnButton" Content="Burn into MP4…" Click="BurnClick" />
+            <Rectangle Width="1" Margin="6,2,12,2" Fill="{StaticResource PanelBorderBrush}" />
+            <TextBlock Text="Max chars" Style="{StaticResource SectionLabelStyle}" />
+            <TextBox x:Name="MaxCharactersTextBox" Width="46" Margin="0,0,12,0" />
+            <TextBlock Text="Max sec" Style="{StaticResource SectionLabelStyle}" />
+            <TextBox x:Name="MaxDurationTextBox" Width="46" Margin="0,0,12,0" />
+            <TextBlock Text="Font size" Style="{StaticResource SectionLabelStyle}" />
+            <TextBox x:Name="FontSizeTextBox" Width="42" Margin="0,0,12,0" />
+            <TextBlock Text="Margin" Style="{StaticResource SectionLabelStyle}" />
+            <TextBox x:Name="MarginTextBox" Width="46" Margin="0,0,0,0" />
+        </StackPanel>
+
+        <!-- ── Main content ──────────────────────────────────────────────── -->
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" MinWidth="420" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="474" MinWidth="360" />
+            </Grid.ColumnDefinitions>
+
+            <Grid Grid.Column="0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <Border Grid.Row="0" Background="Black" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1">
+                    <Grid>
+                        <MediaElement x:Name="VideoElement"
+                                      LoadedBehavior="Manual"
+                                      UnloadedBehavior="Manual"
+                                      Stretch="Uniform"
+                                      MediaOpened="VideoMediaOpened"
+                                      MediaEnded="VideoMediaEnded"
+                                      MediaFailed="VideoMediaFailed" />
+                        <TextBlock x:Name="EmptyHintText"
+                                   Text="Open a video file to begin"
+                                   FontSize="15"
+                                   Foreground="#FF6E6E7A"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center" />
+                        <Border x:Name="SubtitleOverlayBorder"
+                                Visibility="Collapsed"
+                                VerticalAlignment="Bottom"
+                                HorizontalAlignment="Center"
+                                Margin="16,0,16,26"
+                                Background="#B0000000"
+                                CornerRadius="3"
+                                Padding="12,5">
+                            <TextBlock x:Name="SubtitleOverlayText"
+                                       Foreground="White"
+                                       FontSize="20"
+                                       TextWrapping="Wrap"
+                                       TextAlignment="Center" />
+                        </Border>
+                    </Grid>
+                </Border>
+
+                <Grid Grid.Row="1" Margin="0,8,0,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Button x:Name="PlayPauseButton" Grid.Column="0" Content="▶ Play" Width="88" Click="PlayPauseClick" />
+                    <Button x:Name="StopButton" Grid.Column="1" Content="■ Stop" Width="74" Click="StopClick" />
+                    <TextBlock x:Name="PositionText" Grid.Column="2" Text="00:00:00.000" FontFamily="Consolas" Margin="8,0,10,0" VerticalAlignment="Center" />
+                    <Slider x:Name="PositionSlider" Grid.Column="3" Minimum="0" Maximum="100" Value="0" IsMoveToPointEnabled="True" ValueChanged="PositionSliderValueChanged" />
+                    <TextBlock x:Name="DurationText" Grid.Column="4" Text="00:00:00.000" FontFamily="Consolas" Margin="10,0,0,0" VerticalAlignment="Center" />
+                </Grid>
+
+                <Border Grid.Row="2" Height="58" Background="{StaticResource PanelBackgroundBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1">
+                    <Canvas x:Name="TimelineCanvas"
+                            ClipToBounds="True"
+                            Background="Transparent"
+                            MouseLeftButtonDown="TimelineCanvasMouseLeftButtonDown"
+                            SizeChanged="TimelineCanvasSizeChanged" />
+                </Border>
+            </Grid>
+
+            <GridSplitter Grid.Column="1" />
+
+            <!-- ── Cue editor panel ──────────────────────────────────────── -->
+            <Grid Grid.Column="2" Margin="8,0,0,0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <Grid Grid.Row="0" Margin="0,0,0,6">
+                    <TextBlock Text="Cues" FontWeight="SemiBold" VerticalAlignment="Center" />
+                    <TextBlock x:Name="CueCountText" Text="0 cues" HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" />
+                </Grid>
+
+                <ListView x:Name="CueList"
+                          Grid.Row="1"
+                          SelectionChanged="CueListSelectionChanged"
+                          MouseDoubleClick="CueListMouseDoubleClick">
+                    <ListView.View>
+                        <GridView AllowsColumnReorder="False">
+                            <GridViewColumn Header="#" Width="34" DisplayMemberBinding="{Binding Number}" />
+                            <GridViewColumn Header="Start" Width="86" DisplayMemberBinding="{Binding StartDisplay}" />
+                            <GridViewColumn Header="End" Width="86" DisplayMemberBinding="{Binding EndDisplay}" />
+                            <GridViewColumn Header="Text" Width="236" DisplayMemberBinding="{Binding TextPreview}" />
+                        </GridView>
+                    </ListView.View>
+                </ListView>
+
+                <Grid Grid.Row="2" Margin="0,8,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <WrapPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,6">
+                        <TextBlock Text="Start" Style="{StaticResource SectionLabelStyle}" />
+                        <TextBox x:Name="StartEditor" Width="94" Margin="0,0,6,0" LostFocus="StartEditorLostFocus" KeyDown="TimeEditorKeyDown" />
+                        <Button x:Name="SetStartButton" Content="= playhead" MinWidth="0" Padding="8,4" Margin="0,0,14,0" Click="SetStartClick" />
+                        <TextBlock Text="End" Style="{StaticResource SectionLabelStyle}" />
+                        <TextBox x:Name="EndEditor" Width="94" Margin="0,0,6,0" LostFocus="EndEditorLostFocus" KeyDown="TimeEditorKeyDown" />
+                        <Button x:Name="SetEndButton" Content="= playhead" MinWidth="0" Padding="8,4" Margin="0,0,0,0" Click="SetEndClick" />
+                    </WrapPanel>
+
+                    <TextBox x:Name="CueTextEditor"
+                             Grid.Row="1"
+                             Height="78"
+                             AcceptsReturn="True"
+                             TextWrapping="Wrap"
+                             VerticalScrollBarVisibility="Auto"
+                             VerticalContentAlignment="Top"
+                             TextChanged="CueTextEditorTextChanged" />
+
+                    <WrapPanel Grid.Row="2" Orientation="Horizontal" Margin="0,6,0,0">
+                        <Button x:Name="NudgeBackButton" Content="-100 ms" MinWidth="0" Padding="8,4" Click="NudgeBackClick" />
+                        <Button x:Name="NudgeForwardButton" Content="+100 ms" MinWidth="0" Padding="8,4" Click="NudgeForwardClick" />
+                        <Button x:Name="SplitCueButton" Content="Split" MinWidth="0" Padding="8,4" Click="SplitCueClick" />
+                        <Button x:Name="MergeCueButton" Content="Merge ↓" MinWidth="0" Padding="8,4" Click="MergeCueClick" />
+                        <Button x:Name="AddCueButton" Content="+ New cue" MinWidth="0" Padding="8,4" Click="AddCueClick" />
+                        <Button x:Name="DeleteCueButton" Content="Delete" MinWidth="0" Padding="8,4" Click="DeleteCueClick" />
+                    </WrapPanel>
+
+                    <TextBlock Grid.Row="3"
+                               Margin="0,8,0,0"
+                               FontSize="11"
+                               TextWrapping="Wrap"
+                               Foreground="{StaticResource SubtleTextBrush}"
+                               Text="Double-click a cue to jump there. Start and End accept 00:00:12.500, 00:00:12,500 or plain seconds." />
+                </Grid>
+            </Grid>
+        </Grid>
+
+        <!-- ── Status bar ────────────────────────────────────────────────── -->
+        <Border Grid.Row="3"
+                Margin="0,8,0,0"
+                Padding="8,5"
+                Background="{StaticResource PanelBackgroundBrush}"
+                BorderBrush="{StaticResource PanelBorderBrush}"
+                BorderThickness="1">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="176" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <ProgressBar x:Name="ProgressIndicator" Grid.Column="0" Minimum="0" Maximum="1" Value="0" VerticalAlignment="Center" />
+                <TextBlock x:Name="StatusText" Grid.Column="1" Margin="10,0,10,0" Text="Ready." VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                <TextBlock x:Name="RuntimeText" Grid.Column="2" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" />
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

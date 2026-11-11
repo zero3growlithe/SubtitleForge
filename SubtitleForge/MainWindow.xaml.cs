@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Threading;
@@ -33,6 +34,18 @@ namespace SubtitleForge
         private string? videoPath;
         private double durationSeconds;
         private bool isPlaying;
+
+        // Timeline playback: the preview follows the tracks instead of one fixed file.
+        private readonly Dictionary<TimelineSegment, MediaPlayer> audioPlayers = new Dictionary<TimelineSegment, MediaPlayer>();
+        private readonly Dictionary<TimelineSegment, string> recordedClipFiles = new Dictionary<TimelineSegment, string>();
+        private readonly Stopwatch playbackClock = new Stopwatch();
+        private double playbackAnchorSeconds;
+        private TimelineSegment? currentVideoSegment;
+        private TimelineSegment? fallbackVideoSegment;
+        private string? currentVideoPath;
+        private double? pendingVideoSeekSeconds;
+        private bool pendingVideoPlay;
+        private bool videoElementReady;
         private bool isBusy;
         private bool isUpdatingCueEditor;
         private bool suppressSliderSeek;
@@ -275,6 +288,23 @@ namespace SubtitleForge
             EmptyHintText.Visibility = Visibility.Collapsed;
             Title = "SubtitleForge — " + Path.GetFileName(path) + " — " + App.VersionDescription;
 
+            StopTimelinePlayback();
+            DisposeAudioPlayers();
+            recordedClipFiles.Clear();
+            currentVideoSegment = null;
+            currentVideoPath = path;
+
+            TimelineSegment standIn = new TimelineSegment(TrackKind.Video);
+            standIn.StartSeconds = 0.0;
+            standIn.SourceOffsetSeconds = 0.0;
+            standIn.DurationSeconds = 0.0;
+            standIn.SourceDuration = 0.0;
+            standIn.SourcePath = path;
+            fallbackVideoSegment = standIn;
+            pendingVideoSeekSeconds = null;
+            pendingVideoPlay = false;
+            videoElementReady = false;
+
             try
             {
                 VideoElement.Source = new Uri(path, UriKind.Absolute);
@@ -360,8 +390,22 @@ namespace SubtitleForge
                     ApplyDurationToUi();
                 }
 
-                VideoElement.Position = TimeSpan.Zero;
-                VideoElement.Pause();
+                videoElementReady = true;
+
+                double openedSeconds = pendingVideoSeekSeconds.HasValue ? pendingVideoSeekSeconds.Value : 0.0;
+                VideoElement.Position = TimeSpan.FromSeconds(Math.Max(0.0, openedSeconds));
+
+                if (pendingVideoPlay)
+                {
+                    VideoElement.Play();
+                }
+                else
+                {
+                    VideoElement.Pause();
+                }
+
+                pendingVideoSeekSeconds = null;
+                pendingVideoPlay = false;
 
                 if (!timelineInitialized)
                 {
@@ -376,11 +420,35 @@ namespace SubtitleForge
 
         private void VideoMediaEnded(object sender, RoutedEventArgs e)
         {
-            isPlaying = false;
-            PlayPauseButton.Content = "▶ Play";
-            playbackTimer.Stop();
-            PositionSlider.Value = durationSeconds;
-            PositionText.Text = SubtitleCue.FormatTimestamp(TimeSpan.FromSeconds(durationSeconds));
+            if (!isPlaying)
+            {
+                return;
+            }
+
+            double timelineSeconds = playbackAnchorSeconds + playbackClock.Elapsed.TotalSeconds;
+            TimelineSegment? next = ActiveVideoSegment(timelineSeconds);
+            if (next != null && !ReferenceEquals(next, currentVideoSegment))
+            {
+                CueVideoSegment(next, timelineSeconds, true);
+                return;
+            }
+
+            if (next == null && ActiveAudioSegments(timelineSeconds).Count > 0)
+            {
+                // Nothing left to show but audio keeps going — stay black and keep playing.
+                CueVideoSegment(null, timelineSeconds, false);
+                return;
+            }
+
+            if (durationSeconds <= 0.0 || timelineSeconds >= durationSeconds - 0.08)
+            {
+                StopTimelinePlayback();
+                suppressSliderSeek = true;
+                PositionSlider.Value = durationSeconds;
+                suppressSliderSeek = false;
+                PositionText.Text = SubtitleCue.FormatTimestamp(TimeSpan.FromSeconds(durationSeconds));
+                TrackTimelineView.PlayheadSeconds = durationSeconds;
+            }
         }
 
         private void VideoMediaFailed(object sender, ExceptionRoutedEventArgs e)
@@ -399,11 +467,6 @@ namespace SubtitleForge
 
         private void TogglePlayPause()
         {
-            if (string.IsNullOrEmpty(videoPath))
-            {
-                return;
-            }
-
             if (isRecording)
             {
                 SetStatus("Stop the recording before playing the video.");
@@ -416,55 +479,20 @@ namespace SubtitleForge
                 return;
             }
 
-            try
-            {
-                VideoElement.Play();
-            }
-            catch (Exception exception)
-            {
-                CrashLog.Write(exception, "PlayPauseClick");
-                SetStatus("The preview cannot start: " + exception.Message);
-                return;
-            }
-
-            isPlaying = true;
-            PlayPauseButton.Content = "❚❚ Pause";
-            playbackTimer.Start();
+            StartTimelinePlayback();
         }
 
         private void PausePlayback()
         {
-            try
-            {
-                VideoElement.Pause();
-            }
-            catch (Exception exception)
-            {
-                CrashLog.Write(exception, "PausePlayback");
-            }
-
-            isPlaying = false;
-            PlayPauseButton.Content = "▶ Play";
-            playbackTimer.Stop();
+            StopTimelinePlayback();
         }
 
         private void StopClick(object sender, RoutedEventArgs e)
         {
-            try
-            {
-                VideoElement.Stop();
-            }
-            catch (Exception exception)
-            {
-                CrashLog.Write(exception, "StopClick");
-            }
-
-            isPlaying = false;
-            PlayPauseButton.Content = "▶ Play";
-            playbackTimer.Stop();
-            PositionSlider.Value = 0.0;
-            PositionText.Text = SubtitleCue.FormatTimestamp(TimeSpan.Zero);
-            UpdateOverlay(TimeSpan.Zero);
+            StopTimelinePlayback();
+            playbackAnchorSeconds = 0.0;
+            playbackClock.Reset();
+            SeekToSeconds(0.0);
         }
 
         private void OnPlaybackTimerTick(object? sender, EventArgs e)
@@ -475,13 +503,30 @@ namespace SubtitleForge
                 return;
             }
 
-            TimeSpan position = VideoElement.Position;
+            double timelineSeconds = playbackAnchorSeconds + playbackClock.Elapsed.TotalSeconds;
+
+            if (durationSeconds > 0.0 && timelineSeconds >= durationSeconds)
+            {
+                timelineSeconds = durationSeconds;
+                suppressSliderSeek = true;
+                PositionSlider.Value = timelineSeconds;
+                suppressSliderSeek = false;
+                PositionText.Text = SubtitleCue.FormatTimestamp(TimeSpan.FromSeconds(timelineSeconds));
+                UpdateOverlay(TimeSpan.FromSeconds(timelineSeconds));
+                UpdatePlayhead(timelineSeconds);
+                StopTimelinePlayback();
+                return;
+            }
+
+            FollowTimeline(timelineSeconds, true);
+
+            TimeSpan position = TimeSpan.FromSeconds(timelineSeconds);
             suppressSliderSeek = true;
-            PositionSlider.Value = position.TotalSeconds;
+            PositionSlider.Value = timelineSeconds;
             suppressSliderSeek = false;
             PositionText.Text = SubtitleCue.FormatTimestamp(position);
             UpdateOverlay(position);
-            UpdatePlayhead(position.TotalSeconds);
+            UpdatePlayhead(timelineSeconds);
         }
 
         private void PositionSliderValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -502,20 +547,13 @@ namespace SubtitleForge
         {
             try
             {
-                if (VideoElement.Source == null)
-                {
-                    return;
-                }
-
-                VideoElement.Position = position;
-
-                // MediaElement does not repaint a frame for a Position change while it is
-                // paused, so nudge it through a play/pause cycle to force the new frame out.
-                if (!isPlaying)
-                {
-                    VideoElement.Play();
-                    VideoElement.Pause();
-                }
+                // The preview shows whichever video clip sits under the playhead. MediaElement
+                // repaints the paused frame by itself because ScrubbingEnabled is on — no
+                // play/pause nudge, which used to leave the element in a state where the next
+                // Play() rendered a single frame and stopped.
+                double seconds = position.TotalSeconds;
+                CueVideoSegment(ActiveVideoSegment(seconds), seconds, isPlaying);
+                CueAudioSegments(seconds, isPlaying);
             }
             catch (Exception exception)
             {
@@ -527,19 +565,12 @@ namespace SubtitleForge
         {
             get
             {
-                try
+                if (isPlaying)
                 {
-                    if (VideoElement.Source != null)
-                    {
-                        return VideoElement.Position;
-                    }
-                }
-                catch (Exception)
-                {
-                    // Not opened yet.
+                    return TimeSpan.FromSeconds(playbackAnchorSeconds + playbackClock.Elapsed.TotalSeconds);
                 }
 
-                return TimeSpan.FromSeconds(PositionSlider.Value);
+                return TimeSpan.FromSeconds(TrackTimelineView.PlayheadSeconds);
             }
         }
 
@@ -1603,6 +1634,7 @@ namespace SubtitleForge
 
         private void AfterTimelineStructureChanged()
         {
+            PruneAudioPlayers();
             UpdateTimelineDuration();
             UpdateCommandStates();
             TrackTimelineView.Refresh();
@@ -1792,6 +1824,15 @@ namespace SubtitleForge
             }
 
             TimeSpan position = TimeSpan.FromSeconds(seconds);
+
+            if (isPlaying)
+            {
+                // Re-anchor the master clock so the playhead does not snap back.
+                playbackAnchorSeconds = seconds;
+                playbackClock.Reset();
+                playbackClock.Start();
+            }
+
             suppressSliderSeek = true;
             PositionSlider.Value = seconds;
             suppressSliderSeek = false;
@@ -2325,6 +2366,7 @@ namespace SubtitleForge
             {
                 segment.HasRecordedAudio = true;
                 segment.ClipFile = null;
+                InvalidateAudioPlayer(segment);
             }
 
             if (segment != null && written > 0 && undoSamples != null && undoPeaks != null)
@@ -2339,6 +2381,7 @@ namespace SubtitleForge
                     target.Peaks = peaksSnapshot;
                     target.SharesSamples = false;
                     target.DurationSeconds = undoDuration;
+                    InvalidateAudioPlayer(target);
                     AfterTimelineStructureChanged();
                 });
             }
@@ -2673,6 +2716,7 @@ namespace SubtitleForge
                 UpdateCueCount();
                 DrawTimeline();
                 timelineInitialized = true;
+                fallbackVideoSegment = null;
                 projectPath = path;
                 AfterTimelineStructureChanged();
                 SetStatus("Project loaded: " + Path.GetFileName(path) + " — " + tracks.Count.ToString(CultureInfo.InvariantCulture) + " tracks, "
@@ -2914,6 +2958,531 @@ namespace SubtitleForge
             piece.RuntimeDescription = result.RuntimeDescription;
             piece.DetectedLanguage = result.DetectedLanguage;
             return piece;
+        }
+
+        // ── Timeline playback ──────────────────────────────────────────────
+        //
+        // The preview is not "the opened file" any more: every tick the playhead decides which
+        // video clip is on screen (topmost video lane that has content there) and which audio
+        // clips are audible. MediaElement can only hold one file, so the primary video clip owns
+        // the element and every audible audio clip gets its own MediaPlayer — which is also how
+        // several audio lanes can be heard at once.
+
+        private TimelineSegment? ActiveVideoSegment(double seconds)
+        {
+            if (!timelineInitialized && fallbackVideoSegment != null)
+            {
+                // The timeline has not been built yet — the loaded file is the only content,
+                // so seeking and playing must still show it instead of a black screen.
+                return fallbackVideoSegment;
+            }
+
+            foreach (TimelineTrack track in tracks)
+            {
+                if (track.Kind != TrackKind.Video)
+                {
+                    continue;
+                }
+
+                TimelineSegment? segment = track.SegmentAt(seconds);
+                if (segment != null)
+                {
+                    return segment;
+                }
+            }
+
+            return null;
+        }
+
+        private List<TimelineSegment> ActiveAudioSegments(double seconds)
+        {
+            List<TimelineSegment> active = new List<TimelineSegment>();
+            foreach (TimelineTrack track in tracks)
+            {
+                if (track.Kind != TrackKind.Audio)
+                {
+                    continue;
+                }
+
+                TimelineSegment? segment = track.SegmentAt(seconds);
+                if (segment != null)
+                {
+                    active.Add(segment);
+                }
+            }
+
+            return active;
+        }
+
+        private static double SegmentMediaSeconds(TimelineSegment segment, double timelineSeconds)
+        {
+            double mediaSeconds = segment.SourceOffsetSeconds + (timelineSeconds - segment.StartSeconds);
+            return mediaSeconds < 0.0 ? 0.0 : mediaSeconds;
+        }
+
+        /// <summary>
+        /// A file a segment can be played from: its recorded take (written to a temporary WAV or
+        /// the clip exported beside the project) or the media file it references.
+        /// </summary>
+        private string? SegmentMediaPath(TimelineSegment segment)
+        {
+            if (segment.HasRecordedAudio && segment.Samples.Length > 0)
+            {
+                string? known;
+                if (recordedClipFiles.TryGetValue(segment, out known) && File.Exists(known))
+                {
+                    return known;
+                }
+
+                if (!string.IsNullOrEmpty(segment.ClipFile) && !string.IsNullOrEmpty(projectPath))
+                {
+                    string resolved = ProjectFile.ResolveRelativePath(projectPath, segment.ClipFile);
+                    if (File.Exists(resolved))
+                    {
+                        recordedClipFiles[segment] = resolved;
+                        return resolved;
+                    }
+                }
+
+                string tempPath = Path.Combine(
+                    Path.GetTempPath(),
+                    "SubtitleForge",
+                    "clip-" + Guid.NewGuid().ToString("N") + ".wav");
+                string? folder = Path.GetDirectoryName(tempPath);
+                if (!string.IsNullOrEmpty(folder) && !Directory.Exists(folder))
+                {
+                    Directory.CreateDirectory(folder);
+                }
+
+                WavFile.Write(tempPath, segment.Samples, 0, segment.Samples.Length);
+                recordedClipFiles[segment] = tempPath;
+                return tempPath;
+            }
+
+            if (!string.IsNullOrEmpty(segment.SourcePath) && File.Exists(segment.SourcePath))
+            {
+                return segment.SourcePath;
+            }
+
+            return null;
+        }
+
+        private MediaPlayer? EnsureAudioPlayer(TimelineSegment segment)
+        {
+            MediaPlayer? player;
+            if (audioPlayers.TryGetValue(segment, out player))
+            {
+                return player;
+            }
+
+            string? mediaPath = SegmentMediaPath(segment);
+            if (string.IsNullOrEmpty(mediaPath))
+            {
+                return null;
+            }
+
+            try
+            {
+                MediaPlayer created = new MediaPlayer();
+                created.Open(new Uri(mediaPath, UriKind.Absolute));
+                created.Volume = 1.0;
+                audioPlayers[segment] = created;
+                return created;
+            }
+            catch (Exception exception)
+            {
+                CrashLog.Write(exception, "EnsureAudioPlayer");
+                return null;
+            }
+        }
+
+        private void CueAudioSegments(double seconds, bool play)
+        {
+            List<TimelineSegment> active = ActiveAudioSegments(seconds);
+
+            foreach (KeyValuePair<TimelineSegment, MediaPlayer> pair in audioPlayers)
+            {
+                if (active.Contains(pair.Key))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    pair.Value.Pause();
+                }
+                catch (Exception)
+                {
+                    // Player closed mid-flight — nothing to stop.
+                }
+            }
+
+            foreach (TimelineSegment segment in active)
+            {
+                MediaPlayer? player = EnsureAudioPlayer(segment);
+                if (player == null)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    TimeSpan target = TimeSpan.FromSeconds(SegmentMediaSeconds(segment, seconds));
+                    if (Math.Abs((player.Position - target).TotalMilliseconds) > 400.0)
+                    {
+                        player.Position = target;
+                    }
+
+                    if (play)
+                    {
+                        player.Play();
+                    }
+                    else
+                    {
+                        player.Pause();
+                    }
+                }
+                catch (Exception)
+                {
+                    // The player is still opening; the next tick re-cues it.
+                }
+            }
+
+            // Audio lanes own the sound; the video's own audio track would double it up.
+            // Recording mutes the preview too, to keep the microphone out of the speakers.
+            VideoElement.IsMuted = active.Count > 0 || isRecording;
+        }
+
+        private void CueVideoSegment(TimelineSegment? segment, double timelineSeconds, bool play)
+        {
+            currentVideoSegment = segment;
+
+            string? path = segment == null ? null : segment.SourcePath;
+            if (string.IsNullOrEmpty(path) || !File.Exists(path))
+            {
+                try
+                {
+                    VideoElement.Pause();
+                }
+                catch (Exception)
+                {
+                    // Nothing loaded.
+                }
+
+                // No video under the playhead: black screen, audio keeps playing.
+                VideoElement.Visibility = Visibility.Hidden;
+                pendingVideoSeekSeconds = null;
+                pendingVideoPlay = false;
+                return;
+            }
+
+            VideoElement.Visibility = Visibility.Visible;
+
+            double mediaSeconds = segment != null ? SegmentMediaSeconds(segment, timelineSeconds) : 0.0;
+            bool sameFile = !string.IsNullOrEmpty(currentVideoPath)
+                && string.Equals(currentVideoPath, path, StringComparison.OrdinalIgnoreCase);
+
+            pendingVideoSeekSeconds = mediaSeconds;
+            pendingVideoPlay = play;
+
+            if (!sameFile)
+            {
+                currentVideoPath = path;
+                videoElementReady = false;
+                try
+                {
+                    VideoElement.Source = new Uri(path, UriKind.Absolute);
+                }
+                catch (Exception exception)
+                {
+                    CrashLog.Write(exception, "CueVideoSource");
+                }
+
+                // MediaOpened applies the pending cue and play flag.
+                return;
+            }
+
+            if (!videoElementReady)
+            {
+                // Still opening — MediaOpened applies the pending cue.
+                return;
+            }
+
+            try
+            {
+                VideoElement.Position = TimeSpan.FromSeconds(mediaSeconds);
+                if (play)
+                {
+                    VideoElement.Play();
+                }
+                else
+                {
+                    VideoElement.Pause();
+                }
+
+                pendingVideoSeekSeconds = null;
+                pendingVideoPlay = false;
+            }
+            catch (Exception exception)
+            {
+                CrashLog.Write(exception, "CueVideoSeek");
+            }
+        }
+
+        private void FollowTimeline(double seconds, bool play)
+        {
+            TimelineSegment? videoSegment = ActiveVideoSegment(seconds);
+            if (!ReferenceEquals(videoSegment, currentVideoSegment))
+            {
+                CueVideoSegment(videoSegment, seconds, play);
+            }
+
+            CueAudioSegments(seconds, play);
+        }
+
+        private void StartTimelinePlayback()
+        {
+            if (string.IsNullOrEmpty(videoPath) && tracks.Count == 0)
+            {
+                return;
+            }
+
+            double seconds = TrackTimelineView.PlayheadSeconds;
+            if (durationSeconds > 0.0 && seconds >= durationSeconds - 0.05)
+            {
+                // Pressed play at the very end — start over instead of doing nothing.
+                seconds = 0.0;
+            }
+
+            playbackAnchorSeconds = seconds;
+            playbackClock.Reset();
+            playbackClock.Start();
+
+            isPlaying = true;
+            PlayPauseButton.Content = "❚❚ Pause";
+
+            FollowTimeline(seconds, true);
+            playbackTimer.Start();
+        }
+
+        private void StopTimelinePlayback()
+        {
+            playbackClock.Stop();
+            isPlaying = false;
+
+            if (PlayPauseButton != null)
+            {
+                PlayPauseButton.Content = "▶ Play";
+            }
+
+            playbackTimer.Stop();
+
+            try
+            {
+                VideoElement.Pause();
+            }
+            catch (Exception)
+            {
+                // Nothing loaded.
+            }
+
+            foreach (KeyValuePair<TimelineSegment, MediaPlayer> pair in audioPlayers)
+            {
+                try
+                {
+                    pair.Value.Pause();
+                }
+                catch (Exception)
+                {
+                    // Player already gone.
+                }
+            }
+        }
+
+        private void PruneAudioPlayers()
+        {
+            List<TimelineSegment> live = new List<TimelineSegment>();
+            foreach (TimelineTrack track in tracks)
+            {
+                foreach (TimelineSegment segment in track.Segments)
+                {
+                    live.Add(segment);
+                }
+            }
+
+            List<TimelineSegment> stale = new List<TimelineSegment>();
+            foreach (KeyValuePair<TimelineSegment, MediaPlayer> pair in audioPlayers)
+            {
+                if (!live.Contains(pair.Key))
+                {
+                    stale.Add(pair.Key);
+                }
+            }
+
+            foreach (TimelineSegment segment in stale)
+            {
+                MediaPlayer player;
+                if (audioPlayers.TryGetValue(segment, out player))
+                {
+                    try
+                    {
+                        player.Close();
+                    }
+                    catch (Exception)
+                    {
+                        // Already closed.
+                    }
+
+                    audioPlayers.Remove(segment);
+                }
+            }
+        }
+
+        private void InvalidateAudioPlayer(TimelineSegment segment)
+        {
+            MediaPlayer player;
+            if (audioPlayers.TryGetValue(segment, out player))
+            {
+                try
+                {
+                    player.Close();
+                }
+                catch (Exception)
+                {
+                    // Already closed.
+                }
+
+                audioPlayers.Remove(segment);
+            }
+
+            recordedClipFiles.Remove(segment);
+        }
+
+        private void DisposeAudioPlayers()
+        {
+            foreach (KeyValuePair<TimelineSegment, MediaPlayer> pair in audioPlayers)
+            {
+                try
+                {
+                    pair.Value.Close();
+                }
+                catch (Exception)
+                {
+                    // Already closed.
+                }
+            }
+
+            audioPlayers.Clear();
+        }
+
+        // ── Audio files dropped from Explorer ───────────────────────────────
+
+        private async void TrackTimelineAudioFilesDropped(object? sender, AudioFilesDroppedEventArgs e)
+        {
+            if (e.Paths == null || e.Paths.Length == 0)
+            {
+                return;
+            }
+
+            string? ffmpeg = FfmpegLocator.Resolve("ffmpeg", App.Settings.FfmpegDirectory);
+            string? ffprobe = FfmpegLocator.Resolve("ffprobe", App.Settings.FfmpegDirectory);
+
+            if (ffprobe == null)
+            {
+                SetStatus("ffprobe was not found, so the dropped files cannot be measured.");
+                return;
+            }
+
+            TimelineSnapshot before = CaptureTimeline();
+            double insertSeconds = e.Seconds > 0.0 ? e.Seconds : 0.0;
+            int insertRow = e.RowIndex;
+            int added = 0;
+
+            foreach (string path in e.Paths)
+            {
+                if (!File.Exists(path))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    double fileDuration = await MediaInspector
+                        .GetDurationSecondsAsync(ffprobe, path, CancellationToken.None)
+                        .ConfigureAwait(true);
+
+                    if (fileDuration <= 0.0)
+                    {
+                        SetStatus("Could not read the length of " + Path.GetFileName(path) + ".");
+                        continue;
+                    }
+
+                    // Dropped files become their own audio lane, named after the file, exactly
+                    // like a recorded take.
+                    TimelineTrack track = new TimelineTrack(TrackKind.Audio, Path.GetFileName(path), NextTrackColor(TrackKind.Audio));
+
+                    TimelineSegment segment = new TimelineSegment(TrackKind.Audio);
+                    segment.StartSeconds = insertSeconds;
+                    segment.SourceOffsetSeconds = 0.0;
+                    segment.DurationSeconds = fileDuration;
+                    segment.SourceDuration = fileDuration;
+                    segment.SourcePath = path;
+                    segment.IsSelected = true;
+                    track.Segments.Add(segment);
+
+                    if (insertRow >= 0 && insertRow <= tracks.Count)
+                    {
+                        tracks.Insert(insertRow, track);
+                        insertRow++;
+                    }
+                    else
+                    {
+                        tracks.Add(track);
+                    }
+
+                    added++;
+
+                    if (ffmpeg != null)
+                    {
+                        try
+                        {
+                            short[] samples = await AudioSampleLoader
+                                .LoadAsync(ffmpeg, path, CancellationToken.None)
+                                .ConfigureAwait(true);
+                            segment.Samples = samples;
+                            segment.RebuildPeaks();
+                        }
+                        catch (Exception exception)
+                        {
+                            CrashLog.Write(exception, "DropAudioSamples");
+                        }
+                    }
+
+                    track.NotifyContentChanged();
+                }
+                catch (Exception exception)
+                {
+                    CrashLog.Write(exception, "DropAudioFile");
+                    SetStatus("Could not add " + Path.GetFileName(path) + ": " + exception.Message);
+                }
+            }
+
+            if (added == 0)
+            {
+                return;
+            }
+
+            string label = added == 1 ? "add audio file" : "add " + added.ToString(CultureInfo.InvariantCulture) + " audio files";
+            UndoStackPush(label, delegate
+            {
+                RestoreTimeline(before);
+            });
+
+            AfterTimelineStructureChanged();
+
+            SetStatus(added == 1
+                ? "Added the dropped audio file as its own track. Ctrl+Z undoes it."
+                : "Added " + added.ToString(CultureInfo.InvariantCulture) + " dropped audio files as tracks. Ctrl+Z undoes it.");
         }
 
         // ── Keyboard shortcuts ─────────────────────────────────────────────
@@ -3258,6 +3827,14 @@ namespace SubtitleForge
 
         private void WindowClosing(object? sender, System.ComponentModel.CancelEventArgs e)
         {
+            if (isRecording)
+            {
+                StopRecording();
+            }
+
+            StopTimelinePlayback();
+            DisposeAudioPlayers();
+
             if (isBusy && operationCancellation != null)
             {
                 MessageBoxResult answer = MessageBox.Show(

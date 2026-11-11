@@ -91,6 +91,7 @@
                         <MediaElement x:Name="VideoElement"
                                       LoadedBehavior="Manual"
                                       UnloadedBehavior="Manual"
+                                      ScrubbingEnabled="True"
                                       Stretch="Uniform"
                                       MediaOpened="VideoMediaOpened"
                                       MediaEnded="VideoMediaEnded"
@@ -162,6 +163,7 @@
                                                 TrackMouseDown="TrackTimelineMouseDown"
                                                 SegmentMouseDown="TrackTimelineSegmentMouseDown"
                                                 SegmentDropped="TrackTimelineSegmentDropped"
+                                                AudioFilesDropped="TrackTimelineAudioFilesDropped"
                                                 TrackReorderRequested="TrackTimelineReorder"
                                                 TrackContextMenuRequested="TrackTimelineContextMenu"
                                                 SeekRequested="TrackTimelineSeek" />

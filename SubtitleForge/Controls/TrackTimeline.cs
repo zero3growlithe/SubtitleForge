@@ -96,6 +96,25 @@ namespace SubtitleForge.Controls
         public double NewStartSeconds { get; }
     }
 
+    public class AudioFilesDroppedEventArgs : EventArgs
+    {
+        public AudioFilesDroppedEventArgs(string[] paths, int rowIndex, double seconds)
+        {
+            Paths = paths;
+            RowIndex = rowIndex;
+            Seconds = seconds;
+        }
+
+        public string[] Paths { get; }
+
+        /// <summary>
+        /// Row the files were dropped on, or -1 when they landed on empty space.
+        /// </summary>
+        public int RowIndex { get; }
+
+        public double Seconds { get; }
+    }
+
     public class TrackReorderEventArgs : EventArgs
     {
         public TrackReorderEventArgs(int fromIndex, int toIndex)
@@ -162,6 +181,7 @@ namespace SubtitleForge.Controls
             SnapsToDevicePixels = true;
             Focusable = true;
             ClipToBounds = true;
+            AllowDrop = true;
         }
 
         public ObservableCollection<TimelineTrack>? Tracks
@@ -220,6 +240,11 @@ namespace SubtitleForge.Controls
         public event EventHandler<TimelineTrack>? TrackContextMenuRequested;
 
         public event EventHandler<double>? SeekRequested;
+
+        /// <summary>
+        /// Raised when files are dropped from Explorer — they become audio clips.
+        /// </summary>
+        public event EventHandler<AudioFilesDroppedEventArgs>? AudioFilesDropped;
 
         public void Refresh()
         {
@@ -970,6 +995,45 @@ namespace SubtitleForge.Controls
 
                 InvalidateVisual();
             }
+        }
+
+        protected override void OnDragOver(DragEventArgs e)
+        {
+            base.OnDragOver(e);
+
+            if (!e.Data.GetDataPresent(DataFormats.FileDrop))
+            {
+                e.Effects = DragDropEffects.None;
+                e.Handled = true;
+                return;
+            }
+
+            e.Effects = DragDropEffects.Copy;
+            e.Handled = true;
+        }
+
+        protected override void OnDrop(DragEventArgs e)
+        {
+            base.OnDrop(e);
+
+            if (!e.Data.GetDataPresent(DataFormats.FileDrop))
+            {
+                return;
+            }
+
+            object? payload = e.Data.GetData(DataFormats.FileDrop);
+            string[]? paths = payload as string[];
+            if (paths == null || paths.Length == 0)
+            {
+                return;
+            }
+
+            Point point = e.GetPosition(this);
+            int rowIndex = RowAt(point);
+            double seconds = SecondsAt(point);
+            e.Handled = true;
+
+            AudioFilesDropped?.Invoke(this, new AudioFilesDroppedEventArgs(paths, rowIndex, seconds));
         }
 
         protected override void OnMouseRightButtonDown(MouseButtonEventArgs e)

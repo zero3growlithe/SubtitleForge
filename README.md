@@ -35,6 +35,13 @@ Everything runs on your machine. No cloud, no API keys, no uploads.
 - **Record from the microphone** straight onto the selected audio track, starting at the
   playhead, with the waveform growing live as you speak. One press records, the next
   stops; `Ctrl+Z` restores the track exactly as it was before the take.
+- **Drop audio files** from Explorer onto the timeline: each file becomes its own audio
+  track named after the file, placed at the drop position, exactly like a recorded take
+  (undoable with `Ctrl+Z`).
+- **The preview follows the tracks.** Whatever the playhead sits on is what you see and
+  hear: the *topmost* video lane with a clip under the playhead is shown, every audio lane
+  with a clip there is played (mixed together), and a stretch with no video clip shows a
+  black frame while the audio keeps running.
 
 ### Timeline editing
 
@@ -48,6 +55,8 @@ Everything runs on your machine. No cloud, no API keys, no uploads.
   (or below the last one) to give it a track of its own.
 - **Drag the ruler or an empty lane** to scrub the playhead; drag a lane's **name** to
   reorder whole tracks. `Shift`+drag on a clip scrubs instead of moving it.
+- **Seeking repaints the preview** whether playback is running or paused — the frame under
+  the playhead is shown for both video lanes and a black frame for gaps.
 - Subtitles are built from **all** audio clips on the timeline and merged in playback order.
 - `Ctrl+S` (or `Save project`) saves the project; `Open project…` loads one.
 

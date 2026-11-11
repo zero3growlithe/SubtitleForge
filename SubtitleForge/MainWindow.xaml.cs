@@ -14,6 +14,7 @@ using System.Windows.Shapes;
 using System.Windows.Threading;
 using Microsoft.Win32;
 using SubtitleForge.Models;
+using Path = System.IO.Path;
 using SubtitleForge.Services;
 
 namespace SubtitleForge

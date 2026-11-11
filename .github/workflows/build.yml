@@ -27,17 +27,45 @@ jobs:
       - name: Build
         run: dotnet build SubtitleForge/SubtitleForge.csproj -c Release -r win-x64 --no-restore
 
-      - name: Publish
-        run: dotnet publish SubtitleForge/SubtitleForge.csproj -c Release -r win-x64 --self-contained false --no-restore -o publish
+      # Full build: CPU + CUDA 12 native runtimes (large, GPU-ready).
+      - name: Publish (CUDA)
+        run: dotnet publish SubtitleForge/SubtitleForge.csproj -c Release -r win-x64 --self-contained false --no-restore -o publish-cuda
+
+      # Small build: CPU natives only, so the archive stays emailable/messenger-sized.
+      - name: Publish (CPU only)
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force SubtitleForge/obj -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force SubtitleForge/bin -ErrorAction SilentlyContinue
+          dotnet restore SubtitleForge/SubtitleForge.csproj -r win-x64 -p:EnableCuda=false
+          dotnet build SubtitleForge/SubtitleForge.csproj -c Release -r win-x64 --no-restore -p:EnableCuda=false
+          dotnet publish SubtitleForge/SubtitleForge.csproj -c Release -r win-x64 --self-contained false --no-restore -p:EnableCuda=false -o publish-cpu
 
       - name: List publish output
-        run: Get-ChildItem -Recurse publish | Select-Object FullName, Length | Format-Table -AutoSize
+        shell: pwsh
+        run: |
+          Write-Host "=== CUDA build ==="
+          Get-ChildItem -Recurse publish-cuda | Measure-Object -Property Length -Sum | ForEach-Object { "files={0} bytes={1}" -f $_.Count, $_.Sum }
+          Write-Host "=== CPU build ==="
+          Get-ChildItem -Recurse publish-cpu | Measure-Object -Property Length -Sum | ForEach-Object { "files={0} bytes={1}" -f $_.Count, $_.Sum }
+          Get-ChildItem -Recurse publish-cpu -Filter *.dll | Where-Object { $_.FullName -like "*runtimes*" } | Select-Object FullName
+          Get-ChildItem -Recurse publish-cuda -Filter ggml-cuda-whisper.dll | Select-Object FullName, Length
 
       - name: Archive
-        run: Compress-Archive -Path publish/* -DestinationPath SubtitleForge-win-x64.zip -Force
+        shell: pwsh
+        run: |
+          Compress-Archive -Path publish-cuda/* -DestinationPath SubtitleForge-win-x64-cuda.zip -Force
+          Compress-Archive -Path publish-cpu/* -DestinationPath SubtitleForge-win-x64-cpu.zip -Force
+          Get-ChildItem SubtitleForge-win-x64-*.zip | Select-Object Name, Length
 
-      - name: Upload artifact
+      - name: Upload CUDA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SubtitleForge-win-x64
-          path: SubtitleForge-win-x64.zip
+          name: SubtitleForge-win-x64-cuda
+          path: SubtitleForge-win-x64-cuda.zip
+
+      - name: Upload CPU artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SubtitleForge-win-x64-cpu
+          path: SubtitleForge-win-x64-cpu.zip

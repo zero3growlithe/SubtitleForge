@@ -66,18 +66,19 @@ namespace SubtitleForge.Services
             List<SubtitleCue> cues = new List<SubtitleCue>();
             string detectedLanguage = string.Empty;
 
-            bool gpuRequested = request.UseGpu && WhisperRuntimeProbe.IsCudaDriverPresent();
+            string cudaReason;
+            bool gpuRequested = request.UseGpu && WhisperRuntimeProbe.IsCudaAvailable(out cudaReason);
             if (request.UseGpu && !gpuRequested)
             {
-                status?.Report("No NVIDIA driver found — running on CPU.");
+                status?.Report("GPU not used (" + cudaReason + ") — running on CPU.");
             }
 
             WhisperFactory? factory = null;
             if (gpuRequested)
             {
+                RuntimeOptions.RuntimeLibraryOrder = WhisperRuntimeProbe.AutoOrder;
                 try
                 {
-                    RuntimeOptions.ForcedRuntimeLibrary = null;
                     factory = WhisperFactory.FromPath(request.ModelPath, new WhisperFactoryOptions { UseGpu = true });
                 }
                 catch (Exception exception)
@@ -91,7 +92,7 @@ namespace SubtitleForge.Services
 
             if (factory == null)
             {
-                RuntimeOptions.ForcedRuntimeLibrary = RuntimeLibrary.Cpu;
+                RuntimeOptions.RuntimeLibraryOrder = WhisperRuntimeProbe.CpuOnlyOrder;
                 factory = WhisperFactory.FromPath(request.ModelPath, new WhisperFactoryOptions { UseGpu = false });
             }
 
@@ -232,6 +233,8 @@ namespace SubtitleForge.Services
     /// </summary>
     public static class WhisperRuntimeProbe
     {
+        private static readonly List<RuntimeLibrary> CapturedDefaultOrder = CaptureDefaultOrder();
+
         public static bool IsCudaDriverPresent()
         {
             try
@@ -248,6 +251,128 @@ namespace SubtitleForge.Services
             {
                 return false;
             }
+        }
+
+        /// <summary>
+        /// The library order whisper.net uses when nothing is forced (captured once, before we touch it).
+        /// </summary>
+        public static List<RuntimeLibrary> AutoOrder
+        {
+            get { return new List<RuntimeLibrary>(CapturedDefaultOrder); }
+        }
+
+        public static List<RuntimeLibrary> CpuOnlyOrder
+        {
+            get { return new List<RuntimeLibrary> { RuntimeLibrary.Cpu }; }
+        }
+
+        /// <summary>
+        /// True when the GPU path has a real chance: driver present *and* the CUDA 12
+        /// runtime DLLs whisper.cpp links against (cuBLAS / cudart) are reachable.
+        /// </summary>
+        public static bool IsCudaAvailable(out string reason)
+        {
+            if (!IsCudaDriverPresent())
+            {
+                reason = "no NVIDIA driver (nvcuda.dll missing)";
+                return false;
+            }
+
+            if (!AreCudaLibrariesReachable())
+            {
+                reason = "CUDA 12 runtime (cublas64_12 / cudart64_12) not found";
+                return false;
+            }
+
+            reason = "CUDA 12";
+            return true;
+        }
+
+        public static bool AreCudaLibrariesReachable()
+        {
+            return IsLibraryReachable("cublas64_12.dll") && IsLibraryReachable("cudart64_12.dll");
+        }
+
+        private static bool IsLibraryReachable(string fileName)
+        {
+            try
+            {
+                string systemDirectory = Environment.GetFolderPath(Environment.SpecialFolder.System);
+                if (!string.IsNullOrEmpty(systemDirectory) && File.Exists(Path.Combine(systemDirectory, fileName)))
+                {
+                    return true;
+                }
+
+                string? pathVariable = Environment.GetEnvironmentVariable("PATH");
+                if (!string.IsNullOrEmpty(pathVariable))
+                {
+                    foreach (string folder in pathVariable.Split(Path.PathSeparator))
+                    {
+                        if (string.IsNullOrWhiteSpace(folder))
+                        {
+                            continue;
+                        }
+
+                        try
+                        {
+                            if (File.Exists(Path.Combine(folder.Trim(), fileName)))
+                            {
+                                return true;
+                            }
+                        }
+                        catch (Exception)
+                        {
+                            // Unusable PATH entry — keep looking.
+                        }
+                    }
+                }
+
+                string toolkitRoot = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                    "NVIDIA GPU Computing Toolkit",
+                    "CUDA");
+                if (Directory.Exists(toolkitRoot))
+                {
+                    foreach (string versionFolder in Directory.GetDirectories(toolkitRoot))
+                    {
+                        try
+                        {
+                            if (File.Exists(Path.Combine(versionFolder, "bin", fileName)))
+                            {
+                                return true;
+                            }
+                        }
+                        catch (Exception)
+                        {
+                            // Skip inaccessible folders.
+                        }
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+
+            return false;
+        }
+
+        private static List<RuntimeLibrary> CaptureDefaultOrder()
+        {
+            try
+            {
+                List<RuntimeLibrary> current = RuntimeOptions.RuntimeLibraryOrder;
+                if (current != null && current.Count > 0)
+                {
+                    return new List<RuntimeLibrary>(current);
+                }
+            }
+            catch (Exception)
+            {
+                // Fall through to the conservative default below.
+            }
+
+            return new List<RuntimeLibrary> { RuntimeLibrary.Cuda12, RuntimeLibrary.Cpu };
         }
 
         public static string Describe(RuntimeLibrary? library, bool gpuRequested)

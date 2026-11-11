@@ -60,7 +60,12 @@ large-v3-turbo ≈ 1.6 GB). Progress is shown in the status bar.
 
 Nothing is built locally; GitHub Actions is the build authority
 (`.github/workflows/build.yml`): `windows-latest`, .NET 8, `dotnet publish -r win-x64
---self-contained false`, zipped artifact `SubtitleForge-win-x64`.
+--self-contained false`. It produces two artifacts:
+
+- `SubtitleForge-win-x64-cuda` — CPU **and** CUDA 12 native runtimes (~250 MB zipped).
+  Use this one for GPU transcription.
+- `SubtitleForge-win-x64-cpu` — CPU natives only (~20 MB zipped). Works everywhere,
+  just slower; handy for testing the UI.
 
 ```
 dotnet publish SubtitleForge/SubtitleForge.csproj -c Release -r win-x64 --self-contained false -o publish

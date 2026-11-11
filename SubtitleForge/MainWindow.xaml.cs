@@ -70,7 +70,6 @@ namespace SubtitleForge
                 ModelComboBox.Items.Add(model);
             }
 
-            ModelComboBox.DisplayMemberPath = "DisplayText";
             foreach (WhisperModelInfo model in WhisperModelStore.AvailableModels)
             {
                 if (string.Equals(model.FileName, settings.ModelFileName, StringComparison.OrdinalIgnoreCase))
@@ -85,25 +84,24 @@ namespace SubtitleForge
                 ModelComboBox.SelectedIndex = 0;
             }
 
-            languages.Add(new LanguageOption("auto", "auto (detect)"));
-            languages.Add(new LanguageOption("pl", "Polish — pl"));
-            languages.Add(new LanguageOption("en", "English — en"));
-            languages.Add(new LanguageOption("de", "German — de"));
-            languages.Add(new LanguageOption("es", "Spanish — es"));
-            languages.Add(new LanguageOption("fr", "French — fr"));
-            languages.Add(new LanguageOption("it", "Italian — it"));
-            languages.Add(new LanguageOption("nl", "Dutch — nl"));
-            languages.Add(new LanguageOption("pt", "Portuguese — pt"));
-            languages.Add(new LanguageOption("ru", "Russian — ru"));
-            languages.Add(new LanguageOption("uk", "Ukrainian — uk"));
-            languages.Add(new LanguageOption("cs", "Czech — cs"));
-            languages.Add(new LanguageOption("ja", "Japanese — ja"));
-            languages.Add(new LanguageOption("ko", "Korean — ko"));
-            languages.Add(new LanguageOption("zh", "Chinese — zh"));
-            languages.Add(new LanguageOption("tr", "Turkish — tr"));
-            languages.Add(new LanguageOption("sv", "Swedish — sv"));
+            languages.Add(new LanguageOption("auto", "Auto detect"));
+            languages.Add(new LanguageOption("pl", "Polish"));
+            languages.Add(new LanguageOption("en", "English"));
+            languages.Add(new LanguageOption("de", "German"));
+            languages.Add(new LanguageOption("es", "Spanish"));
+            languages.Add(new LanguageOption("fr", "French"));
+            languages.Add(new LanguageOption("it", "Italian"));
+            languages.Add(new LanguageOption("nl", "Dutch"));
+            languages.Add(new LanguageOption("pt", "Portuguese"));
+            languages.Add(new LanguageOption("ru", "Russian"));
+            languages.Add(new LanguageOption("uk", "Ukrainian"));
+            languages.Add(new LanguageOption("cs", "Czech"));
+            languages.Add(new LanguageOption("ja", "Japanese"));
+            languages.Add(new LanguageOption("ko", "Korean"));
+            languages.Add(new LanguageOption("zh", "Chinese"));
+            languages.Add(new LanguageOption("tr", "Turkish"));
+            languages.Add(new LanguageOption("sv", "Swedish"));
 
-            LanguageComboBox.DisplayMemberPath = "Display";
             foreach (LanguageOption option in languages)
             {
                 LanguageComboBox.Items.Add(option);
@@ -205,6 +203,14 @@ namespace SubtitleForge
             }
 
             App.Settings.Language = option.Code;
+        }
+
+        private void ModelsClick(object sender, RoutedEventArgs e)
+        {
+            ModelManagerWindow dialog = new ModelManagerWindow();
+            dialog.Owner = this;
+            dialog.ShowDialog();
+            SetStatus("Models folder: " + WhisperModelStore.ModelDirectory);
         }
 
         // ── Open media ─────────────────────────────────────────────────────
@@ -1442,6 +1448,7 @@ namespace SubtitleForge
             OpenVideoButton.IsEnabled = !isBusy;
             ImportSubtitlesButton.IsEnabled = !isBusy;
             ModelComboBox.IsEnabled = !isBusy;
+            ModelsButton.IsEnabled = !isBusy;
             LanguageComboBox.IsEnabled = !isBusy;
             GpuCheckBox.IsEnabled = !isBusy;
             TranslateCheckBox.IsEnabled = !isBusy;
@@ -1494,22 +1501,6 @@ namespace SubtitleForge
             ApplyUiToSettings();
             App.Settings.Save();
             playbackTimer.Stop();
-        }
-
-        /// <summary>
-        /// Whisper language code plus the label shown in the combo box.
-        /// </summary>
-        private class LanguageOption
-        {
-            public LanguageOption(string code, string display)
-            {
-                Code = code;
-                Display = display;
-            }
-
-            public string Code { get; }
-
-            public string Display { get; }
         }
     }
 }

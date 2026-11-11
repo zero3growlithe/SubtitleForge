@@ -24,9 +24,22 @@
             <Button x:Name="ImportSubtitlesButton" Content="Open subtitles…" Click="ImportSubtitlesClick" />
             <Rectangle Width="1" Margin="6,2,12,2" Fill="{StaticResource PanelBorderBrush}" />
             <TextBlock Text="Model" Style="{StaticResource SectionLabelStyle}" />
-            <ComboBox x:Name="ModelComboBox" Width="232" SelectionChanged="ModelSelectionChanged" />
+            <ComboBox x:Name="ModelComboBox" Width="232" SelectionChanged="ModelSelectionChanged">
+                <ComboBox.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding DisplayText}" />
+                    </DataTemplate>
+                </ComboBox.ItemTemplate>
+            </ComboBox>
+            <Button x:Name="ModelsButton" Content="Models…" MinWidth="0" Padding="10,4" Margin="0,0,12,0" Click="ModelsClick" />
             <TextBlock Text="Language" Style="{StaticResource SectionLabelStyle}" />
-            <ComboBox x:Name="LanguageComboBox" Width="132" SelectionChanged="LanguageSelectionChanged" />
+            <ComboBox x:Name="LanguageComboBox" Width="138" SelectionChanged="LanguageSelectionChanged">
+                <ComboBox.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding Display}" />
+                    </DataTemplate>
+                </ComboBox.ItemTemplate>
+            </ComboBox>
             <CheckBox x:Name="GpuCheckBox" Content="GPU (CUDA)" />
             <CheckBox x:Name="TranslateCheckBox" Content="Translate → EN" />
             <Button x:Name="TranscribeButton" Content="Transcribe" Style="{StaticResource AccentButtonStyle}" Click="TranscribeClick" />

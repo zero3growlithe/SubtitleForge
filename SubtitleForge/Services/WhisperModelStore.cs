@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -25,9 +26,25 @@ namespace SubtitleForge.Services
 
         public double ApproximateMegabytes { get; }
 
+        /// <summary>
+        /// What the model combo box shows.
+        /// </summary>
         public string DisplayText
         {
-            get { return DisplayName + "  (~" + ApproximateMegabytes.ToString("0") + " MB)"; }
+            get { return DisplayName; }
+        }
+
+        /// <summary>
+        /// Label plus download size, used by the model manager.
+        /// </summary>
+        public string DisplayWithSize
+        {
+            get { return DisplayName + "  (~" + ApproximateMegabytes.ToString("0", CultureInfo.InvariantCulture) + " MB)"; }
+        }
+
+        public override string ToString()
+        {
+            return DisplayName;
         }
     }
 
@@ -98,6 +115,78 @@ namespace SubtitleForge.Services
             {
                 return false;
             }
+        }
+
+        /// <summary>
+        /// On-disk size of a downloaded model in bytes, or 0 when it is not there.
+        /// </summary>
+        public static long GetModelSizeBytes(string fileName)
+        {
+            try
+            {
+                FileInfo info = new FileInfo(GetModelPath(fileName));
+                return info.Exists ? info.Length : 0L;
+            }
+            catch (Exception)
+            {
+                return 0L;
+            }
+        }
+
+        public static bool DeleteModel(string fileName, out string error)
+        {
+            error = string.Empty;
+            try
+            {
+                string path = GetModelPath(fileName);
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+
+                // A half-finished download must not survive either.
+                string partialPath = path + ".partial";
+                if (File.Exists(partialPath))
+                {
+                    File.Delete(partialPath);
+                }
+
+                return true;
+            }
+            catch (Exception exception)
+            {
+                error = exception.Message;
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Deletes every downloaded model (and any partial download).
+        /// </summary>
+        public static int DeleteAllModels(out List<string> failures)
+        {
+            failures = new List<string>();
+            int deleted = 0;
+
+            foreach (WhisperModelInfo model in Models)
+            {
+                if (!IsDownloaded(model.FileName) && !File.Exists(GetModelPath(model.FileName) + ".partial"))
+                {
+                    continue;
+                }
+
+                string error;
+                if (DeleteModel(model.FileName, out error))
+                {
+                    deleted++;
+                }
+                else
+                {
+                    failures.Add(model.DisplayName + ": " + error);
+                }
+            }
+
+            return deleted;
         }
 
         /// <summary>

@@ -17,6 +17,7 @@ Everything runs on your machine. No cloud, no API keys, no uploads.
   actually ran.
 - **Cue list editing**: edit text, set start/end from the playhead, nudge ±100 ms,
   split, merge, add, delete; double-click a cue to jump to it in the preview.
+  Column widths are draggable in the header row.
 - **Live preview** of the subtitles over the video plus a clickable timeline strip
   showing every cue and the playhead.
 - **Cue cleanup** on transcription: long segments are wrapped and split proportionally,
@@ -24,6 +25,8 @@ Everything runs on your machine. No cloud, no API keys, no uploads.
 - **Export** `.srt`, `.vtt`, `.ass` — or burn into `*.subtitled.mp4` with ffmpeg
   (H.264, CRF/preset configurable, audio stream copied).
 - **Open existing** `.srt` / `.vtt` to edit them with the same tools.
+- **Models…** dialog: shows every model, its size on disk and whether it is downloaded,
+  with per-model `Delete`, `Delete all`, and a shortcut to the models folder.
 
 ## Requirements
 

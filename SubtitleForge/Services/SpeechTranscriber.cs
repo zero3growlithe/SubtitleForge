@@ -66,7 +66,7 @@ namespace SubtitleForge.Services
             List<SubtitleCue> cues = new List<SubtitleCue>();
             string detectedLanguage = string.Empty;
 
-            string cudaReason;
+            string cudaReason = string.Empty;
             bool gpuRequested = request.UseGpu && WhisperRuntimeProbe.IsCudaAvailable(out cudaReason);
             if (request.UseGpu && !gpuRequested)
             {

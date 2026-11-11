@@ -45,6 +45,8 @@ namespace SubtitleForge.Services
             string ffmpegPath,
             string sourcePath,
             VideoMetrics metrics,
+            double durationSeconds,
+            Action<double>? onProgress,
             CancellationToken cancellationToken)
         {
             if (string.IsNullOrEmpty(sourcePath) || !File.Exists(sourcePath))
@@ -74,6 +76,11 @@ namespace SubtitleForge.Services
 
             if (File.Exists(target) && new FileInfo(target).Length > 4096)
             {
+                if (onProgress != null)
+                {
+                    onProgress(1.0);
+                }
+
                 return target;
             }
 
@@ -86,6 +93,8 @@ namespace SubtitleForge.Services
                     "-nostdin",
                     "-hide_banner",
                     "-loglevel", "error",
+                    "-progress", "pipe:1",
+                    "-nostats",
                     "-y",
                     "-i", sourcePath,
                     "-vf", "scale=-2:" + ProxyHeight.ToString(CultureInfo.InvariantCulture),
@@ -97,11 +106,36 @@ namespace SubtitleForge.Services
                     "-b:a", "160k",
                     "-ac", "2",
                     "-movflags", "+faststart",
+                    // Leave cores free: the preview keeps decoding the original while this runs,
+                    // and playback must not stutter because the encoder ate the machine.
+                    "-threads", "2",
                     temporary
                 };
 
+                Action<string> progressHandler = delegate (string line)
+                {
+                    if (onProgress == null || string.IsNullOrEmpty(line))
+                    {
+                        return;
+                    }
+
+                    double seconds = ParseProgressSeconds(line);
+                    if (seconds <= 0.0 || durationSeconds <= 0.0)
+                    {
+                        return;
+                    }
+
+                    double fraction = seconds / durationSeconds;
+                    if (fraction > 1.0)
+                    {
+                        fraction = 1.0;
+                    }
+
+                    onProgress(fraction);
+                };
+
                 ProcessResult result = await ProcessRunner
-                    .RunAsync(ffmpegPath, arguments, null, null, cancellationToken)
+                    .RunAsync(ffmpegPath, arguments, null, progressHandler, cancellationToken)
                     .ConfigureAwait(false);
 
                 if (result.ExitCode != 0 || !File.Exists(temporary))
@@ -118,6 +152,12 @@ namespace SubtitleForge.Services
                 }
 
                 File.Move(temporary, target, true);
+
+                if (onProgress != null)
+                {
+                    onProgress(1.0);
+                }
+
                 return target;
             }
             catch (OperationCanceledException)
@@ -157,6 +197,45 @@ namespace SubtitleForge.Services
 
                 return "proxy-" + text.ToString();
             }
+        }
+
+        /// <summary>
+        /// Reads the elapsed output time out of one <c>-progress pipe:1</c> line.
+        /// </summary>
+        private static double ParseProgressSeconds(string line)
+        {
+            string trimmed = line.Trim();
+            int separator = trimmed.IndexOf('=');
+            if (separator <= 0)
+            {
+                return 0.0;
+            }
+
+            string key = trimmed.Substring(0, separator).Trim();
+            string value = trimmed.Substring(separator + 1).Trim();
+
+            double parsed;
+            if (string.Equals(key, "out_time_us", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(key, "out_time_ms", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out parsed))
+                {
+                    return 0.0;
+                }
+
+                return parsed / 1000000.0;
+            }
+
+            if (string.Equals(key, "out_time", StringComparison.OrdinalIgnoreCase))
+            {
+                TimeSpan stamp;
+                if (TimeSpan.TryParse(value, CultureInfo.InvariantCulture, out stamp))
+                {
+                    return stamp.TotalSeconds;
+                }
+            }
+
+            return 0.0;
         }
 
         private static void TryDelete(string path)

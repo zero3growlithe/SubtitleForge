@@ -139,6 +139,20 @@ namespace SubtitleForge.Controls
     {
         public const double HeaderWidth = 152.0;
         public const double RulerHeight = 22.0;
+
+        /// <summary>
+        /// Maps a clip's source file to the fraction of it that already has a playable preview
+        /// proxy (1.0 = finished, or no proxy is needed at all). The ruler paints that progress
+        /// blue, so it is obvious which stretches of video play smoothly right now.
+        /// </summary>
+        public Func<string?, double>? SourceReadyFractionProvider { get; set; }
+
+        private static Brush CreateFrozenBrush(Color color)
+        {
+            SolidColorBrush brush = new SolidColorBrush(color);
+            brush.Freeze();
+            return brush;
+        }
         public const double VideoRowHeight = 66.0;
         public const double AudioRowHeight = 58.0;
         public const double RowGap = 4.0;
@@ -153,6 +167,8 @@ namespace SubtitleForge.Controls
         private static readonly Color AccentColor = Color.FromRgb(0x2F, 0x81, 0xF7);
         private static readonly Color SelectionColor = Color.FromRgb(0xF2, 0xF6, 0xFC);
         private static readonly Color RulerColor = Color.FromRgb(0x2A, 0x2A, 0x31);
+        private static readonly Brush ReadyBandBrush = CreateFrozenBrush(AccentColor);
+        private static readonly Brush BuildingBandBrush = CreateFrozenBrush(Color.FromArgb(0x8C, 0x2F, 0x81, 0xF7));
         private static readonly Color RulerTextColor = Color.FromRgb(0x9A, 0xA0, 0xAC);
 
         private ObservableCollection<TimelineTrack>? tracks;
@@ -466,6 +482,69 @@ namespace SubtitleForge.Controls
                 }
 
                 seconds += step;
+            }
+
+            DrawReadyBand(drawingContext);
+        }
+
+        private void DrawReadyBand(DrawingContext drawingContext)
+        {
+            Func<string?, double>? provider = SourceReadyFractionProvider;
+            if (provider == null || tracks == null || tracks.Count == 0)
+            {
+                return;
+            }
+
+            double bandHeight = 4.0;
+            double bandTop = RulerHeight - bandHeight;
+
+            foreach (TimelineTrack track in tracks)
+            {
+                if (track.Kind != TrackKind.Video)
+                {
+                    continue;
+                }
+
+                foreach (TimelineSegment segment in track.Segments)
+                {
+                    double fraction = provider(segment.SourcePath);
+                    if (fraction <= 0.0)
+                    {
+                        continue;
+                    }
+
+                    // Ready source range is [0, fraction * sourceDuration]; clip it to the slice
+                    // of the source this segment actually shows.
+                    double beginSource = segment.SourceOffsetSeconds;
+                    double endSource = segment.SourceOffsetSeconds + segment.DurationSeconds;
+
+                    if (fraction < 0.999)
+                    {
+                        double readyEnd = fraction * segment.EffectiveSourceDuration;
+                        if (readyEnd < endSource)
+                        {
+                            endSource = readyEnd;
+                        }
+                    }
+
+                    if (endSource <= beginSource + 0.0005)
+                    {
+                        continue;
+                    }
+
+                    double startTimeline = segment.StartSeconds + (beginSource - segment.SourceOffsetSeconds);
+                    double endTimeline = segment.StartSeconds + (endSource - segment.SourceOffsetSeconds);
+                    double left = XForSeconds(startTimeline);
+                    double right = XForSeconds(endTimeline);
+
+                    if (right <= left)
+                    {
+                        continue;
+                    }
+
+                    Brush brush = fraction >= 0.999 ? ReadyBandBrush : BuildingBandBrush;
+                    drawingContext.DrawRectangle(brush, null, new Rect(left, bandTop, right - left, bandHeight));
+                }
             }
         }
 

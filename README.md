@@ -35,9 +35,9 @@ Everything runs on your machine. No cloud, no API keys, no uploads.
 - **Record from the microphone** straight onto the selected audio track, starting at the
   playhead, with the waveform growing live as you speak. One press records, the next
   stops; `Ctrl+Z` restores the track exactly as it was before the take.
-- **Drop audio files** from Explorer onto the timeline: each file becomes its own audio
-  track named after the file, placed at the drop position, exactly like a recorded take
-  (undoable with `Ctrl+Z`).
+- **Drop media files** from Explorer onto the timeline: each file becomes its own track named
+  after the file, placed at the drop position — audio files as a waveform exactly like a
+  recorded take, video files as a video lane with thumbnails (undoable with `Ctrl+Z`).
 - **The preview follows the tracks.** Whatever the playhead sits on is what you see and
   hear: the *topmost* video lane with a clip under the playhead is shown, every audio lane
   with a clip there is played (mixed together), and a stretch with no video clip shows a
@@ -72,6 +72,13 @@ Everything runs on your machine. No cloud, no API keys, no uploads.
   (`%LocalAppData%\SubtitleForge\proxies`), which makes seeking and playback smooth even for
   4K sources. Export, burn-in and transcription always use the original full-resolution file.
   Videos that are 540p or smaller skip the proxy entirely.
+- Proxies are cached **per source file** (keyed by path + size + modified time) and built one
+  at a time in the background. Moving a clip, splitting it, or loading a project reuses the
+  cache; only a genuinely new file is ever encoded, and never the whole timeline again.
+- The **ruler shows proxy readiness** as a blue bar along its bottom edge: solid blue where a
+  clip already plays from its proxy (or needs none), translucent blue while the encode is
+  still filling in, nothing while it has not started. The status line reports the percentage
+  while an encode runs.
 
 ### Projects
 

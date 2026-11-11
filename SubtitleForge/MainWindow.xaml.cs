@@ -42,10 +42,17 @@ namespace SubtitleForge
         private double playbackAnchorSeconds;
         private TimelineSegment? currentVideoSegment;
         private TimelineSegment? fallbackVideoSegment;
-        private string? videoProxyPath;
         private VideoMetrics videoMetrics;
-        private CancellationTokenSource? proxyCancellation;
         private bool projectDirty;
+
+        // Proxy bookkeeping is per source file, so moving clips around, splitting them or
+        // importing another file never re-encodes anything that is already cached.
+        private readonly Dictionary<string, string> sourceProxies = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, double> sourceReadyFractions = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        private readonly Queue<KeyValuePair<string, double>> pendingProxyJobs = new Queue<KeyValuePair<string, double>>();
+        private CancellationTokenSource? proxyCancellation;
+        private bool proxyBuildRunning;
+        private bool videoPlayRequested;
         private string? currentVideoPath;
         private double? pendingVideoSeekSeconds;
         private bool pendingVideoPlay;
@@ -80,6 +87,9 @@ namespace SubtitleForge
 
             CueList.ItemsSource = cues;
             cues.CollectionChanged += OnCuesCollectionChanged;
+
+            // The ruler paints proxy progress; ask us per clip source.
+            TrackTimelineView.SourceReadyFractionProvider = SourceReadyFraction;
 
             playbackTimer = new DispatcherTimer(DispatcherPriority.Render);
             playbackTimer.Interval = TimeSpan.FromMilliseconds(120);
@@ -297,7 +307,9 @@ namespace SubtitleForge
                 proxyCancellation = null;
             }
 
-            videoProxyPath = null;
+            pendingProxyJobs.Clear();
+            sourceProxies.Clear();
+            sourceReadyFractions.Clear();
             videoMetrics = new VideoMetrics();
             projectDirty = false;
             UpdateTitleState();
@@ -415,10 +427,12 @@ namespace SubtitleForge
                 if (pendingVideoPlay)
                 {
                     VideoElement.Play();
+                    videoPlayRequested = true;
                 }
                 else
                 {
                     VideoElement.Pause();
+                    videoPlayRequested = false;
                 }
 
                 pendingVideoSeekSeconds = null;
@@ -1609,7 +1623,7 @@ namespace SubtitleForge
 
             // Decoding 1080p+ frames is what makes scrubbing stutter: give the preview a cached
             // 540p proxy in the background and switch to it when it is ready.
-            StartProxyBuild(ffmpeg, path);
+            QueueProxyBuild(path, total);
         }
 
         private async Task BuildWaveformAsync(string ffmpegPath, string path, TimelineSegment segment)
@@ -1636,85 +1650,223 @@ namespace SubtitleForge
             }
         }
 
-        private void StartProxyBuild(string ffmpegPath, string sourcePath)
+        /// <summary>
+        /// Queues a preview proxy for one source file. Proxies are keyed by the file itself, so a
+        /// clip that was moved, split or re-imported reuses the one already on disk.
+        /// </summary>
+        private void QueueProxyBuild(string? sourcePath, double durationSeconds)
         {
-            if (proxyCancellation != null)
-            {
-                proxyCancellation.Cancel();
-            }
-
-            CancellationTokenSource cancellation = new CancellationTokenSource();
-            proxyCancellation = cancellation;
-            CancellationToken token = cancellation.Token;
-            VideoMetrics metrics = videoMetrics;
-
-            _ = Task.Run(async delegate
-            {
-                string? proxy = await ProxyMediaBuilder
-                    .BuildAsync(ffmpegPath, sourcePath, metrics, token)
-                    .ConfigureAwait(false);
-
-                if (string.IsNullOrEmpty(proxy) || token.IsCancellationRequested)
-                {
-                    return;
-                }
-
-                Dispatcher.BeginInvoke(new Action(delegate
-                {
-                    if (token.IsCancellationRequested
-                        || !string.Equals(videoPath, sourcePath, StringComparison.OrdinalIgnoreCase))
-                    {
-                        return;
-                    }
-
-                    videoProxyPath = proxy;
-
-                    // Hand the preview over to the proxy without moving the playhead.
-                    currentVideoSegment = null;
-                    SafeSeek(TimeSpan.FromSeconds(TrackTimelineView.PlayheadSeconds));
-                    SetStatus("Preview is now decoding a 540p proxy — seeking and playback stay smooth. Export still uses the original file.");
-                }));
-            });
-        }
-
-        private async void StartProxyForCurrentVideoAsync()
-        {
-            string sourcePath = videoPath ?? string.Empty;
             if (string.IsNullOrEmpty(sourcePath) || !File.Exists(sourcePath))
             {
                 return;
             }
 
-            string? ffmpeg = FfmpegLocator.Resolve("ffmpeg", App.Settings.FfmpegDirectory);
-            string? ffprobe = FfmpegLocator.Resolve("ffprobe", App.Settings.FfmpegDirectory);
-            if (ffmpeg == null || ffprobe == null)
+            if (sourceProxies.ContainsKey(sourcePath))
             {
                 return;
             }
 
-            VideoMetrics metrics = videoMetrics;
-            if (!metrics.HasVideo)
+            if (sourceReadyFractions.ContainsKey(sourcePath))
             {
-                try
+                // Already building, already done, or already known to need nothing.
+                return;
+            }
+
+            foreach (KeyValuePair<string, double> queued in pendingProxyJobs)
+            {
+                if (string.Equals(queued.Key, sourcePath, StringComparison.OrdinalIgnoreCase))
                 {
-                    metrics = await MediaInspector
-                        .GetVideoMetricsAsync(ffprobe, sourcePath, CancellationToken.None)
-                        .ConfigureAwait(true);
-                    videoMetrics = metrics;
-                }
-                catch (Exception exception)
-                {
-                    CrashLog.Write(exception, "VideoMetricsProbe");
                     return;
                 }
             }
 
-            if (!metrics.HasVideo || metrics.Height <= ProxyMediaBuilder.ProxyHeight)
+            pendingProxyJobs.Enqueue(new KeyValuePair<string, double>(sourcePath, durationSeconds));
+            SetSourceReady(sourcePath, 0.0, null);
+            _ = PumpProxyQueueAsync();
+        }
+
+        private async Task PumpProxyQueueAsync()
+        {
+            if (proxyBuildRunning)
             {
                 return;
             }
 
-            StartProxyBuild(ffmpeg, sourcePath);
+            proxyBuildRunning = true;
+
+            try
+            {
+                while (pendingProxyJobs.Count > 0)
+                {
+                    KeyValuePair<string, double> job = pendingProxyJobs.Dequeue();
+                    string sourcePath = job.Key;
+                    double duration = job.Value;
+
+                    if (sourceProxies.ContainsKey(sourcePath))
+                    {
+                        continue;
+                    }
+
+                    string? ffmpeg = FfmpegLocator.Resolve("ffmpeg", App.Settings.FfmpegDirectory);
+                    string? ffprobe = FfmpegLocator.Resolve("ffprobe", App.Settings.FfmpegDirectory);
+                    if (ffmpeg == null || ffprobe == null)
+                    {
+                        SetSourceReady(sourcePath, 1.0, null);
+                        continue;
+                    }
+
+                    try
+                    {
+                        if (duration <= 0.0)
+                        {
+                            duration = await MediaInspector
+                                .GetDurationSecondsAsync(ffprobe, sourcePath, CancellationToken.None)
+                                .ConfigureAwait(false);
+                        }
+
+                        VideoMetrics metrics = await MediaInspector
+                            .GetVideoMetricsAsync(ffprobe, sourcePath, CancellationToken.None)
+                            .ConfigureAwait(false);
+
+                        if (!metrics.HasVideo || metrics.Height <= ProxyMediaBuilder.ProxyHeight)
+                        {
+                            // Shrinking this would gain nothing: it is already cheap to seek.
+                            SetSourceReady(sourcePath, 1.0, null);
+                            continue;
+                        }
+
+                        CancellationTokenSource cancellation = new CancellationTokenSource();
+                        proxyCancellation = cancellation;
+                        CancellationToken token = cancellation.Token;
+
+                        string? proxy;
+                        try
+                        {
+                            proxy = await ProxyMediaBuilder
+                                .BuildAsync(
+                                    ffmpeg,
+                                    sourcePath,
+                                    metrics,
+                                    duration,
+                                    delegate (double fraction)
+                                    {
+                                        ReportProxyProgress(sourcePath, fraction);
+                                    },
+                                    token)
+                                .ConfigureAwait(false);
+                        }
+                        finally
+                        {
+                            proxyCancellation = null;
+                            cancellation.Dispose();
+                        }
+
+                        if (string.IsNullOrEmpty(proxy))
+                        {
+                            // Encoding failed or was cancelled: the original still plays, so do
+                            // not leave a permanently grey bar behind.
+                            SetSourceReady(sourcePath, 1.0, null);
+                            continue;
+                        }
+
+                        SetSourceReady(sourcePath, 1.0, proxy);
+                    }
+                    catch (Exception exception)
+                    {
+                        CrashLog.Write(exception, "ProxyQueue");
+                        SetSourceReady(sourcePath, 1.0, null);
+                    }
+                }
+            }
+            finally
+            {
+                proxyBuildRunning = false;
+            }
+        }
+
+        private double SourceReadyFraction(string? sourcePath)
+        {
+            if (string.IsNullOrEmpty(sourcePath))
+            {
+                return 1.0;
+            }
+
+            double fraction;
+            if (sourceReadyFractions.TryGetValue(sourcePath, out fraction))
+            {
+                return fraction;
+            }
+
+            // Not tracked: no proxy needed, or one is already cached from an earlier session.
+            return 1.0;
+        }
+
+        private void ReportProxyProgress(string sourcePath, double fraction)
+        {
+            RunOnUi(delegate
+            {
+                double previous;
+                bool known = sourceReadyFractions.TryGetValue(sourcePath, out previous);
+                if (known && (int)Math.Round(previous * 100.0) == (int)Math.Round(fraction * 100.0))
+                {
+                    return;
+                }
+
+                sourceReadyFractions[sourcePath] = fraction < 0.0 ? 0.0 : (fraction > 1.0 ? 1.0 : fraction);
+                TrackTimelineView.Refresh();
+
+                int percent = (int)Math.Round(fraction * 100.0);
+                if (percent < 100)
+                {
+                    SetStatus("Building the preview proxy for " + Path.GetFileName(sourcePath) + " — "
+                        + percent.ToString(CultureInfo.InvariantCulture)
+                        + "%. The blue bar on the ruler shows how much already plays smoothly; until then the original is used.");
+                }
+            });
+        }
+
+        private void SetSourceReady(string sourcePath, double fraction, string? proxyPath)
+        {
+            RunOnUi(delegate
+            {
+                if (!string.IsNullOrEmpty(proxyPath))
+                {
+                    sourceProxies[sourcePath] = proxyPath;
+                }
+
+                sourceReadyFractions[sourcePath] = fraction;
+                TrackTimelineView.Refresh();
+
+                if (string.IsNullOrEmpty(proxyPath))
+                {
+                    return;
+                }
+
+                SetStatus("Preview proxy ready for " + Path.GetFileName(sourcePath)
+                    + " — the blue bar on the ruler covers it. Export and transcription still use the original file.");
+
+                // Swap the preview over if the playhead sits on a clip from this source.
+                double playheadSeconds = TrackTimelineView.PlayheadSeconds;
+                TimelineSegment? active = ActiveVideoSegment(playheadSeconds);
+                if (active != null && !string.IsNullOrEmpty(active.SourcePath)
+                    && string.Equals(active.SourcePath, sourcePath, StringComparison.OrdinalIgnoreCase))
+                {
+                    currentVideoSegment = null;
+                    videoPlayRequested = false;
+                    SafeSeek(TimeSpan.FromSeconds(playheadSeconds));
+                }
+            });
+        }
+
+        private void RunOnUi(Action action)
+        {
+            if (Dispatcher.CheckAccess())
+            {
+                action();
+                return;
+            }
+
+            Dispatcher.BeginInvoke(action);
         }
 
         private async Task LoadThumbnailsAsync(string ffmpegPath, TimelineSegment segment, double sourceDuration)
@@ -2860,7 +3012,9 @@ namespace SubtitleForge
                 timelineInitialized = true;
                 fallbackVideoSegment = null;
                 projectPath = path;
-                videoProxyPath = null;
+                pendingProxyJobs.Clear();
+                sourceProxies.Clear();
+                sourceReadyFractions.Clear();
                 videoMetrics = new VideoMetrics();
                 projectDirty = false;
                 UpdateTitleState();
@@ -2870,7 +3024,23 @@ namespace SubtitleForge
 
                 projectDirty = false;
                 UpdateTitleState();
-                StartProxyForCurrentVideoAsync();
+
+                // Warm up proxies for every distinct video source the project references.
+                foreach (TimelineTrack track in tracks)
+                {
+                    if (track.Kind != TrackKind.Video)
+                    {
+                        continue;
+                    }
+
+                    foreach (TimelineSegment segment in track.Segments)
+                    {
+                        if (!string.IsNullOrEmpty(segment.SourcePath))
+                        {
+                            QueueProxyBuild(segment.SourcePath, 0.0);
+                        }
+                    }
+                }
             }
             catch (Exception exception)
             {
@@ -3309,15 +3479,15 @@ namespace SubtitleForge
 
             string? path = segment == null ? null : segment.SourcePath;
 
-            // The preview prefers the cached 540p proxy of the project's own video file; clips
-            // that point at other files play from the original.
-            if (!string.IsNullOrEmpty(path)
-                && !string.IsNullOrEmpty(videoProxyPath)
-                && !string.IsNullOrEmpty(videoPath)
-                && string.Equals(path, videoPath, StringComparison.OrdinalIgnoreCase)
-                && File.Exists(videoProxyPath))
+            // The preview prefers the cached 540p proxy of the clip's source file, whichever
+            // file that is and wherever the clip has been moved to.
+            if (!string.IsNullOrEmpty(path))
             {
-                path = videoProxyPath;
+                string proxyPath;
+                if (sourceProxies.TryGetValue(path, out proxyPath) && File.Exists(proxyPath))
+                {
+                    path = proxyPath;
+                }
             }
 
             if (string.IsNullOrEmpty(path) || !File.Exists(path))
@@ -3335,6 +3505,7 @@ namespace SubtitleForge
                 VideoElement.Visibility = Visibility.Hidden;
                 pendingVideoSeekSeconds = null;
                 pendingVideoPlay = false;
+                videoPlayRequested = false;
                 return;
             }
 
@@ -3367,15 +3538,18 @@ namespace SubtitleForge
             if (!videoElementReady)
             {
                 // Still opening — MediaOpened applies the pending cue.
+                videoPlayRequested = false;
                 return;
             }
 
             try
             {
                 VideoElement.Position = TimeSpan.FromSeconds(mediaSeconds);
+                videoPlayRequested = false;
                 if (play)
                 {
                     VideoElement.Play();
+                    videoPlayRequested = true;
                 }
                 else
                 {
@@ -3394,9 +3568,37 @@ namespace SubtitleForge
         private void FollowTimeline(double seconds, bool play)
         {
             TimelineSegment? videoSegment = ActiveVideoSegment(seconds);
+
             if (!ReferenceEquals(videoSegment, currentVideoSegment))
             {
                 CueVideoSegment(videoSegment, seconds, play);
+            }
+            else if (!play)
+            {
+                try
+                {
+                    VideoElement.Pause();
+                }
+                catch (Exception)
+                {
+                    // Nothing loaded.
+                }
+
+                videoPlayRequested = false;
+            }
+            else if (videoSegment != null && videoElementReady && !videoPlayRequested)
+            {
+                // The clip under the playhead did not change, so nothing had asked the element
+                // to roll — that is why pressing Play appeared to do nothing.
+                try
+                {
+                    VideoElement.Play();
+                    videoPlayRequested = true;
+                }
+                catch (Exception exception)
+                {
+                    CrashLog.Write(exception, "FollowPlay");
+                }
             }
 
             CueAudioSegments(seconds, play);
@@ -3431,6 +3633,7 @@ namespace SubtitleForge
         {
             playbackClock.Stop();
             isPlaying = false;
+            videoPlayRequested = false;
 
             if (PlayPauseButton != null)
             {
@@ -3579,11 +3782,26 @@ namespace SubtitleForge
                         continue;
                     }
 
-                    // Dropped files become their own audio lane, named after the file, exactly
-                    // like a recorded take.
-                    TimelineTrack track = new TimelineTrack(TrackKind.Audio, Path.GetFileName(path), NextTrackColor(TrackKind.Audio));
+                    // Dropped files become their own lane named after the file: audio files get
+                    // a waveform exactly like a recorded take, video files get a video lane with
+                    // a thumbnail strip and their own preview proxy.
+                    VideoMetrics droppedMetrics = new VideoMetrics();
+                    try
+                    {
+                        droppedMetrics = await MediaInspector
+                            .GetVideoMetricsAsync(ffprobe, path, CancellationToken.None)
+                            .ConfigureAwait(true);
+                    }
+                    catch (Exception exception)
+                    {
+                        CrashLog.Write(exception, "DropMetrics");
+                    }
 
-                    TimelineSegment segment = new TimelineSegment(TrackKind.Audio);
+                    TrackKind kind = droppedMetrics.HasVideo ? TrackKind.Video : TrackKind.Audio;
+
+                    TimelineTrack track = new TimelineTrack(kind, Path.GetFileName(path), NextTrackColor(kind));
+
+                    TimelineSegment segment = new TimelineSegment(kind);
                     segment.StartSeconds = insertSeconds;
                     segment.SourceOffsetSeconds = 0.0;
                     segment.DurationSeconds = fileDuration;
@@ -3604,7 +3822,29 @@ namespace SubtitleForge
 
                     added++;
 
-                    if (ffmpeg != null)
+                    if (ffmpeg != null && kind == TrackKind.Video)
+                    {
+                        try
+                        {
+                            int thumbnailCount = 16;
+                            List<BitmapSource> extracted = await ThumbnailExtractor
+                                .ExtractAsync(ffmpeg, path, fileDuration, thumbnailCount, 56, CancellationToken.None)
+                                .ConfigureAwait(true);
+
+                            if (extracted.Count > 0)
+                            {
+                                segment.Thumbnails = extracted.ToArray();
+                            }
+                        }
+                        catch (Exception exception)
+                        {
+                            CrashLog.Write(exception, "DropThumbnails");
+                        }
+
+                        // Only this file gets encoded — cached proxies of other sources stay.
+                        QueueProxyBuild(path, fileDuration);
+                    }
+                    else if (ffmpeg != null)
                     {
                         try
                         {
@@ -3634,7 +3874,7 @@ namespace SubtitleForge
                 return;
             }
 
-            string label = added == 1 ? "add audio file" : "add " + added.ToString(CultureInfo.InvariantCulture) + " audio files";
+            string label = added == 1 ? "add dropped file" : "add " + added.ToString(CultureInfo.InvariantCulture) + " dropped files";
             UndoStackPush(label, delegate
             {
                 RestoreTimeline(before);
@@ -3643,8 +3883,8 @@ namespace SubtitleForge
             AfterTimelineStructureChanged();
 
             SetStatus(added == 1
-                ? "Added the dropped audio file as its own track. Ctrl+Z undoes it."
-                : "Added " + added.ToString(CultureInfo.InvariantCulture) + " dropped audio files as tracks. Ctrl+Z undoes it.");
+                ? "Added the dropped file as its own track. Ctrl+Z undoes it."
+                : "Added " + added.ToString(CultureInfo.InvariantCulture) + " dropped files as tracks. Ctrl+Z undoes it.");
         }
 
         // ── Keyboard shortcuts ─────────────────────────────────────────────
@@ -4021,6 +4261,8 @@ namespace SubtitleForge
             }
 
             DisposeAudioPlayers();
+            pendingProxyJobs.Clear();
+
             if (proxyCancellation != null)
             {
                 proxyCancellation.Cancel();

@@ -45,6 +45,9 @@ namespace SubtitleForge.Services
     /// </summary>
     public class SpeechTranscriber
     {
+        private static readonly TimeSpan DuplicateGapTolerance = TimeSpan.FromSeconds(0.10);
+        private static readonly TimeSpan DuplicateDurationTolerance = TimeSpan.FromSeconds(0.10);
+
         public async Task<TranscriptionResult> TranscribeAsync(
             TranscriptionRequest request,
             IProgress<double>? progress,
@@ -102,6 +105,9 @@ namespace SubtitleForge.Services
             {
                 WhisperProcessorBuilder builder = factory.CreateBuilder()
                     .WithThreads(Math.Max(1, request.Threads))
+                    // Whisper otherwise feeds the previous window back in as the initial prompt and
+                    // can loop on one sentence for minutes; drop that context.
+                    .WithNoContext()
                     .WithLanguage(string.IsNullOrWhiteSpace(request.Language) ? "auto" : request.Language)
                     .SplitOnWord()
                     .WithProgressHandler(delegate (int percent)
@@ -177,7 +183,7 @@ namespace SubtitleForge.Services
             }
 
             stopwatch.Stop();
-            result.Cues = cues;
+            result.Cues = CollapseRepeatedCues(cues);
             result.DetectedLanguage = detectedLanguage;
             result.Elapsed = stopwatch.Elapsed;
             progress?.Report(1.0);
@@ -225,6 +231,74 @@ namespace SubtitleForge.Services
             }
 
             return false;
+        }
+
+        // ── Cue cleanup
+
+        /// <summary>
+        /// Whisper can repeat one line for several windows when it loops. A run of consecutive cues that
+        /// share the same text, the same length and no audible gap between them becomes a single cue:
+        /// the first start is kept and the end is stretched to where the last duplicate ended.
+        /// </summary>
+        private static List<SubtitleCue> CollapseRepeatedCues(List<SubtitleCue> cues)
+        {
+            if (cues.Count < 2)
+            {
+                return cues;
+            }
+
+            List<SubtitleCue> collapsed = new List<SubtitleCue>(cues.Count);
+            SubtitleCue? runStart = null;
+            SubtitleCue? lastInRun = null;
+
+            foreach (SubtitleCue cue in cues)
+            {
+                if (runStart != null && lastInRun != null && IsRepeatedCue(lastInRun, cue))
+                {
+                    lastInRun = cue;
+                    continue;
+                }
+
+                if (runStart != null && lastInRun != null)
+                {
+                    runStart.End = lastInRun.End;
+                    collapsed.Add(runStart);
+                }
+
+                runStart = cue;
+                lastInRun = cue;
+            }
+
+            if (runStart != null && lastInRun != null)
+            {
+                runStart.End = lastInRun.End;
+                collapsed.Add(runStart);
+            }
+
+            return collapsed;
+        }
+
+        /// <summary>
+        /// True when <paramref name="candidate"/> is the same line as <paramref name="previous"/>,
+        /// starts right after it and lasts about as long.
+        /// </summary>
+        private static bool IsRepeatedCue(SubtitleCue previous, SubtitleCue candidate)
+        {
+            string previousText = previous.Text.Trim();
+            string candidateText = candidate.Text.Trim();
+            if (!string.Equals(previousText, candidateText, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            TimeSpan gap = candidate.Start - previous.End;
+            if (gap > DuplicateGapTolerance)
+            {
+                return false;
+            }
+
+            TimeSpan durationDifference = previous.Duration - candidate.Duration;
+            return Math.Abs(durationDifference.TotalSeconds) <= DuplicateDurationTolerance.TotalSeconds;
         }
     }
 

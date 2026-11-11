@@ -41,7 +41,12 @@ namespace SubtitleForge
         private readonly UndoStack undoStack = new UndoStack();
         private readonly MicrophoneRecorder microphoneRecorder = new MicrophoneRecorder();
 
-        private TimelineTrack? recordingTrack;
+        private TimelineSegment? recordingSegment;
+        private string? projectPath;
+        private string lastRuntimeDescription = string.Empty;
+        private string lastDetectedLanguage = string.Empty;
+        private bool suppressTimelineBuild;
+        private bool suppressCudaCheck;
         private short[]? recordingUndoSamples;
         private float[]? recordingUndoPeaks;
         private double recordingUndoDuration;
@@ -139,7 +144,9 @@ namespace SubtitleForge
                 }
             }
 
+            suppressCudaCheck = true;
             GpuCheckBox.IsChecked = settings.UseGpu;
+            suppressCudaCheck = false;
             TranslateCheckBox.IsChecked = settings.TranslateToEnglish;
 
             MaxCharactersTextBox.Text = settings.MaximumCharactersPerCue.ToString(CultureInfo.InvariantCulture);
@@ -493,9 +500,19 @@ namespace SubtitleForge
         {
             try
             {
-                if (VideoElement.Source != null)
+                if (VideoElement.Source == null)
                 {
-                    VideoElement.Position = position;
+                    return;
+                }
+
+                VideoElement.Position = position;
+
+                // MediaElement does not repaint a frame for a Position change while it is
+                // paused, so nudge it through a play/pause cycle to force the new frame out.
+                if (!isPlaying)
+                {
+                    VideoElement.Play();
+                    VideoElement.Pause();
                 }
             }
             catch (Exception exception)
@@ -1087,7 +1104,7 @@ namespace SubtitleForge
                     SetProgress(fraction * 0.10);
                 });
 
-                string modelPath = await WhisperModelStore
+                await WhisperModelStore
                     .EnsureModelAsync(model.FileName, modelStatus, downloadProgress, token)
                     .ConfigureAwait(true);
 
@@ -1107,35 +1124,28 @@ namespace SubtitleForge
                     }
                 }
 
-                SetStatus("Extracting audio…");
-                IProgress<double> extractProgress = new Progress<double>(delegate (double fraction)
+                SetStatus("Collecting audio clips…");
+                List<TimelineSegment> audioSegments = AudioSegmentsForTranscription();
+                if (audioSegments.Count == 0)
                 {
-                    SetProgress(0.10 + (fraction * 0.15));
-                });
+                    // No timeline yet (or no audio lanes): fall back to the video's own audio.
+                    TimelineSegment fallback = new TimelineSegment(TrackKind.Audio);
+                    fallback.StartSeconds = 0.0;
+                    fallback.SourceOffsetSeconds = 0.0;
+                    fallback.DurationSeconds = durationSeconds;
+                    fallback.SourcePath = videoPath;
+                    audioSegments.Add(fallback);
+                }
 
-                await AudioTrackExtractor
-                    .ExtractAsync(ffmpeg, videoPath, audioPath, durationSeconds, extractProgress, token)
-                    .ConfigureAwait(true);
+                SetProgress(0.10);
+                DateTime startedUtc = DateTime.UtcNow;
 
-                SetStatus("Transcribing… (first run also loads the model, this can take a moment)");
-                TranscriptionRequest request = new TranscriptionRequest();
-                request.WavPath = audioPath;
-                request.ModelPath = modelPath;
-                request.Language = App.Settings.Language;
-                request.TranslateToEnglish = App.Settings.TranslateToEnglish;
-                request.UseGpu = App.Settings.UseGpu;
-                request.SkipNonSpeech = App.Settings.SkipNonSpeech;
-                request.Threads = App.Settings.Threads;
+                List<SubtitleCue> combined = await TranscribeSegmentsAsync(
+                    audioSegments,
+                    Path.GetDirectoryName(audioPath) ?? Path.GetTempPath(),
+                    token).ConfigureAwait(true);
 
-                IProgress<double> transcriptionProgress = new Progress<double>(delegate (double fraction)
-                {
-                    SetProgress(0.25 + (fraction * 0.75));
-                });
-
-                TranscriptionResult result = await transcriber
-                    .TranscribeAsync(request, transcriptionProgress, new Progress<string>(SetStatus), token)
-                    .ConfigureAwait(true);
-
+                TimeSpan elapsed = DateTime.UtcNow - startedUtc;
                 SetStatus("Cleaning up cues…");
                 CueSplitOptions options = new CueSplitOptions();
                 options.MaximumCharactersPerCue = App.Settings.MaximumCharactersPerCue;
@@ -1143,7 +1153,7 @@ namespace SubtitleForge
                 options.MinimumCueDurationSeconds = App.Settings.MinimumCueDurationSeconds;
                 options.MinimumGapSeconds = App.Settings.MinimumGapSeconds;
 
-                List<SubtitleCue> normalized = CuePostProcessor.Normalize(result.Cues, options);
+                List<SubtitleCue> normalized = CuePostProcessor.Normalize(combined, options);
 
                 cues.Clear();
                 foreach (SubtitleCue cue in normalized)
@@ -1152,15 +1162,16 @@ namespace SubtitleForge
                 }
 
                 CuePostProcessor.Renumber(cues);
-                RuntimeText.Text = "Runtime: " + result.RuntimeDescription;
+                RuntimeText.Text = "Runtime: " + lastRuntimeDescription;
                 SetProgress(1.0);
                 DrawTimeline();
 
-                string language = string.IsNullOrEmpty(result.DetectedLanguage) ? string.Empty : ", language " + result.DetectedLanguage;
+                string language = string.IsNullOrEmpty(lastDetectedLanguage) ? string.Empty : ", language " + lastDetectedLanguage;
                 SetStatus(
-                    "Done: " + cues.Count.ToString(CultureInfo.InvariantCulture) + " cues in "
-                    + result.Elapsed.ToString(@"mm\:ss", CultureInfo.InvariantCulture)
-                    + " on " + result.RuntimeDescription + language + ".");
+                    "Done: " + cues.Count.ToString(CultureInfo.InvariantCulture) + " cues from "
+                    + audioSegments.Count.ToString(CultureInfo.InvariantCulture) + " clip(s) in "
+                    + elapsed.ToString(@"mm\:ss", CultureInfo.InvariantCulture)
+                    + " on " + lastRuntimeDescription + language + ".");
 
                 if (cues.Count > 0)
                 {
@@ -1445,7 +1456,7 @@ namespace SubtitleForge
 
         private async Task EnsureTimelineAsync()
         {
-            if (timelineInitialized || string.IsNullOrEmpty(videoPath) || durationSeconds <= 0.0)
+            if (suppressTimelineBuild || timelineInitialized || string.IsNullOrEmpty(videoPath) || durationSeconds <= 0.0)
             {
                 return;
             }
@@ -1454,13 +1465,15 @@ namespace SubtitleForge
             string path = videoPath;
             double total = durationSeconds;
 
-            TimelineTrack videoTrack = new TimelineTrack(TrackKind.Video, Path.GetFileName(path), TrackColors.VideoDefault);
-            videoTrack.StartSeconds = 0.0;
-            videoTrack.SourceOffsetSeconds = 0.0;
-            videoTrack.DurationSeconds = total;
-            videoTrack.SourceDuration = total;
-            videoTrack.SourcePath = path;
-            videoTrack.IsSelected = true;
+            TimelineTrack videoTrack = new TimelineTrack(TrackKind.Video, "Video", TrackColors.VideoDefault);
+            TimelineSegment videoSegment = new TimelineSegment(TrackKind.Video);
+            videoSegment.StartSeconds = 0.0;
+            videoSegment.SourceOffsetSeconds = 0.0;
+            videoSegment.DurationSeconds = total;
+            videoSegment.SourceDuration = total;
+            videoSegment.SourcePath = path;
+            videoSegment.IsSelected = true;
+            videoTrack.Segments.Add(videoSegment);
             tracks.Add(videoTrack);
 
             TimelineTrack audioTrack = new TimelineTrack(
@@ -1468,9 +1481,15 @@ namespace SubtitleForge
                 "Audio " + nextAudioTrackNumber.ToString(CultureInfo.InvariantCulture),
                 TrackColors.AudioDefault);
             nextAudioTrackNumber++;
-            audioTrack.StartSeconds = 0.0;
-            audioTrack.DurationSeconds = total;
-            audioTrack.IsSelected = true;
+
+            TimelineSegment audioSegment = new TimelineSegment(TrackKind.Audio);
+            audioSegment.StartSeconds = 0.0;
+            audioSegment.SourceOffsetSeconds = 0.0;
+            audioSegment.DurationSeconds = total;
+            audioSegment.SourceDuration = total;
+            audioSegment.SourcePath = path;
+            audioSegment.IsSelected = true;
+            audioTrack.Segments.Add(audioSegment);
             tracks.Add(audioTrack);
 
             UpdateTimelineDuration();
@@ -1510,8 +1529,8 @@ namespace SubtitleForge
                     return;
                 }
 
-                audioTrack.Samples = samples;
-                audioTrack.RebuildPeaks();
+                audioSegment.Samples = samples;
+                audioSegment.RebuildPeaks();
                 TrackTimelineView.Refresh();
             }
             catch (Exception exception)
@@ -1520,6 +1539,16 @@ namespace SubtitleForge
                 SetStatus("The audio waveform could not be built: " + exception.Message);
             }
 
+            await LoadThumbnailsAsync(ffmpeg, videoSegment, total).ConfigureAwait(true);
+
+            TrackTimelineView.Refresh();
+            UpdateTimelineDuration();
+            UpdateCommandStates();
+            SetStatus("Timeline ready. Space plays, Ctrl+Shift+D splits, Ctrl+Z undoes.");
+        }
+
+        private async Task LoadThumbnailsAsync(string ffmpegPath, TimelineSegment segment, double sourceDuration)
+        {
             try
             {
                 double width = TrackTimelineView.ActualWidth > 240.0 ? TrackTimelineView.ActualWidth : 900.0;
@@ -1534,24 +1563,25 @@ namespace SubtitleForge
                     thumbnailCount = 48;
                 }
 
+                string? sourcePath = segment.SourcePath;
+                if (string.IsNullOrEmpty(sourcePath) || !File.Exists(sourcePath))
+                {
+                    return;
+                }
+
                 List<BitmapSource> extracted = await ThumbnailExtractor
-                    .ExtractAsync(ffmpeg, path, total, thumbnailCount, 56, CancellationToken.None)
+                    .ExtractAsync(ffmpegPath, sourcePath, sourceDuration, thumbnailCount, 56, CancellationToken.None)
                     .ConfigureAwait(true);
 
-                if (string.Equals(videoPath, path, StringComparison.OrdinalIgnoreCase) && extracted.Count > 0)
+                if (extracted.Count > 0)
                 {
-                    videoTrack.Thumbnails = extracted.ToArray();
+                    segment.Thumbnails = extracted.ToArray();
                 }
             }
             catch (Exception exception)
             {
                 CrashLog.Write(exception, "TimelineThumbnails");
             }
-
-            TrackTimelineView.Refresh();
-            UpdateTimelineDuration();
-            UpdateCommandStates();
-            SetStatus("Timeline ready. Space plays, Ctrl+Shift+D splits, Ctrl+Z undoes.");
         }
 
         private void UpdateTimelineDuration()
@@ -1559,9 +1589,9 @@ namespace SubtitleForge
             double total = durationSeconds;
             foreach (TimelineTrack track in tracks)
             {
-                if (track.EndSeconds > total)
+                if (track.ContentEndSeconds > total)
                 {
-                    total = track.EndSeconds;
+                    total = track.ContentEndSeconds;
                 }
             }
 
@@ -1569,53 +1599,128 @@ namespace SubtitleForge
             TrackTimelineView.Refresh();
         }
 
-        private List<TimelineTrack> SelectedTracks
+        private void AfterTimelineStructureChanged()
         {
-            get
+            UpdateTimelineDuration();
+            UpdateCommandStates();
+            TrackTimelineView.Refresh();
+        }
+
+        // ── Selection ──────────────────────────────────────────────────────
+
+        private List<KeyValuePair<TimelineTrack, TimelineSegment>> SelectedSegments()
+        {
+            List<KeyValuePair<TimelineTrack, TimelineSegment>> selected = new List<KeyValuePair<TimelineTrack, TimelineSegment>>();
+            foreach (TimelineTrack track in tracks)
             {
-                List<TimelineTrack> selection = new List<TimelineTrack>();
-                foreach (TimelineTrack track in tracks)
+                foreach (TimelineSegment segment in track.Segments)
                 {
-                    if (track.IsSelected)
+                    if (segment.IsSelected)
                     {
-                        selection.Add(track);
+                        selected.Add(new KeyValuePair<TimelineTrack, TimelineSegment>(track, segment));
                     }
                 }
+            }
 
-                return selection;
+            return selected;
+        }
+
+        private List<TimelineTrack> SelectedTrackRows()
+        {
+            List<TimelineTrack> selected = new List<TimelineTrack>();
+            foreach (TimelineTrack track in tracks)
+            {
+                if (track.IsSelected)
+                {
+                    selected.Add(track);
+                }
+            }
+
+            return selected;
+        }
+
+        private void ClearSelection()
+        {
+            foreach (TimelineTrack track in tracks)
+            {
+                track.IsSelected = false;
+                track.ClearSegmentSelection();
             }
         }
 
-        private TimelineTrack? FirstSelectedAudioTrack
+        private void SelectTrackRow(TimelineTrack track, bool additive)
         {
-            get
+            if (!additive)
             {
-                foreach (TimelineTrack track in tracks)
-                {
-                    if (track.Kind == TrackKind.Audio && track.IsSelected)
-                    {
-                        return track;
-                    }
-                }
-
-                foreach (TimelineTrack track in tracks)
-                {
-                    if (track.Kind == TrackKind.Audio)
-                    {
-                        return track;
-                    }
-                }
-
-                return null;
+                ClearSelection();
             }
+
+            track.IsSelected = true;
+            track.SelectAllSegments(true);
+            UpdateCommandStates();
+            TrackTimelineView.Refresh();
         }
 
-        private int CountAudioTracks()
+        private void SelectSegment(TimelineTrack track, TimelineSegment segment, bool additive)
+        {
+            if (!additive)
+            {
+                ClearSelection();
+            }
+
+            if (additive)
+            {
+                segment.IsSelected = !segment.IsSelected;
+            }
+            else
+            {
+                segment.IsSelected = true;
+            }
+
+            track.IsSelected = false;
+            UpdateCommandStates();
+            TrackTimelineView.Refresh();
+        }
+
+        private TimelineSegment? FirstSelectedAudioSegment()
+        {
+            foreach (TimelineTrack track in tracks)
+            {
+                if (track.Kind != TrackKind.Audio)
+                {
+                    continue;
+                }
+
+                foreach (TimelineSegment segment in track.Segments)
+                {
+                    if (segment.IsSelected)
+                    {
+                        return segment;
+                    }
+                }
+            }
+
+            foreach (TimelineTrack track in tracks)
+            {
+                if (track.Kind == TrackKind.Audio)
+                {
+                    TimelineSegment? first = track.FirstSegment();
+                    if (first != null)
+                    {
+                        return first;
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        private int CountTracks(TrackKind kind)
         {
             int count = 0;
             foreach (TimelineTrack track in tracks)
             {
-                if (track.Kind == TrackKind.Audio)
+                if (track.Kind == kind)
                 {
                     count++;
                 }
@@ -1624,15 +1729,52 @@ namespace SubtitleForge
             return count;
         }
 
-        private void SelectOnly(TimelineTrack track)
+        // ── Timeline snapshots (undo of every structural edit) ─────────────
+
+        private TimelineSnapshot CaptureTimeline()
         {
-            foreach (TimelineTrack candidate in tracks)
+            TimelineSnapshot snapshot = new TimelineSnapshot();
+            foreach (TimelineTrack track in tracks)
             {
-                candidate.IsSelected = ReferenceEquals(candidate, track);
+                TrackSnapshot trackSnapshot = new TrackSnapshot();
+                trackSnapshot.Track = track;
+                trackSnapshot.WasSelected = track.IsSelected;
+                foreach (TimelineSegment segment in track.Segments)
+                {
+                    SegmentSnapshot segmentSnapshot = new SegmentSnapshot();
+                    segmentSnapshot.Segment = segment;
+                    segmentSnapshot.StartSeconds = segment.StartSeconds;
+                    segmentSnapshot.WasSelected = segment.IsSelected;
+                    trackSnapshot.Segments.Add(segmentSnapshot);
+                }
+
+                snapshot.Tracks.Add(trackSnapshot);
             }
 
-            TrackTimelineView.Refresh();
+            return snapshot;
         }
+
+        private void RestoreTimeline(TimelineSnapshot snapshot)
+        {
+            tracks.Clear();
+            foreach (TrackSnapshot trackSnapshot in snapshot.Tracks)
+            {
+                trackSnapshot.Track.Segments.Clear();
+                foreach (SegmentSnapshot segmentSnapshot in trackSnapshot.Segments)
+                {
+                    segmentSnapshot.Segment.StartSeconds = segmentSnapshot.StartSeconds;
+                    segmentSnapshot.Segment.IsSelected = segmentSnapshot.WasSelected;
+                    trackSnapshot.Track.Segments.Add(segmentSnapshot.Segment);
+                }
+
+                trackSnapshot.Track.IsSelected = trackSnapshot.WasSelected;
+                tracks.Add(trackSnapshot.Track);
+            }
+
+            AfterTimelineStructureChanged();
+        }
+
+        // ── Seeking ────────────────────────────────────────────────────────
 
         private void SeekToSeconds(double seconds)
         {
@@ -1672,25 +1814,22 @@ namespace SubtitleForge
             SeekToSeconds(seconds);
         }
 
+        // ── Timeline mouse ─────────────────────────────────────────────────
+
         private void TrackTimelineMouseDown(object? sender, TrackMouseDownEventArgs e)
         {
-            if (e.ClickCount == 2 && e.IsHeader)
+            if (e.ClickCount == 2)
             {
                 BeginRename(e.Track);
                 return;
             }
 
-            if (e.ControlPressed)
-            {
-                e.Track.IsSelected = !e.Track.IsSelected;
-            }
-            else
-            {
-                SelectOnly(e.Track);
-            }
+            SelectTrackRow(e.Track, e.ControlPressed);
+        }
 
-            UpdateCommandStates();
-            SeekToSeconds(e.Seconds);
+        private void TrackTimelineSegmentMouseDown(object? sender, SegmentMouseDownEventArgs e)
+        {
+            SelectSegment(e.Track, e.Segment, e.ControlPressed);
         }
 
         private void TrackTimelineReorder(object? sender, TrackReorderEventArgs e)
@@ -1717,27 +1856,106 @@ namespace SubtitleForge
                 return;
             }
 
+            TimelineSnapshot before = CaptureTimeline();
             TimelineTrack moved = tracks[from];
             tracks.RemoveAt(from);
             tracks.Insert(target, moved);
 
             UndoStackPush("reorder tracks", delegate
             {
-                tracks.Remove(moved);
-                int restoreIndex = from > tracks.Count ? tracks.Count : from;
-                tracks.Insert(restoreIndex, moved);
-                UpdateTimelineDuration();
+                RestoreTimeline(before);
             });
 
-            UpdateTimelineDuration();
-            UpdateCommandStates();
+            AfterTimelineStructureChanged();
             SetStatus("Moved " + moved.Name + " to position " + (target + 1).ToString(CultureInfo.InvariantCulture) + ".");
+        }
+
+        private void TrackTimelineSegmentDropped(object? sender, SegmentDroppedEventArgs e)
+        {
+            TimelineSegment segment = e.Segment;
+            TimelineTrack sourceTrack = e.SourceTrack;
+
+            TimelineSnapshot before = CaptureTimeline();
+
+            TimelineTrack targetTrack;
+            bool createdTrack = false;
+            string createdName = string.Empty;
+
+            if (e.DropKind == TrackDropKind.ExistingTrack && e.TargetTrack != null)
+            {
+                targetTrack = e.TargetTrack;
+                if (!ReferenceEquals(targetTrack, sourceTrack))
+                {
+                    sourceTrack.Segments.Remove(segment);
+                    targetTrack.Segments.Add(segment);
+                }
+            }
+            else
+            {
+                createdName = NextTrackName(sourceTrack.Kind);
+                targetTrack = new TimelineTrack(sourceTrack.Kind, createdName, NextTrackColor(sourceTrack.Kind));
+                createdTrack = true;
+                sourceTrack.Segments.Remove(segment);
+
+                int insertIndex = e.TargetRowIndex;
+                if (insertIndex < 0)
+                {
+                    insertIndex = 0;
+                }
+
+                if (insertIndex > tracks.Count)
+                {
+                    insertIndex = tracks.Count;
+                }
+
+                tracks.Insert(insertIndex, targetTrack);
+                targetTrack.Segments.Add(segment);
+            }
+
+            segment.StartSeconds = Math.Max(0.0, e.NewStartSeconds);
+            targetTrack.PushAside(segment);
+
+            string label = createdTrack ? "move clip to new track " + createdName : "move clip";
+            UndoStackPush(label, delegate
+            {
+                RestoreTimeline(before);
+            });
+
+            AfterTimelineStructureChanged();
+
+            string where = createdTrack
+                ? "a new track (" + createdName + ")"
+                : targetTrack.Name;
+            SetStatus("Moved clip to " + where + " at "
+                + SubtitleCue.FormatTimestamp(TimeSpan.FromSeconds(segment.StartSeconds))
+                + ". Ctrl+Z undoes it.");
+        }
+
+        private string NextTrackName(TrackKind kind)
+        {
+            if (kind == TrackKind.Video)
+            {
+                return "Video " + (CountTracks(TrackKind.Video) + 1).ToString(CultureInfo.InvariantCulture);
+            }
+
+            string candidate = "Audio " + nextAudioTrackNumber.ToString(CultureInfo.InvariantCulture);
+            nextAudioTrackNumber++;
+            return candidate;
+        }
+
+        private Color NextTrackColor(TrackKind kind)
+        {
+            if (kind == TrackKind.Video)
+            {
+                return TrackColors.VideoDefault;
+            }
+
+            return TrackColors.NextAudioColor(CountTracks(TrackKind.Audio));
         }
 
         private void TrackTimelineContextMenu(object? sender, TimelineTrack track)
         {
-            SelectOnly(track);
-            UpdateCommandStates();
+            SelectTrackRow(track, false);
 
             ContextMenu menu = new ContextMenu();
 
@@ -1748,6 +1966,27 @@ namespace SubtitleForge
 
             MenuItem colorItem = new MenuItem();
             colorItem.Header = "Background colour";
+            AddColorEntries(colorItem, track);
+            menu.Items.Add(colorItem);
+
+            MenuItem splitItem = new MenuItem();
+            splitItem.Header = "Split at playhead (Ctrl+Shift+D)";
+            splitItem.Click += delegate { SplitSelectedSegments(); };
+            menu.Items.Add(splitItem);
+
+            MenuItem deleteItem = new MenuItem();
+            deleteItem.Header = "Delete track (Del)";
+            deleteItem.Click += delegate { DeleteSelection(); };
+
+            menu.Items.Add(new Separator());
+            menu.Items.Add(deleteItem);
+
+            menu.PlacementTarget = TrackTimelineView;
+            menu.IsOpen = true;
+        }
+
+        private void AddColorEntries(ItemCollection target, TimelineTrack track)
+        {
             for (int index = 0; index < TrackColors.Count; index++)
             {
                 Color paletteColor = TrackColors.GetColor(index);
@@ -1762,69 +2001,39 @@ namespace SubtitleForge
                 swatch.Fill = new SolidColorBrush(paletteColor);
                 entry.Icon = swatch;
 
-                TimelineTrack target = track;
+                TimelineTrack track2 = track;
                 Color chosen = paletteColor;
-                entry.Click += delegate { ApplyTrackColor(target, chosen); };
-                colorItem.Items.Add(entry);
+                entry.Click += delegate { ApplyTrackColor(track2, chosen); };
+                target.Add(entry);
             }
-
-            menu.Items.Add(colorItem);
-
-            MenuItem splitItem = new MenuItem();
-            splitItem.Header = "Split at playhead (Ctrl+Shift+D)";
-            splitItem.Click += delegate { SplitSelectedTracks(); };
-            menu.Items.Add(splitItem);
-
-            MenuItem deleteItem = new MenuItem();
-            deleteItem.Header = "Delete track";
-            deleteItem.Click += delegate { DeleteSelectedTracks(); };
-
-            menu.Items.Add(new Separator());
-            menu.Items.Add(deleteItem);
-
-            menu.PlacementTarget = TrackTimelineView;
-            menu.IsOpen = true;
         }
 
         // ── Track commands ─────────────────────────────────────────────────
 
         private void AddAudioTrackClick(object sender, RoutedEventArgs e)
         {
-            TimelineTrack track = AddAudioTrack();
-            SetStatus("Added " + track.Name + ".");
-        }
+            TimelineSnapshot before = CaptureTimeline();
+            string name = NextTrackName(TrackKind.Audio);
 
-        private TimelineTrack AddAudioTrack()
-        {
-            TimelineTrack track = new TimelineTrack(
-                TrackKind.Audio,
-                "Audio " + nextAudioTrackNumber.ToString(CultureInfo.InvariantCulture),
-                TrackColors.NextAudioColor(CountAudioTracks()));
-            nextAudioTrackNumber++;
-
-            track.StartSeconds = 0.0;
-            track.DurationSeconds = durationSeconds;
+            TimelineTrack track = new TimelineTrack(TrackKind.Audio, name, NextTrackColor(TrackKind.Audio));
             tracks.Add(track);
-            SelectOnly(track);
+            SelectTrackRow(track, false);
 
-            UndoStackPush("add " + track.Name, delegate
+            UndoStackPush("add " + name, delegate
             {
-                tracks.Remove(track);
-                UpdateTimelineDuration();
-                UpdateCommandStates();
+                RestoreTimeline(before);
             });
 
-            UpdateTimelineDuration();
-            UpdateCommandStates();
-            return track;
+            AfterTimelineStructureChanged();
+            SetStatus("Added " + name + " — press Record to fill it.");
         }
 
         private void RenameTrackClick(object sender, RoutedEventArgs e)
         {
-            List<TimelineTrack> selection = SelectedTracks;
+            List<TimelineTrack> selection = SelectedTrackRows();
             if (selection.Count == 0)
             {
-                SetStatus("Select a track to rename.");
+                SetStatus("Select a track (click its name) to rename it.");
                 return;
             }
 
@@ -1860,41 +2069,16 @@ namespace SubtitleForge
 
         private void TrackColorClick(object sender, RoutedEventArgs e)
         {
-            List<TimelineTrack> selection = SelectedTracks;
+            List<TimelineTrack> selection = SelectedTrackRows();
             if (selection.Count == 0)
             {
-                SetStatus("Select a track to recolour.");
+                SetStatus("Select a track (click its name) to recolour it.");
                 return;
             }
 
-            ShowColorMenu(TrackColorButton, selection[0]);
-        }
-
-        private void ShowColorMenu(FrameworkElement anchor, TimelineTrack track)
-        {
             ContextMenu menu = new ContextMenu();
-
-            for (int index = 0; index < TrackColors.Count; index++)
-            {
-                Color paletteColor = TrackColors.GetColor(index);
-                MenuItem entry = new MenuItem();
-                entry.Header = TrackColors.GetName(index);
-
-                Rectangle swatch = new Rectangle();
-                swatch.Width = 14.0;
-                swatch.Height = 14.0;
-                swatch.RadiusX = 2.0;
-                swatch.RadiusY = 2.0;
-                swatch.Fill = new SolidColorBrush(paletteColor);
-                entry.Icon = swatch;
-
-                TimelineTrack target = track;
-                Color chosen = paletteColor;
-                entry.Click += delegate { ApplyTrackColor(target, chosen); };
-                menu.Items.Add(entry);
-            }
-
-            menu.PlacementTarget = anchor;
+            AddColorEntries(menu, selection[0]);
+            menu.PlacementTarget = TrackColorButton;
             menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
             menu.IsOpen = true;
         }
@@ -1916,137 +2100,141 @@ namespace SubtitleForge
             });
 
             TrackTimelineView.Refresh();
-            SetStatus("Colour changed for " + track.Name + " (waveform colour follows automatically).");
+            SetStatus("Colour changed for " + track.Name + " (the waveform colour follows automatically).");
         }
 
         private void SplitTrackClick(object sender, RoutedEventArgs e)
         {
-            SplitSelectedTracks();
+            SplitSelectedSegments();
         }
 
-        private void SplitSelectedTracks()
+        private void SplitSelectedSegments()
         {
-            List<TimelineTrack> selection = SelectedTracks;
+            List<KeyValuePair<TimelineTrack, TimelineSegment>> selection = SelectedSegments();
             if (selection.Count == 0)
             {
-                SetStatus("Select the track (or tracks) you want to split.");
+                SetStatus("Select a clip (or clips) to split at the playhead.");
                 return;
             }
 
             double position = CurrentPosition.TotalSeconds;
+            TimelineSnapshot before = CaptureTimeline();
 
-            List<int> indexes = new List<int>();
-            List<TimelineTrack> heads = new List<TimelineTrack>();
-            List<TimelineTrack> tails = new List<TimelineTrack>();
-            List<double> previousDurations = new List<double>();
-
-            foreach (TimelineTrack track in selection)
+            int splitCount = 0;
+            foreach (KeyValuePair<TimelineTrack, TimelineSegment> entry in selection)
             {
-                int index = tracks.IndexOf(track);
-                if (index < 0)
+                TimelineTrack track = entry.Key;
+                TimelineSegment segment = entry.Value;
+                if (position <= segment.StartSeconds || position >= segment.EndSeconds)
                 {
                     continue;
                 }
 
-                double previousDuration = track.DurationSeconds;
-                TimelineTrack? tail = track.SplitAt(position);
+                TimelineSegment? tail = segment.SplitAt(position);
                 if (tail == null)
                 {
                     continue;
                 }
 
-                indexes.Add(index);
-                heads.Add(track);
-                tails.Add(tail);
-                previousDurations.Add(previousDuration);
+                // The second half keeps its own row: a new track of the same kind right below.
+                string name = NextTrackName(track.Kind);
+                TimelineTrack tailTrack = new TimelineTrack(track.Kind, name, track.BackgroundColor);
+                tailTrack.Segments.Add(tail);
+                tail.IsSelected = true;
+
+                int insertIndex = tracks.IndexOf(track);
+                if (insertIndex < 0)
+                {
+                    insertIndex = tracks.Count;
+                }
+
+                tracks.Insert(insertIndex + 1, tailTrack);
+                segment.IsSelected = false;
+                splitCount++;
             }
 
-            if (tails.Count == 0)
+            if (splitCount == 0)
             {
-                SetStatus("The playhead is not inside any selected track — move it first.");
+                SetStatus("The playhead is not inside any selected clip — move it first.");
                 return;
             }
 
-            for (int item = indexes.Count - 1; item >= 0; item--)
+            UndoStackPush("split clip", delegate
             {
-                tracks.Insert(indexes[item] + 1, tails[item]);
-                tails[item].IsSelected = true;
-                heads[item].IsSelected = false;
-            }
-
-            UndoStackPush("split " + tails.Count.ToString(CultureInfo.InvariantCulture) + " track(s)", delegate
-            {
-                for (int item = tails.Count - 1; item >= 0; item--)
-                {
-                    tracks.Remove(tails[item]);
-                    heads[item].DurationSeconds = previousDurations[item];
-                }
-
-                foreach (TimelineTrack head in heads)
-                {
-                    head.IsSelected = true;
-                }
-
-                UpdateTimelineDuration();
-                UpdateCommandStates();
+                RestoreTimeline(before);
             });
 
-            UpdateTimelineDuration();
-            UpdateCommandStates();
-            SetStatus("Split " + tails.Count.ToString(CultureInfo.InvariantCulture) + " track(s) at "
+            AfterTimelineStructureChanged();
+            SetStatus("Split " + splitCount.ToString(CultureInfo.InvariantCulture) + " clip(s) at "
                 + SubtitleCue.FormatTimestamp(TimeSpan.FromSeconds(position)) + ".");
         }
 
         private void DeleteTrackClick(object sender, RoutedEventArgs e)
         {
-            DeleteSelectedTracks();
+            DeleteSelection();
         }
 
-        private void DeleteSelectedTracks()
+        private void DeleteSelection()
         {
-            List<TimelineTrack> selection = SelectedTracks;
-            if (selection.Count == 0)
+            List<TimelineTrack> selectedRows = SelectedTrackRows();
+            List<KeyValuePair<TimelineTrack, TimelineSegment>> selectedSegments = SelectedSegments();
+
+            if (selectedRows.Count == 0 && selectedSegments.Count == 0)
             {
-                SetStatus("Select the track (or tracks) you want to delete.");
+                SetStatus("Select a track or a clip first.");
                 return;
             }
 
-            List<int> indexes = new List<int>();
-            List<TimelineTrack> removed = new List<TimelineTrack>();
+            TimelineSnapshot before = CaptureTimeline();
 
-            foreach (TimelineTrack track in selection)
-            {
-                indexes.Add(tracks.IndexOf(track));
-                removed.Add(track);
-            }
+            int removedTracks = 0;
+            int removedSegments = 0;
 
-            for (int item = removed.Count - 1; item >= 0; item--)
+            if (selectedRows.Count > 0)
             {
-                tracks.RemoveAt(indexes[item]);
-            }
-
-            UndoStackPush("delete " + removed.Count.ToString(CultureInfo.InvariantCulture) + " track(s)", delegate
-            {
-                for (int item = 0; item < removed.Count; item++)
+                foreach (TimelineTrack track in selectedRows)
                 {
-                    int insertIndex = indexes[item] < 0 ? 0 : indexes[item];
-                    if (insertIndex > tracks.Count)
-                    {
-                        insertIndex = tracks.Count;
-                    }
-
-                    tracks.Insert(insertIndex, removed[item]);
-                    removed[item].IsSelected = true;
+                    tracks.Remove(track);
+                    removedTracks++;
+                }
+            }
+            else
+            {
+                foreach (KeyValuePair<TimelineTrack, TimelineSegment> entry in selectedSegments)
+                {
+                    entry.Key.Segments.Remove(entry.Value);
+                    removedSegments++;
                 }
 
-                UpdateTimelineDuration();
-                UpdateCommandStates();
+                List<TimelineTrack> emptied = new List<TimelineTrack>();
+                foreach (TimelineTrack track in tracks)
+                {
+                    if (track.Segments.Count == 0)
+                    {
+                        emptied.Add(track);
+                    }
+                }
+
+                foreach (TimelineTrack track in emptied)
+                {
+                    tracks.Remove(track);
+                }
+            }
+
+            UndoStackPush("delete", delegate
+            {
+                RestoreTimeline(before);
             });
 
-            UpdateTimelineDuration();
-            UpdateCommandStates();
-            SetStatus("Deleted " + removed.Count.ToString(CultureInfo.InvariantCulture)
-                + " track(s). Ctrl+Z brings them back.");
+            AfterTimelineStructureChanged();
+
+            if (removedTracks > 0)
+            {
+                SetStatus("Deleted " + removedTracks.ToString(CultureInfo.InvariantCulture) + " track(s). Ctrl+Z brings them back.");
+                return;
+            }
+
+            SetStatus("Deleted " + removedSegments.ToString(CultureInfo.InvariantCulture) + " clip(s). Ctrl+Z brings them back.");
         }
 
         // ── Microphone recording ───────────────────────────────────────────
@@ -2064,10 +2252,10 @@ namespace SubtitleForge
 
         private void StartRecording()
         {
-            TimelineTrack? target = FirstSelectedAudioTrack;
-            if (target == null)
+            TimelineSegment? segment = FirstSelectedAudioSegment();
+            if (segment == null)
             {
-                SetStatus("Add an audio track first — the recording overwrites the selected one.");
+                SetStatus("Add an audio track first — the recording overwrites the selected clip.");
                 return;
             }
 
@@ -2076,19 +2264,19 @@ namespace SubtitleForge
                 PausePlayback();
             }
 
-            target.PrepareForWrite();
-            recordingUndoSamples = (short[])target.Samples.Clone();
-            recordingUndoPeaks = (float[])target.Peaks.Clone();
-            recordingUndoDuration = target.DurationSeconds;
+            segment.PrepareForWrite();
+            recordingUndoSamples = (short[])segment.Samples.Clone();
+            recordingUndoPeaks = (float[])segment.Peaks.Clone();
+            recordingUndoDuration = segment.DurationSeconds;
 
-            recordingStartSample = target.TimelineToSampleIndex(CurrentPosition.TotalSeconds);
+            recordingStartSample = segment.TimelineToSampleIndex(CurrentPosition.TotalSeconds);
             if (recordingStartSample < 0)
             {
                 recordingStartSample = 0;
             }
 
             recordingWritten = 0;
-            recordingTrack = target;
+            recordingSegment = segment;
 
             try
             {
@@ -2097,7 +2285,7 @@ namespace SubtitleForge
             catch (Exception exception)
             {
                 CrashLog.Write(exception, "RecordStart");
-                recordingTrack = null;
+                recordingSegment = null;
                 recordingUndoSamples = null;
                 recordingUndoPeaks = null;
                 SetStatus("The microphone could not be opened: " + exception.Message);
@@ -2108,8 +2296,8 @@ namespace SubtitleForge
             RecordButton.Content = "■ Stop recording";
             VideoElement.IsMuted = true;
             UpdateCommandStates();
-            SetStatus("Recording into " + target.Name + " at "
-                + SubtitleCue.FormatTimestamp(CurrentPosition) + " — press Record again to stop.");
+            SetStatus("Recording at " + SubtitleCue.FormatTimestamp(CurrentPosition)
+                + " — press Record again to stop.");
         }
 
         private void StopRecording()
@@ -2120,8 +2308,8 @@ namespace SubtitleForge
             RecordButton.Content = "● Record";
             VideoElement.IsMuted = false;
 
-            TimelineTrack? track = recordingTrack;
-            recordingTrack = null;
+            TimelineSegment? segment = recordingSegment;
+            recordingSegment = null;
 
             int written = recordingWritten;
             short[]? undoSamples = recordingUndoSamples;
@@ -2131,31 +2319,36 @@ namespace SubtitleForge
             recordingUndoPeaks = null;
             recordingWritten = 0;
 
-            if (track != null && written > 0 && undoSamples != null && undoPeaks != null)
+            if (segment != null && written > 0)
             {
-                TimelineTrack target = track;
+                segment.HasRecordedAudio = true;
+                segment.ClipFile = null;
+            }
+
+            if (segment != null && written > 0 && undoSamples != null && undoPeaks != null)
+            {
+                TimelineSegment target = segment;
                 short[] samplesSnapshot = undoSamples;
                 float[] peaksSnapshot = undoPeaks;
 
-                UndoStackPush("record into " + track.Name, delegate
+                UndoStackPush("record", delegate
                 {
                     target.Samples = samplesSnapshot;
                     target.Peaks = peaksSnapshot;
                     target.SharesSamples = false;
                     target.DurationSeconds = undoDuration;
-                    UpdateTimelineDuration();
-                    TrackTimelineView.Refresh();
+                    AfterTimelineStructureChanged();
                 });
             }
 
             UpdateTimelineDuration();
             UpdateCommandStates();
 
-            if (track != null)
+            if (segment != null)
             {
-                double seconds = written / (double)TimelineTrack.SampleRate;
-                SetStatus("Recorded " + seconds.ToString("0.0", CultureInfo.InvariantCulture) + " s into "
-                    + track.Name + ". Ctrl+Z undoes the whole take.");
+                double seconds = written / (double)TimelineSegment.SampleRate;
+                SetStatus("Recorded " + seconds.ToString("0.0", CultureInfo.InvariantCulture)
+                    + " s. Ctrl+Z undoes the whole take (it will be saved as a clip with the project).");
             }
         }
 
@@ -2167,22 +2360,22 @@ namespace SubtitleForge
 
         private void AppendRecordingSamples(short[] incoming)
         {
-            TimelineTrack? track = recordingTrack;
-            if (track == null || incoming.Length == 0)
+            TimelineSegment? segment = recordingSegment;
+            if (segment == null || incoming.Length == 0)
             {
                 return;
             }
 
             int writeIndex = recordingStartSample + recordingWritten;
-            track.EnsureCapacity(writeIndex + incoming.Length);
-            Array.Copy(incoming, 0, track.Samples, writeIndex, incoming.Length);
+            segment.EnsureCapacity(writeIndex + incoming.Length);
+            Array.Copy(incoming, 0, segment.Samples, writeIndex, incoming.Length);
             recordingWritten += incoming.Length;
-            track.UpdatePeaks(writeIndex, incoming.Length);
+            segment.UpdatePeaks(writeIndex, incoming.Length);
 
-            double endSeconds = track.SampleIndexToTimeline(writeIndex + incoming.Length);
-            if (endSeconds > track.EndSeconds)
+            double endSeconds = segment.SampleIndexToTimeline(writeIndex + incoming.Length);
+            if (endSeconds > segment.EndSeconds)
             {
-                track.DurationSeconds = endSeconds - track.StartSeconds;
+                segment.DurationSeconds = endSeconds - segment.StartSeconds;
             }
 
             TrackTimelineView.Refresh();
@@ -2220,6 +2413,507 @@ namespace SubtitleForge
             UndoTrackButton.IsEnabled = undoStack.CanUndo;
         }
 
+        // ── Project files ──────────────────────────────────────────────────
+
+        private void SaveProjectClick(object sender, RoutedEventArgs e)
+        {
+            SaveProject(false);
+        }
+
+        private void SaveProjectAsClick(object sender, RoutedEventArgs e)
+        {
+            SaveProject(true);
+        }
+
+        private void SaveProject(bool forcePrompt)
+        {
+            string? target = projectPath;
+            if (forcePrompt || string.IsNullOrEmpty(target))
+            {
+                SaveFileDialog dialog = new SaveFileDialog();
+                dialog.Filter = ProjectFile.FilterText;
+                dialog.DefaultExt = ProjectFile.Extension;
+                dialog.AddExtension = true;
+                dialog.FileName = string.IsNullOrEmpty(videoPath)
+                    ? "project" + ProjectFile.Extension
+                    : Path.GetFileNameWithoutExtension(videoPath) + ProjectFile.Extension;
+
+                if (dialog.ShowDialog(this) != true)
+                {
+                    return;
+                }
+
+                target = dialog.FileName;
+            }
+
+            if (string.IsNullOrEmpty(target))
+            {
+                return;
+            }
+
+            try
+            {
+                string folder = Path.GetDirectoryName(target) ?? ".";
+                ProjectFileData data = new ProjectFileData();
+                data.VideoPath = videoPath ?? string.Empty;
+                data.DurationSeconds = durationSeconds;
+                data.FrameStepSeconds = frameStepSeconds;
+
+                int trackIndex = 0;
+                foreach (TimelineTrack track in tracks)
+                {
+                    ProjectTrackData trackData = new ProjectTrackData();
+                    trackData.Kind = track.Kind.ToString();
+                    trackData.Name = track.Name;
+                    trackData.BackgroundColor = track.BackgroundColor.ToString(CultureInfo.InvariantCulture);
+
+                    int segmentIndex = 0;
+                    foreach (TimelineSegment segment in track.Segments)
+                    {
+                        ProjectSegmentData segmentData = new ProjectSegmentData();
+                        segmentData.StartSeconds = segment.StartSeconds;
+                        segmentData.SourceOffsetSeconds = segment.SourceOffsetSeconds;
+                        segmentData.DurationSeconds = segment.DurationSeconds;
+                        segmentData.SourceDuration = segment.EffectiveSourceDuration;
+                        segmentData.SourcePath = segment.SourcePath;
+                        segmentData.HasRecordedAudio = segment.HasRecordedAudio;
+
+                        if (segment.Kind == TrackKind.Audio && segment.HasRecordedAudio && segment.Samples.Length > 0)
+                        {
+                            string clipName = ProjectFile.BuildClipFileName(target, trackIndex, segmentIndex);
+                            string clipPath = Path.Combine(folder, clipName);
+                            int startSample = segment.TimelineToSampleIndex(segment.StartSeconds);
+                            int sampleCount = (int)Math.Round(segment.DurationSeconds * TimelineSegment.SampleRate);
+
+                            WavFile.Write(clipPath, segment.Samples, startSample, sampleCount);
+                            segment.ClipFile = clipName;
+                            segmentData.ClipFile = clipName;
+                        }
+
+                        trackData.Segments.Add(segmentData);
+                        segmentIndex++;
+                    }
+
+                    data.Tracks.Add(trackData);
+                    trackIndex++;
+                }
+
+                foreach (SubtitleCue cue in cues)
+                {
+                    ProjectCueData cueData = new ProjectCueData();
+                    cueData.StartSeconds = Math.Round(cue.Start.TotalSeconds, 3);
+                    cueData.EndSeconds = Math.Round(cue.End.TotalSeconds, 3);
+                    cueData.Text = cue.Text;
+                    cueData.Confidence = cue.Confidence;
+                    data.Cues.Add(cueData);
+                }
+
+                ProjectFile.Save(target, data);
+                projectPath = target;
+                SetStatus("Project saved to " + Path.GetFileName(target) + ".");
+            }
+            catch (Exception exception)
+            {
+                CrashLog.Write(exception, "SaveProject");
+                SetStatus("The project could not be saved: " + exception.Message);
+                MessageBox.Show(
+                    this,
+                    exception.Message + "\n\nDetails were written to:\n" + CrashLog.LogPath,
+                    "SubtitleForge — saving failed",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+        }
+
+        private async void OpenProjectClick(object sender, RoutedEventArgs e)
+        {
+            OpenFileDialog dialog = new OpenFileDialog();
+            dialog.Filter = ProjectFile.FilterText;
+            if (dialog.ShowDialog(this) != true)
+            {
+                return;
+            }
+
+            await LoadProjectAsync(dialog.FileName).ConfigureAwait(true);
+        }
+
+        private async Task LoadProjectAsync(string path)
+        {
+            if (isBusy)
+            {
+                SetStatus("Wait for the running operation to finish first.");
+                return;
+            }
+
+            suppressTimelineBuild = true;
+            try
+            {
+                ProjectFileData data = ProjectFile.Load(path);
+
+                string videoRef = ProjectFile.ResolveRelativePath(path, data.VideoPath);
+                if (!string.IsNullOrEmpty(videoRef) && File.Exists(videoRef))
+                {
+                    LoadVideo(videoRef);
+                }
+                else if (!string.IsNullOrEmpty(videoRef))
+                {
+                    SetStatus("The project's video is missing: " + videoRef);
+                }
+
+                if (data.DurationSeconds > 0.0)
+                {
+                    durationSeconds = data.DurationSeconds;
+                }
+
+                if (data.FrameStepSeconds > 0.0)
+                {
+                    frameStepSeconds = data.FrameStepSeconds;
+                }
+
+                ApplyDurationToUi();
+
+                tracks.Clear();
+                undoStack.Clear();
+                nextAudioTrackNumber = 1;
+                int anonymousAudioIndex = 1;
+
+                foreach (ProjectTrackData trackData in data.Tracks)
+                {
+                    TrackKind kind = string.Equals(trackData.Kind, "Video", StringComparison.OrdinalIgnoreCase)
+                        ? TrackKind.Video
+                        : TrackKind.Audio;
+
+                    string name = trackData.Name;
+                    if (string.IsNullOrWhiteSpace(name))
+                    {
+                        if (kind == TrackKind.Video)
+                        {
+                            name = "Video";
+                        }
+                        else
+                        {
+                            name = "Audio " + anonymousAudioIndex.ToString(CultureInfo.InvariantCulture);
+                            anonymousAudioIndex++;
+                        }
+                    }
+
+                    TimelineTrack track = new TimelineTrack(kind, name, ParseColor(trackData.BackgroundColor, kind));
+                    if (kind == TrackKind.Audio)
+                    {
+                        nextAudioTrackNumber++;
+                    }
+
+                    foreach (ProjectSegmentData segmentData in trackData.Segments)
+                    {
+                        TimelineSegment segment = new TimelineSegment(kind);
+                        segment.StartSeconds = segmentData.StartSeconds;
+                        segment.SourceOffsetSeconds = segmentData.SourceOffsetSeconds;
+                        segment.DurationSeconds = segmentData.DurationSeconds;
+                        segment.SourceDuration = segmentData.SourceDuration;
+                        segment.HasRecordedAudio = segmentData.HasRecordedAudio;
+                        segment.ClipFile = segmentData.ClipFile;
+
+                        string sourceRef = ProjectFile.ResolveRelativePath(path, segmentData.SourcePath);
+                        if (!string.IsNullOrEmpty(sourceRef))
+                        {
+                            segment.SourcePath = sourceRef;
+                        }
+                        else if (kind == TrackKind.Video && !string.IsNullOrEmpty(videoRef))
+                        {
+                            segment.SourcePath = videoRef;
+                        }
+
+                        track.Segments.Add(segment);
+                    }
+
+                    tracks.Add(track);
+                }
+
+                string? ffmpeg = FfmpegLocator.Resolve("ffmpeg", App.Settings.FfmpegDirectory);
+
+                foreach (TimelineTrack track in tracks)
+                {
+                    if (track.Kind != TrackKind.Audio)
+                    {
+                        continue;
+                    }
+
+                    foreach (TimelineSegment segment in track.Segments)
+                    {
+                        await LoadSegmentAudioAsync(segment, ffmpeg, path).ConfigureAwait(true);
+                    }
+                }
+
+                foreach (TimelineTrack track in tracks)
+                {
+                    if (track.Kind != TrackKind.Video || ffmpeg == null)
+                    {
+                        continue;
+                    }
+
+                    foreach (TimelineSegment segment in track.Segments)
+                    {
+                        await LoadThumbnailsAsync(ffmpeg, segment, segment.EffectiveSourceDuration).ConfigureAwait(true);
+                    }
+                }
+
+                cues.Clear();
+                foreach (ProjectCueData cueData in data.Cues)
+                {
+                    cues.Add(new SubtitleCue(
+                        TimeSpan.FromSeconds(cueData.StartSeconds),
+                        TimeSpan.FromSeconds(cueData.EndSeconds),
+                        cueData.Text,
+                        cueData.Confidence));
+                }
+
+                CuePostProcessor.Renumber(cues);
+                UpdateCueCount();
+                DrawTimeline();
+                timelineInitialized = true;
+                projectPath = path;
+                AfterTimelineStructureChanged();
+                SetStatus("Project loaded: " + Path.GetFileName(path) + " — " + tracks.Count.ToString(CultureInfo.InvariantCulture) + " tracks, "
+                    + cues.Count.ToString(CultureInfo.InvariantCulture) + " cues.");
+            }
+            catch (Exception exception)
+            {
+                CrashLog.Write(exception, "LoadProject");
+                SetStatus("The project could not be loaded: " + exception.Message);
+                MessageBox.Show(
+                    this,
+                    exception.Message + "\n\nDetails were written to:\n" + CrashLog.LogPath,
+                    "SubtitleForge — opening failed",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+            finally
+            {
+                suppressTimelineBuild = false;
+            }
+        }
+
+        private async Task LoadSegmentAudioAsync(TimelineSegment segment, string? ffmpegPath, string projectFilePath)
+        {
+            try
+            {
+                if (!string.IsNullOrEmpty(segment.ClipFile))
+                {
+                    string clipPath = ProjectFile.ResolveRelativePath(projectFilePath, segment.ClipFile);
+                    if (File.Exists(clipPath))
+                    {
+                        segment.Samples = WavFile.Read(clipPath);
+                        segment.RebuildPeaks();
+                        segment.HasRecordedAudio = true;
+                        return;
+                    }
+                }
+
+                if (string.IsNullOrEmpty(segment.SourcePath) || !File.Exists(segment.SourcePath) || ffmpegPath == null)
+                {
+                    return;
+                }
+
+                short[] samples = await AudioSampleLoader.LoadAsync(ffmpegPath, segment.SourcePath, CancellationToken.None).ConfigureAwait(true);
+                segment.Samples = samples;
+                segment.RebuildPeaks();
+            }
+            catch (Exception exception)
+            {
+                CrashLog.Write(exception, "LoadSegmentAudio");
+            }
+        }
+
+        private static Color ParseColor(string text, TrackKind kind)
+        {
+            Color fallback = kind == TrackKind.Video ? TrackColors.VideoDefault : TrackColors.AudioDefault;
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return fallback;
+            }
+
+            try
+            {
+                object? parsed = ColorConverter.ConvertFromString(text);
+                if (parsed is Color color)
+                {
+                    return color;
+                }
+            }
+            catch (Exception)
+            {
+                // Unreadable colour in the project — keep the default.
+            }
+
+            return fallback;
+        }
+
+        // ── Transcription sources ──────────────────────────────────────────
+
+        /// <summary>
+        /// Every audio clip on the timeline, in playback order — subtitles are built from all
+        /// of them and merged, instead of only from the video's own audio track.
+        /// </summary>
+        private List<TimelineSegment> AudioSegmentsForTranscription()
+        {
+            List<TimelineSegment> ordered = new List<TimelineSegment>();
+            foreach (TimelineTrack track in tracks)
+            {
+                if (track.Kind != TrackKind.Audio)
+                {
+                    continue;
+                }
+
+                foreach (TimelineSegment segment in track.Segments)
+                {
+                    if (segment.DurationSeconds > 0.05)
+                    {
+                        ordered.Add(segment);
+                    }
+                }
+            }
+
+            ordered.Sort(delegate (TimelineSegment left, TimelineSegment right)
+            {
+                return left.StartSeconds.CompareTo(right.StartSeconds);
+            });
+
+            return ordered;
+        }
+
+        private async Task<List<SubtitleCue>> TranscribeSegmentsAsync(
+            List<TimelineSegment> segments,
+            string wavFolder,
+            CancellationToken cancellationToken)
+        {
+            List<SubtitleCue> combined = new List<SubtitleCue>();
+            string? runtimeDescription = null;
+            string detectedLanguage = string.Empty;
+
+            int index = 0;
+            foreach (TimelineSegment segment in segments)
+            {
+                index++;
+                cancellationToken.ThrowIfCancellationRequested();
+
+                SetStatus("Transcribing audio " + index.ToString(CultureInfo.InvariantCulture)
+                    + " of " + segments.Count.ToString(CultureInfo.InvariantCulture) + "…");
+
+                string wavPath = Path.Combine(
+                    wavFolder,
+                    "audio-" + Guid.NewGuid().ToString("N") + ".wav");
+
+                bool hasSource = false;
+
+                if (segment.HasRecordedAudio && segment.Samples.Length > 0)
+                {
+                    int startSample = segment.TimelineToSampleIndex(segment.StartSeconds);
+                    int sampleCount = (int)Math.Round(segment.DurationSeconds * TimelineSegment.SampleRate);
+                    WavFile.Write(wavPath, segment.Samples, startSample, sampleCount);
+                    hasSource = true;
+                }
+                else if (!string.IsNullOrEmpty(segment.SourcePath) && File.Exists(segment.SourcePath))
+                {
+                    string? ffmpeg = FfmpegLocator.Resolve("ffmpeg", App.Settings.FfmpegDirectory);
+                    if (ffmpeg != null)
+                    {
+                        await AudioTrackExtractor
+                            .ExtractSegmentAsync(
+                                ffmpeg,
+                                segment.SourcePath,
+                                wavPath,
+                                segment.SourceOffsetSeconds,
+                                segment.DurationSeconds,
+                                null,
+                                cancellationToken)
+                            .ConfigureAwait(true);
+                        hasSource = true;
+                    }
+                }
+
+                if (!hasSource)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    TranscriptionPiece piece = await TranscribeOneFileAsync(wavPath, cancellationToken).ConfigureAwait(true);
+                    runtimeDescription = piece.RuntimeDescription;
+                    if (!string.IsNullOrEmpty(piece.DetectedLanguage))
+                    {
+                        detectedLanguage = piece.DetectedLanguage;
+                    }
+
+                    double offsetSeconds = segment.StartSeconds;
+                    foreach (SubtitleCue cue in piece.Cues)
+                    {
+                        combined.Add(new SubtitleCue(
+                            cue.Start + TimeSpan.FromSeconds(offsetSeconds),
+                            cue.End + TimeSpan.FromSeconds(offsetSeconds),
+                            cue.Text,
+                            cue.Confidence));
+                    }
+                }
+                finally
+                {
+                    TryDeleteFile(wavPath);
+                }
+            }
+
+            combined.Sort(delegate (SubtitleCue left, SubtitleCue right)
+            {
+                return left.Start.CompareTo(right.Start);
+            });
+
+            lastRuntimeDescription = runtimeDescription ?? "unknown runtime";
+            lastDetectedLanguage = detectedLanguage;
+            return combined;
+        }
+
+        private async Task<TranscriptionPiece> TranscribeOneFileAsync(string wavPath, CancellationToken cancellationToken)
+        {
+            WhisperModelInfo? model = ModelComboBox.SelectedItem as WhisperModelInfo;
+            if (model == null)
+            {
+                throw new InvalidOperationException("Choose a Whisper model first.");
+            }
+
+            IProgress<string> modelStatus = new Progress<string>(SetStatus);
+            IProgress<double> downloadProgress = new Progress<double>(delegate (double fraction)
+            {
+                SetProgress(fraction * 0.10);
+            });
+
+            string modelPath = await WhisperModelStore
+                .EnsureModelAsync(model.FileName, modelStatus, downloadProgress, cancellationToken)
+                .ConfigureAwait(true);
+
+            TranscriptionRequest request = new TranscriptionRequest();
+            request.WavPath = wavPath;
+            request.ModelPath = modelPath;
+            request.Language = App.Settings.Language;
+            request.TranslateToEnglish = App.Settings.TranslateToEnglish;
+            request.UseGpu = App.Settings.UseGpu;
+            request.SkipNonSpeech = App.Settings.SkipNonSpeech;
+            request.Threads = App.Settings.Threads;
+
+            IProgress<double> progress = new Progress<double>(delegate (double fraction)
+            {
+                SetProgress(0.25 + (fraction * 0.70));
+            });
+
+            TranscriptionResult result = await transcriber
+                .TranscribeAsync(request, progress, new Progress<string>(SetStatus), cancellationToken)
+                .ConfigureAwait(true);
+
+            TranscriptionPiece piece = new TranscriptionPiece();
+            piece.Cues = result.Cues;
+            piece.RuntimeDescription = result.RuntimeDescription;
+            piece.DetectedLanguage = result.DetectedLanguage;
+            return piece;
+        }
+
         // ── Keyboard shortcuts ─────────────────────────────────────────────
 
         private bool IsTextInputFocused()
@@ -2245,17 +2939,30 @@ namespace SubtitleForge
 
         private void WindowPreviewKeyDown(object sender, KeyEventArgs e)
         {
-            if (IsTextInputFocused())
-            {
-                return;
-            }
-
             bool control = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
             bool shift = (Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift;
 
+            if (IsTextInputFocused())
+            {
+                if (control && !shift && e.Key == Key.S)
+                {
+                    SaveProject(false);
+                    e.Handled = true;
+                }
+
+                return;
+            }
+
             if (control && shift && e.Key == Key.D)
             {
-                SplitSelectedTracks();
+                SplitSelectedSegments();
+                e.Handled = true;
+                return;
+            }
+
+            if (control && !shift && e.Key == Key.S)
+            {
+                SaveProject(false);
                 e.Handled = true;
                 return;
             }
@@ -2267,7 +2974,7 @@ namespace SubtitleForge
                 return;
             }
 
-            if (control || shift)
+            if (control)
             {
                 return;
             }
@@ -2275,7 +2982,15 @@ namespace SubtitleForge
             switch (e.Key)
             {
                 case Key.Space:
-                    TogglePlayPause();
+                    if (!shift)
+                    {
+                        TogglePlayPause();
+                        e.Handled = true;
+                    }
+
+                    break;
+                case Key.Delete:
+                    DeleteSelection();
                     e.Handled = true;
                     break;
                 case Key.OemComma:
@@ -2287,14 +3002,133 @@ namespace SubtitleForge
                     e.Handled = true;
                     break;
                 case Key.Left:
-                    SeekBy(-1.0);
+                    SeekBy(shift ? -10.0 : -1.0);
                     e.Handled = true;
                     break;
                 case Key.Right:
-                    SeekBy(1.0);
+                    SeekBy(shift ? 10.0 : 1.0);
                     e.Handled = true;
                     break;
             }
+        }
+
+        // ── Nested state types ─────────────────────────────────────────────
+
+        private class SegmentSnapshot
+        {
+            public TimelineSegment Segment = null!;
+
+            public double StartSeconds;
+
+            public bool WasSelected;
+        }
+
+        private class TrackSnapshot
+        {
+            public TimelineTrack Track = null!;
+
+            public bool WasSelected;
+
+            public List<SegmentSnapshot> Segments = new List<SegmentSnapshot>();
+        }
+
+        private class TimelineSnapshot
+        {
+            public List<TrackSnapshot> Tracks = new List<TrackSnapshot>();
+        }
+
+        private class TranscriptionPiece
+        {
+            public List<SubtitleCue> Cues = new List<SubtitleCue>();
+
+            public string RuntimeDescription = string.Empty;
+
+            public string DetectedLanguage = string.Empty;
+        }
+
+        // ── GPU / CUDA availability ────────────────────────────────────────
+
+        private void GpuCheckedChanged(object sender, RoutedEventArgs e)
+        {
+            if (suppressCudaCheck || !(sender is CheckBox))
+            {
+                return;
+            }
+
+            if (GpuCheckBox.IsChecked != true)
+            {
+                return;
+            }
+
+            if (!CudaDetector.IsDriverPresent() && !CudaDetector.IsToolkitInstalled(out string driverDetails))
+            {
+                string message = "GPU transcription needs an NVIDIA driver and the CUDA 12 toolkit.\n\n"
+                    + driverDetails
+                    + "\n\nOpen the CUDA download page now?";
+
+                MessageBoxResult answer = MessageBox.Show(
+                    this,
+                    message,
+                    "SubtitleForge — CUDA not found",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning);
+
+                if (answer == MessageBoxResult.Yes)
+                {
+                    try
+                    {
+                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                        {
+                            FileName = CudaDetector.DownloadUrl,
+                            UseShellExecute = true
+                        });
+                    }
+                    catch (Exception exception)
+                    {
+                        CrashLog.Write(exception, "CudaDownloadPage");
+                    }
+                }
+
+                suppressCudaCheck = true;
+                GpuCheckBox.IsChecked = false;
+                suppressCudaCheck = false;
+                App.Settings.UseGpu = false;
+                SetStatus("GPU transcription stays off until the CUDA 12 toolkit is installed.");
+                return;
+            }
+
+            if (!CudaDetector.IsToolkitInstalled(out string toolkitDetails))
+            {
+                string warning = "The NVIDIA driver is present but no CUDA 12 toolkit was found.\n\n"
+                    + toolkitDetails
+                    + "\n\nTranscription will fall back to the CPU when CUDA cannot be initialised.\n"
+                    + "Open the CUDA download page?";
+
+                MessageBoxResult answer = MessageBox.Show(
+                    this,
+                    warning,
+                    "SubtitleForge — CUDA toolkit missing",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Information);
+
+                if (answer == MessageBoxResult.Yes)
+                {
+                    try
+                    {
+                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                        {
+                            FileName = CudaDetector.DownloadUrl,
+                            UseShellExecute = true
+                        });
+                    }
+                    catch (Exception exception)
+                    {
+                        CrashLog.Write(exception, "CudaDownloadPage");
+                    }
+                }
+            }
+
+            SetStatus("GPU transcription enabled — it falls back to the CPU automatically if CUDA cannot start.");
         }
 
         // ── Shared helpers ─────────────────────────────────────────────────
@@ -2391,14 +3225,18 @@ namespace SubtitleForge
             DeleteCueButton.IsEnabled = !isBusy && CueList.SelectedItem != null;
             AddCueButton.IsEnabled = !isBusy;
 
-            bool hasSelection = SelectedTracks.Count > 0;
+            bool hasSelection = SelectedSegments().Count > 0;
+            bool hasRowSelection = SelectedTrackRows().Count > 0;
             AddAudioTrackButton.IsEnabled = !isBusy && hasVideo;
-            RecordButton.IsEnabled = !isBusy && hasVideo && (isRecording || hasSelection || tracks.Count > 0);
+            RecordButton.IsEnabled = !isBusy && hasVideo;
             SplitTrackButton.IsEnabled = !isBusy && hasSelection;
-            DeleteTrackButton.IsEnabled = !isBusy && hasSelection;
-            RenameTrackButton.IsEnabled = !isBusy && hasSelection;
-            TrackColorButton.IsEnabled = !isBusy && hasSelection;
+            DeleteTrackButton.IsEnabled = !isBusy && (hasSelection || hasRowSelection);
+            RenameTrackButton.IsEnabled = !isBusy && hasRowSelection;
+            TrackColorButton.IsEnabled = !isBusy && hasRowSelection;
             UndoTrackButton.IsEnabled = !isBusy && undoStack.CanUndo;
+            SaveProjectButton.IsEnabled = !isBusy;
+            SaveProjectAsButton.IsEnabled = !isBusy;
+            OpenProjectButton.IsEnabled = !isBusy;
         }
 
         private static void TryDeleteFile(string path)

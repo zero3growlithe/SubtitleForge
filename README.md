@@ -36,13 +36,37 @@ Everything runs on your machine. No cloud, no API keys, no uploads.
   playhead, with the waveform growing live as you speak. One press records, the next
   stops; `Ctrl+Z` restores the track exactly as it was before the take.
 
+### Timeline editing
+
+- Every clip is a **block of limited width** inside its lane, so a split leaves the first
+  half ending exactly at the playhead and the second half starting there.
+- **Drag a clip** left/right inside its lane to slide it; clips of one lane never overlap.
+  When the drop would land on top of a neighbour it snaps to that neighbour's nearest edge
+  and a vertical yellow line shows the snap position. If the landing spot is taken, the
+  clips to the right are pushed along by however much is needed.
+- **Drag a clip onto another lane** of the same type to join that track, or **between lanes**
+  (or below the last one) to give it a track of its own.
+- **Drag the ruler or an empty lane** to scrub the playhead; drag a lane's **name** to
+  reorder whole tracks. `Shift`+drag on a clip scrubs instead of moving it.
+- Subtitles are built from **all** audio clips on the timeline and merged in playback order.
+- `Ctrl+S` (or `Save project`) saves the project; `Open project…` loads one.
+
+### Projects
+
+`.sfproj` files are JSON. Media is only **referenced** — the video path and any imported
+audio path — while microphone takes are exported next to the project as
+`<project>-track<n>-clip<m>.wav` clips and referenced by name, so the project file itself
+stays a few kilobytes.
+
 ### Shortcuts
 
 - `Space` — play / pause
 - `,` / `.` — step one frame back / forward (frame rate read from the file)
-- `←` / `→` — seek one second back / forward
-- `Ctrl+Shift+D` — split every selected track at the playhead
-- `Ctrl+Z` — undo the last track edit (add, delete, split, reorder, rename, recolour, record)
+- `←` / `→` — seek one second; `Shift`+`←` / `Shift`+`→` — seek ten seconds
+- `Del` — delete the selected track(s) or clip(s)
+- `Ctrl+Shift+D` — split every selected clip at the playhead
+- `Ctrl+Z` — undo the last edit (move, add, delete, split, reorder, rename, recolour, record)
+- `Ctrl+S` — save the project
 - double-click a track header — rename it; right-click a track — colour / split / delete
 
 ## Requirements

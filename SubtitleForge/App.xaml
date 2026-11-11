@@ -286,5 +286,176 @@
             <Setter Property="VerticalAlignment" Value="Stretch" />
         </Style>
 
+        <!-- ── Separator ────────────────────────────────────────────────── -->
+        <!-- Separators inside a Menu/ContextMenu are NOT styled by the implicit
+             Separator style: the menu looks the style up by MenuItem.SeparatorStyleKey,
+             so that key has to be defined too or the line keeps the Aero2 look. -->
+        <Style TargetType="Separator">
+            <Setter Property="Background" Value="{StaticResource PanelBorderBrush}" />
+            <Setter Property="Height" Value="1" />
+            <Setter Property="Margin" Value="8,4" />
+            <Setter Property="SnapsToDevicePixels" Value="True" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Separator">
+                        <Border Height="1"
+                                Background="{TemplateBinding Background}"
+                                SnapsToDevicePixels="True" />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="{x:Static MenuItem.SeparatorStyleKey}"
+               TargetType="Separator"
+               BasedOn="{StaticResource {x:Type Separator}}" />
+
+        <!-- ── ContextMenu ──────────────────────────────────────────────── -->
+        <Style TargetType="ContextMenu">
+            <Setter Property="Background" Value="{StaticResource PanelBackgroundBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource PanelBorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="FontFamily" Value="Segoe UI" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="SnapsToDevicePixels" Value="True" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ContextMenu">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="4"
+                                Padding="2"
+                                SnapsToDevicePixels="True">
+                            <ScrollViewer CanContentScroll="True"
+                                          HorizontalScrollBarVisibility="Disabled"
+                                          VerticalScrollBarVisibility="Auto">
+                                <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle"
+                                                KeyboardNavigation.TabNavigation="Cycle" />
+                            </ScrollViewer>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ── MenuItem (menu + submenu roles; PART_Popup is required for submenus) ─ -->
+        <Style TargetType="MenuItem">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Padding" Value="8,5" />
+            <Setter Property="FontFamily" Value="Segoe UI" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="SnapsToDevicePixels" Value="True" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="MenuItem">
+                        <Border x:Name="Chrome"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="3"
+                                Margin="2,1"
+                                SnapsToDevicePixels="True">
+                            <Grid Margin="{TemplateBinding Padding}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="22" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+
+                                <!-- Icon (e.g. the colour swatch) sits in the gutter. -->
+                                <ContentPresenter x:Name="IconHost"
+                                                  Grid.Column="0"
+                                                  ContentSource="Icon"
+                                                  HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"
+                                                  SnapsToDevicePixels="True" />
+
+                                <Path x:Name="CheckMark"
+                                      Grid.Column="0"
+                                      Visibility="Collapsed"
+                                      HorizontalAlignment="Left"
+                                      VerticalAlignment="Center"
+                                      Data="M0,4 L3,7 L8,0"
+                                      Stroke="{StaticResource AccentBrush}"
+                                      StrokeThickness="1.6"
+                                      StrokeStartLineCap="Round"
+                                      StrokeEndLineCap="Round" />
+
+                                <ContentPresenter x:Name="HeaderHost"
+                                                  Grid.Column="1"
+                                                  ContentSource="Header"
+                                                  RecognizesAccessKey="True"
+                                                  VerticalAlignment="Center" />
+
+                                <TextBlock x:Name="GestureText"
+                                           Grid.Column="2"
+                                           Text="{TemplateBinding InputGestureText}"
+                                           Foreground="{StaticResource SubtleTextBrush}"
+                                           Margin="18,0,0,0"
+                                           VerticalAlignment="Center" />
+
+                                <Path x:Name="SubmenuArrow"
+                                      Grid.Column="3"
+                                      Visibility="Collapsed"
+                                      Data="M0,0 L4,4 L0,8"
+                                      Stroke="{StaticResource SubtleTextBrush}"
+                                      StrokeThickness="1.4"
+                                      Margin="12,0,2,0"
+                                      VerticalAlignment="Center" />
+
+                                <Popup x:Name="PART_Popup"
+                                       AllowsTransparency="True"
+                                       Focusable="False"
+                                       IsOpen="{TemplateBinding IsSubmenuOpen}"
+                                       Placement="Right"
+                                       HorizontalOffset="-2"
+                                       VerticalOffset="-4"
+                                       PopupAnimation="None">
+                                    <Border Background="{StaticResource PanelBackgroundBrush}"
+                                            BorderBrush="{StaticResource PanelBorderBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="4"
+                                            Padding="2"
+                                            MinWidth="140">
+                                        <ScrollViewer CanContentScroll="True"
+                                                      HorizontalScrollBarVisibility="Disabled"
+                                                      VerticalScrollBarVisibility="Auto">
+                                            <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle" />
+                                        </ScrollViewer>
+                                    </Border>
+                                </Popup>
+                            </Grid>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="HasItems" Value="True">
+                                <Setter TargetName="SubmenuArrow" Property="Visibility" Value="Visible" />
+                                <Setter TargetName="GestureText" Property="Visibility" Value="Collapsed" />
+                            </Trigger>
+                            <Trigger Property="InputGestureText" Value="">
+                                <Setter TargetName="GestureText" Property="Visibility" Value="Collapsed" />
+                            </Trigger>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="{StaticResource SelectionBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsSubmenuOpen" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="{StaticResource SelectionBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="CheckMark" Property="Visibility" Value="Visible" />
+                            </Trigger>
+                            <Trigger Property="Icon" Value="{x:Null}">
+                                <Setter TargetName="IconHost" Property="Visibility" Value="Collapsed" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Chrome" Property="Opacity" Value="0.5" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
     </Application.Resources>
 </Application>

@@ -25,6 +25,10 @@
             <Button x:Name="OpenVideoButton" Content="Open video…" Click="OpenVideoClick" />
             <Button x:Name="ImportSubtitlesButton" Content="Open subtitles…" Click="ImportSubtitlesClick" />
             <Rectangle Width="1" Margin="6,2,12,2" Fill="{StaticResource PanelBorderBrush}" />
+            <Button x:Name="OpenProjectButton" Content="Open project…" Click="OpenProjectClick" />
+            <Button x:Name="SaveProjectButton" Content="Save project" Click="SaveProjectClick" />
+            <Button x:Name="SaveProjectAsButton" Content="Save as…" MinWidth="0" Padding="10,4" Click="SaveProjectAsClick" />
+            <Rectangle Width="1" Margin="6,2,12,2" Fill="{StaticResource PanelBorderBrush}" />
             <TextBlock Text="Model" Style="{StaticResource SectionLabelStyle}" />
             <ComboBox x:Name="ModelComboBox" Width="232" SelectionChanged="ModelSelectionChanged">
                 <ComboBox.ItemTemplate>
@@ -42,7 +46,7 @@
                     </DataTemplate>
                 </ComboBox.ItemTemplate>
             </ComboBox>
-            <CheckBox x:Name="GpuCheckBox" Content="GPU (CUDA)" />
+            <CheckBox x:Name="GpuCheckBox" Content="GPU (CUDA)" Checked="GpuCheckedChanged" />
             <CheckBox x:Name="TranslateCheckBox" Content="Translate → EN" />
             <Button x:Name="TranscribeButton" Content="Transcribe" Style="{StaticResource AccentButtonStyle}" Click="TranscribeClick" />
             <Button x:Name="CancelButton" Content="Cancel" Click="CancelClick" IsEnabled="False" />
@@ -156,6 +160,8 @@
                     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <controls:TrackTimeline x:Name="TrackTimelineView"
                                                 TrackMouseDown="TrackTimelineMouseDown"
+                                                SegmentMouseDown="TrackTimelineSegmentMouseDown"
+                                                SegmentDropped="TrackTimelineSegmentDropped"
                                                 TrackReorderRequested="TrackTimelineReorder"
                                                 TrackContextMenuRequested="TrackTimelineContextMenu"
                                                 SeekRequested="TrackTimelineSeek" />

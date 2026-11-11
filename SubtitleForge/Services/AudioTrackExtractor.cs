@@ -81,6 +81,86 @@ namespace SubtitleForge.Services
             progress?.Report(1.0);
         }
 
+        /// <summary>
+        /// Extracts just one timeline window of the audio stream — used when the timeline
+        /// holds several audio segments and every one of them has to be transcribed.
+        /// </summary>
+        public static async Task ExtractSegmentAsync(
+            string ffmpegPath,
+            string inputPath,
+            string outputWavPath,
+            double offsetSeconds,
+            double durationSeconds,
+            IProgress<double>? progress,
+            CancellationToken cancellationToken)
+        {
+            string offset = Math.Max(0.0, offsetSeconds).ToString("0.###", CultureInfo.InvariantCulture);
+            string duration = Math.Max(0.05, durationSeconds).ToString("0.###", CultureInfo.InvariantCulture);
+
+            List<string> arguments = new List<string>
+            {
+                "-nostdin",
+                "-hide_banner",
+                "-loglevel", "error",
+                "-y",
+                "-ss", offset,
+                "-t", duration,
+                "-i", inputPath,
+                "-map", "0:a:0",
+                "-vn",
+                "-sn",
+                "-dn",
+                "-ac", "1",
+                "-ar", "16000",
+                "-c:a", "pcm_s16le",
+                "-progress", "pipe:1",
+                "-nostats",
+                outputWavPath
+            };
+
+            Action<string> onLine = delegate (string line)
+            {
+                if (progress == null || durationSeconds <= 0.01)
+                {
+                    return;
+                }
+
+                double seconds = ParseProgressSeconds(line);
+                if (seconds >= 0.0)
+                {
+                    double fraction = seconds / durationSeconds;
+                    if (fraction < 0.0)
+                    {
+                        fraction = 0.0;
+                    }
+
+                    if (fraction > 1.0)
+                    {
+                        fraction = 1.0;
+                    }
+
+                    progress.Report(fraction);
+                }
+            };
+
+            ProcessResult result = await ProcessRunner.RunAsync(
+                ffmpegPath,
+                arguments,
+                null,
+                onLine,
+                cancellationToken).ConfigureAwait(false);
+
+            if (result.ExitCode != 0)
+            {
+                string details = string.IsNullOrWhiteSpace(result.StandardError)
+                    ? "ffmpeg exited with code " + result.ExitCode.ToString(CultureInfo.InvariantCulture) + "."
+                    : FirstMeaningfulLines(result.StandardError);
+                throw new InvalidOperationException("Audio extraction failed: " + details);
+            }
+
+            progress?.Report(1.0);
+        }
+
         public static double ParseProgressSeconds(string line)
         {
             if (string.IsNullOrEmpty(line))

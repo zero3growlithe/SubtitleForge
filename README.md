@@ -37,11 +37,16 @@ Everything runs on your machine. No cloud, no API keys, no uploads.
   stops; `Ctrl+Z` restores the track exactly as it was before the take.
 - **Drop media files** from Explorer onto the timeline: each file becomes its own track named
   after the file, placed at the drop position — audio files as a waveform exactly like a
-  recorded take, video files as a video lane with thumbnails (undoable with `Ctrl+Z`).
+  recorded take, video files as a video lane with thumbnails **plus an audio lane directly
+  below it** carrying that clip's own audio (undoable with `Ctrl+Z`).
 - **The preview follows the tracks.** Whatever the playhead sits on is what you see and
   hear: the *topmost* video lane with a clip under the playhead is shown, every audio lane
   with a clip there is played (mixed together), and a stretch with no video clip shows a
   black frame while the audio keeps running.
+- **Sound comes only from the audio lanes** — the preview itself is always muted, so a video
+  clip is heard through its audio lane (and never twice).
+- **Clicking or scrubbing the timeline pauses playback first**, then moves the playhead, so
+  the preview does not run away from where you clicked.
 
 ### Timeline editing
 
@@ -59,7 +64,10 @@ Everything runs on your machine. No cloud, no API keys, no uploads.
   timeline more room (or the other way round).
 - **Seeking repaints the preview** whether playback is running or paused — the frame under
   the playhead is shown for both video lanes and a black frame for gaps.
-- Subtitles are built from **all** audio clips on the timeline and merged in playback order.
+- Subtitles are built from **all** audio clips on the timeline. Each clip is cut into
+  independent **150-second windows** (with a half-second overlap that is trimmed afterwards)
+  before it reaches Whisper, because a single pass over many minutes of audio is where
+  Whisper's timing drifts and starts looping; one model load covers all the windows.
 - `Ctrl+S` (or `Save project`) saves the project; `Open project…` loads one.
 
 ### Performance
@@ -72,6 +80,10 @@ Everything runs on your machine. No cloud, no API keys, no uploads.
   (`%LocalAppData%\SubtitleForge\proxies`), which makes seeking and playback smooth even for
   4K sources. Export, burn-in and transcription always use the original full-resolution file.
   Videos that are 540p or smaller skip the proxy entirely.
+- Proxy encodes use the **GPU** (`h264_nvenc`) whenever the ffmpeg build and driver provide
+  it, and silently fall back to `libx264` on the CPU if the hardware encode fails. The audio
+  lanes play from a cached **audio-only AAC file** per source, so hearing the timeline never
+  means decoding a 4K video stream.
 - Proxies are cached **per source file** (keyed by path + size + modified time) and built one
   at a time in the background. Moving a clip, splitting it, or loading a project reuses the
   cache; only a genuinely new file is ever encoded, and never the whole timeline again.

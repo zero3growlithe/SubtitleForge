@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -29,6 +30,26 @@ namespace SubtitleForge.Services
         public string? InitialPrompt { get; set; }
     }
 
+    /// <summary>
+    /// One piece of audio to transcribe plus where it belongs on the timeline. Long files are cut
+    /// into windows because whisper's alignment drifts and it can start looping when it is handed
+    /// many minutes of audio in one go; each window is transcribed independently, which bounds any
+    /// drift to that window.
+    /// </summary>
+    public class TranscriptionWindow
+    {
+        public string WavPath { get; set; } = string.Empty;
+
+        /// <summary>Seconds added to every cue this window produces.</summary>
+        public double OffsetSeconds { get; set; }
+
+        /// <summary>
+        /// Cues that start earlier than this many seconds inside the window are dropped, so the
+        /// overlap between neighbouring windows is not transcribed twice.
+        /// </summary>
+        public double SkipBeforeSeconds { get; set; }
+    }
+
     public class TranscriptionResult
     {
         public List<SubtitleCue> Cues { get; set; } = new List<SubtitleCue>();
@@ -48,7 +69,10 @@ namespace SubtitleForge.Services
         private static readonly TimeSpan DuplicateGapTolerance = TimeSpan.FromSeconds(0.10);
         private static readonly TimeSpan DuplicateDurationTolerance = TimeSpan.FromSeconds(0.10);
 
-        public async Task<TranscriptionResult> TranscribeAsync(
+        /// <summary>
+        /// Transcribes one file. Kept for callers that have a single piece of audio.
+        /// </summary>
+        public Task<TranscriptionResult> TranscribeAsync(
             TranscriptionRequest request,
             IProgress<double>? progress,
             IProgress<string>? status,
@@ -57,6 +81,30 @@ namespace SubtitleForge.Services
             if (!File.Exists(request.WavPath))
             {
                 throw new FileNotFoundException("The extracted audio file is missing.", request.WavPath);
+            }
+
+            List<TranscriptionWindow> windows = new List<TranscriptionWindow>();
+            TranscriptionWindow window = new TranscriptionWindow();
+            window.WavPath = request.WavPath;
+            windows.Add(window);
+
+            return TranscribeWindowsAsync(request, windows, progress, status, cancellationToken);
+        }
+
+        /// <summary>
+        /// Transcribes every window with a single loaded model, offsetting each window's cues and
+        /// trimming the overlap.
+        /// </summary>
+        public async Task<TranscriptionResult> TranscribeWindowsAsync(
+            TranscriptionRequest request,
+            IReadOnlyList<TranscriptionWindow> windows,
+            IProgress<double>? progress,
+            IProgress<string>? status,
+            CancellationToken cancellationToken)
+        {
+            if (windows.Count == 0)
+            {
+                throw new FileNotFoundException("No audio windows were supplied.", request.WavPath);
             }
 
             if (!File.Exists(request.ModelPath))
@@ -140,45 +188,78 @@ namespace SubtitleForge.Services
                 }
 
                 using (WhisperProcessor processor = builder.Build())
-                using (FileStream waveStream = File.OpenRead(request.WavPath))
                 {
-                    await Task.Run(
-                        async delegate
+                    int windowIndex = 0;
+                    foreach (TranscriptionWindow window in windows)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        windowIndex++;
+
+                        if (!File.Exists(window.WavPath))
                         {
-                            await foreach (SegmentData segment in processor
-                                .ProcessAsync(waveStream, cancellationToken)
-                                .ConfigureAwait(false))
-                            {
-                                cancellationToken.ThrowIfCancellationRequested();
+                            continue;
+                        }
 
-                                string text = (segment.Text ?? string.Empty).Trim();
-                                if (text.Length == 0)
+                        if (windows.Count > 1)
+                        {
+                            status?.Report("Transcribing part " + windowIndex.ToString(CultureInfo.InvariantCulture)
+                                + " of " + windows.Count.ToString(CultureInfo.InvariantCulture) + "…");
+                        }
+
+                        double windowOffset = window.OffsetSeconds;
+                        double skipBefore = window.SkipBeforeSeconds;
+                        int windowNumber = windowIndex;
+
+                        using (FileStream waveStream = File.OpenRead(window.WavPath))
+                        {
+                            await Task.Run(
+                                async delegate
                                 {
-                                    continue;
-                                }
+                                    await foreach (SegmentData segment in processor
+                                        .ProcessAsync(waveStream, cancellationToken)
+                                        .ConfigureAwait(false))
+                                    {
+                                        cancellationToken.ThrowIfCancellationRequested();
 
-                                if (request.SkipNonSpeech && IsNonSpeech(text))
-                                {
-                                    continue;
-                                }
+                                        string text = (segment.Text ?? string.Empty).Trim();
+                                        if (text.Length == 0)
+                                        {
+                                            continue;
+                                        }
 
-                                TimeSpan start = segment.Start;
-                                TimeSpan end = segment.End;
-                                if (end <= start)
-                                {
-                                    double estimated = Math.Max(0.4, text.Length * 0.045);
-                                    end = start + TimeSpan.FromSeconds(estimated);
-                                }
+                                        if (request.SkipNonSpeech && IsNonSpeech(text))
+                                        {
+                                            continue;
+                                        }
 
-                                cues.Add(new SubtitleCue(start, end, text, segment.Probability));
+                                        // Overlap between neighbouring windows: the previous
+                                        // window already transcribed this bit.
+                                        if (skipBefore > 0.0 && segment.Start.TotalSeconds < skipBefore)
+                                        {
+                                            continue;
+                                        }
 
-                                if (detectedLanguage.Length == 0 && !string.IsNullOrWhiteSpace(segment.Language))
-                                {
-                                    detectedLanguage = segment.Language;
-                                }
-                            }
-                        },
-                        cancellationToken).ConfigureAwait(false);
+                                        TimeSpan start = segment.Start + TimeSpan.FromSeconds(windowOffset);
+                                        TimeSpan end = segment.End + TimeSpan.FromSeconds(windowOffset);
+                                        if (end <= start)
+                                        {
+                                            double estimated = Math.Max(0.4, text.Length * 0.045);
+                                            end = start + TimeSpan.FromSeconds(estimated);
+                                        }
+
+                                        cues.Add(new SubtitleCue(start, end, text, segment.Probability));
+
+                                        if (detectedLanguage.Length == 0 && !string.IsNullOrWhiteSpace(segment.Language))
+                                        {
+                                            detectedLanguage = segment.Language;
+                                        }
+                                    }
+                                },
+                                cancellationToken).ConfigureAwait(false);
+                        }
+
+                        progress?.Report((double)windowNumber / windows.Count);
+                    }
                 }
             }
 

@@ -80,7 +80,7 @@
             <Grid Grid.Column="0">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="*" MinHeight="150" />
-                    <RowDefinition Height="6" />
+                    <RowDefinition Height="14" />
                     <RowDefinition Height="204" MinHeight="110" />
                 </Grid.RowDefinitions>
 
@@ -95,10 +95,12 @@
 
                 <Border Grid.Row="0" Background="Black" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1">
                     <Grid>
+                        <!-- Muted for good: the sound you hear comes from the audio lanes only. -->
                         <MediaElement x:Name="VideoElement"
                                       LoadedBehavior="Manual"
                                       UnloadedBehavior="Manual"
                                       ScrubbingEnabled="True"
+                                      IsMuted="True"
                                       Stretch="Uniform"
                                       MediaOpened="VideoMediaOpened"
                                       MediaEnded="VideoMediaEnded"
@@ -162,7 +164,8 @@
                 </Grid>
 
                 <!-- ── Drag to trade height between the preview and the tracks ── -->
-                <GridSplitter Grid.Row="1"
+                <GridSplitter x:Name="PreviewSplitter"
+                              Grid.Row="1"
                               HorizontalAlignment="Stretch"
                               VerticalAlignment="Stretch"
                               ResizeDirection="Rows"
@@ -170,6 +173,15 @@
                               Background="{StaticResource PanelBorderBrush}"
                               ShowsPreview="False"
                               Cursor="SizeNS" />
+                <StackPanel Grid.Row="1"
+                            Orientation="Horizontal"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            IsHitTestVisible="False">
+                    <Ellipse Width="4" Height="4" Margin="3,0" Fill="#FF7C8494" />
+                    <Ellipse Width="4" Height="4" Margin="3,0" Fill="#FF7C8494" />
+                    <Ellipse Width="4" Height="4" Margin="3,0" Fill="#FF7C8494" />
+                </StackPanel>
 
                 <!-- ── Multitrack timeline (waveforms + video thumbnails) ── -->
                 <Border Grid.Row="2"

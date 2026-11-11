@@ -41,11 +41,57 @@ namespace SubtitleForge.Services
         /// Returns the cached proxy for this file, building it when missing. Null when the file
         /// is already small enough, has no video stream, or ffmpeg could not encode it.
         /// </summary>
+        /// <summary>
+        /// True when this ffmpeg build carries the NVIDIA hardware H.264 encoder. Probed once per
+        /// binary, because nvenc encodes several times faster than libx264 and leaves the CPU to
+        /// the preview.
+        /// </summary>
+        public static async Task<bool> HasHardwareEncoderAsync(string ffmpegPath, CancellationToken cancellationToken)
+        {
+            lock (EncoderProbes)
+            {
+                bool known;
+                if (EncoderProbes.TryGetValue(ffmpegPath, out known))
+                {
+                    return known;
+                }
+            }
+
+            bool available = false;
+            try
+            {
+                List<string> arguments = new List<string> { "-hide_banner", "-encoders" };
+                ProcessResult result = await ProcessRunner
+                    .RunAsync(ffmpegPath, arguments, null, null, cancellationToken)
+                    .ConfigureAwait(false);
+
+                available = result.StandardOutput.IndexOf("h264_nvenc", StringComparison.OrdinalIgnoreCase) >= 0;
+            }
+            catch (OperationCanceledException)
+            {
+                return false;
+            }
+            catch (Exception exception)
+            {
+                CrashLog.Write(exception, "EncoderProbe");
+            }
+
+            lock (EncoderProbes)
+            {
+                EncoderProbes[ffmpegPath] = available;
+            }
+
+            return available;
+        }
+
+        private static readonly Dictionary<string, bool> EncoderProbes = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+
         public static async Task<string?> BuildAsync(
             string ffmpegPath,
             string sourcePath,
             VideoMetrics metrics,
             double durationSeconds,
+            bool preferHardware,
             Action<double>? onProgress,
             CancellationToken cancellationToken)
         {
@@ -86,6 +132,8 @@ namespace SubtitleForge.Services
 
             string temporary = target + ".part.mp4";
 
+            bool hardware = preferHardware && await HasHardwareEncoderAsync(ffmpegPath, cancellationToken).ConfigureAwait(false);
+
             try
             {
                 List<string> arguments = new List<string>
@@ -98,19 +146,48 @@ namespace SubtitleForge.Services
                     "-y",
                     "-i", sourcePath,
                     "-vf", "scale=-2:" + ProxyHeight.ToString(CultureInfo.InvariantCulture),
-                    "-c:v", "libx264",
-                    "-preset", "veryfast",
-                    "-crf", "26",
-                    "-pix_fmt", "yuv420p",
-                    "-c:a", "aac",
-                    "-b:a", "160k",
-                    "-ac", "2",
-                    "-movflags", "+faststart",
+                    "-pix_fmt", "yuv420p"
+                };
+
+                if (hardware)
+                {
+                    // nvenc quality tiers are numbered: p1 is fastest, p7 slowest.
+                    arguments.Add("-c:v");
+                    arguments.Add("h264_nvenc");
+                    arguments.Add("-preset");
+                    arguments.Add("p2");
+                    arguments.Add("-tune");
+                    arguments.Add("hq");
+                    arguments.Add("-rc");
+                    arguments.Add("vbr");
+                    arguments.Add("-cq");
+                    arguments.Add("26");
+                    arguments.Add("-b:v");
+                    arguments.Add("0");
+                }
+                else
+                {
                     // Leave cores free: the preview keeps decoding the original while this runs,
                     // and playback must not stutter because the encoder ate the machine.
-                    "-threads", "2",
-                    temporary
-                };
+                    arguments.Add("-c:v");
+                    arguments.Add("libx264");
+                    arguments.Add("-preset");
+                    arguments.Add("veryfast");
+                    arguments.Add("-crf");
+                    arguments.Add("26");
+                    arguments.Add("-threads");
+                    arguments.Add("2");
+                }
+
+                arguments.Add("-c:a");
+                arguments.Add("aac");
+                arguments.Add("-b:a");
+                arguments.Add("160k");
+                arguments.Add("-ac");
+                arguments.Add("2");
+                arguments.Add("-movflags");
+                arguments.Add("+faststart");
+                arguments.Add(temporary);
 
                 Action<string> progressHandler = delegate (string line)
                 {
@@ -137,6 +214,21 @@ namespace SubtitleForge.Services
                 ProcessResult result = await ProcessRunner
                     .RunAsync(ffmpegPath, arguments, null, progressHandler, cancellationToken)
                     .ConfigureAwait(false);
+
+                if ((result.ExitCode != 0 || !File.Exists(temporary)) && hardware)
+                {
+                    // No usable GPU encoder (driver too old, no CUDA runtime): redo on the CPU.
+                    CrashLog.WriteNote("Hardware proxy encode failed, retrying on the CPU: " + result.StandardError);
+                    TryDelete(temporary);
+                    return await BuildAsync(
+                        ffmpegPath,
+                        sourcePath,
+                        metrics,
+                        durationSeconds,
+                        false,
+                        onProgress,
+                        cancellationToken).ConfigureAwait(false);
+                }
 
                 if (result.ExitCode != 0 || !File.Exists(temporary))
                 {

@@ -36,7 +36,20 @@ namespace SubtitleForge
         private bool isPlaying;
 
         // Timeline playback: the preview follows the tracks instead of one fixed file.
-        private readonly Dictionary<TimelineSegment, MediaPlayer> audioPlayers = new Dictionary<TimelineSegment, MediaPlayer>();
+        private readonly Dictionary<TimelineSegment, AudioPlaybackSlot> audioPlayers = new Dictionary<TimelineSegment, AudioPlaybackSlot>();
+        private readonly Dictionary<string, string> sourceAudioFiles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// One audio lane's player plus the state needed to leave it alone while it is playing.
+        /// </summary>
+        private sealed class AudioPlaybackSlot
+        {
+            public MediaPlayer Player { get; set; } = null!;
+
+            public bool PositionApplied { get; set; }
+
+            public bool Playing { get; set; }
+        }
         private readonly Dictionary<TimelineSegment, string> recordedClipFiles = new Dictionary<TimelineSegment, string>();
         private readonly Stopwatch playbackClock = new Stopwatch();
         private double playbackAnchorSeconds;
@@ -310,6 +323,7 @@ namespace SubtitleForge
             pendingProxyJobs.Clear();
             sourceProxies.Clear();
             sourceReadyFractions.Clear();
+            sourceAudioFiles.Clear();
             videoMetrics = new VideoMetrics();
             projectDirty = false;
             UpdateTitleState();
@@ -567,6 +581,11 @@ namespace SubtitleForge
                 return;
             }
 
+            if (isPlaying)
+            {
+                PausePlayback();
+            }
+
             TimeSpan position = TimeSpan.FromSeconds(PositionSlider.Value);
             PositionText.Text = SubtitleCue.FormatTimestamp(position);
             SafeSeek(position);
@@ -584,7 +603,7 @@ namespace SubtitleForge
                 // Play() rendered a single frame and stopped.
                 double seconds = position.TotalSeconds;
                 CueVideoSegment(ActiveVideoSegment(seconds), seconds, isPlaying);
-                CueAudioSegments(seconds, isPlaying);
+                CueAudioSegments(seconds, isPlaying, true);
             }
             catch (Exception exception)
             {
@@ -1728,48 +1747,59 @@ namespace SubtitleForge
                             .GetVideoMetricsAsync(ffprobe, sourcePath, CancellationToken.None)
                             .ConfigureAwait(false);
 
-                        if (!metrics.HasVideo || metrics.Height <= ProxyMediaBuilder.ProxyHeight)
-                        {
-                            // Shrinking this would gain nothing: it is already cheap to seek.
-                            SetSourceReady(sourcePath, 1.0, null);
-                            continue;
-                        }
-
                         CancellationTokenSource cancellation = new CancellationTokenSource();
                         proxyCancellation = cancellation;
                         CancellationToken token = cancellation.Token;
 
-                        string? proxy;
                         try
                         {
-                            proxy = await ProxyMediaBuilder
+                            // The audio-only cache is what the audio lanes play, so it is built
+                            // even when the file is small enough to skip the video proxy.
+                            string? audioFile = await AudioPlaybackBuilder
+                                .BuildAsync(ffmpeg, sourcePath, token)
+                                .ConfigureAwait(false);
+
+                            if (!string.IsNullOrEmpty(audioFile))
+                            {
+                                SetSourceAudio(sourcePath, audioFile);
+                            }
+
+                            if (!metrics.HasVideo || metrics.Height <= ProxyMediaBuilder.ProxyHeight)
+                            {
+                                // Shrinking this would gain nothing: it is already cheap to seek.
+                                SetSourceReady(sourcePath, 1.0, null);
+                                continue;
+                            }
+
+                            string? proxy = await ProxyMediaBuilder
                                 .BuildAsync(
                                     ffmpeg,
                                     sourcePath,
                                     metrics,
                                     duration,
+                                    App.Settings.UseGpu,
                                     delegate (double fraction)
                                     {
                                         ReportProxyProgress(sourcePath, fraction);
                                     },
                                     token)
                                 .ConfigureAwait(false);
+
+                            if (string.IsNullOrEmpty(proxy))
+                            {
+                                // Encoding failed or was cancelled: the original still plays, so
+                                // do not leave a permanently grey bar behind.
+                                SetSourceReady(sourcePath, 1.0, null);
+                                continue;
+                            }
+
+                            SetSourceReady(sourcePath, 1.0, proxy);
                         }
                         finally
                         {
                             proxyCancellation = null;
                             cancellation.Dispose();
                         }
-
-                        if (string.IsNullOrEmpty(proxy))
-                        {
-                            // Encoding failed or was cancelled: the original still plays, so do
-                            // not leave a permanently grey bar behind.
-                            SetSourceReady(sourcePath, 1.0, null);
-                            continue;
-                        }
-
-                        SetSourceReady(sourcePath, 1.0, proxy);
                     }
                     catch (Exception exception)
                     {
@@ -1855,6 +1885,18 @@ namespace SubtitleForge
                     videoPlayRequested = false;
                     SafeSeek(TimeSpan.FromSeconds(playheadSeconds));
                 }
+            });
+        }
+
+        private void SetSourceAudio(string sourcePath, string audioPath)
+        {
+            RunOnUi(delegate
+            {
+                sourceAudioFiles[sourcePath] = audioPath;
+
+                // Lanes reading this source were opened against the heavy original: drop their
+                // players so the next cue reopens them on the audio-only file.
+                InvalidateAudioPlayersForSource(sourcePath);
             });
         }
 
@@ -2144,6 +2186,13 @@ namespace SubtitleForge
 
         private void TrackTimelineSeek(object? sender, double seconds)
         {
+            // Clicking or scrubbing the timeline while the preview is running should stop it,
+            // otherwise playback keeps running away from the new position.
+            if (isPlaying)
+            {
+                PausePlayback();
+            }
+
             SeekToSeconds(seconds);
         }
 
@@ -2639,7 +2688,7 @@ namespace SubtitleForge
 
             isRecording = false;
             RecordButton.Content = "● Record";
-            VideoElement.IsMuted = false;
+            VideoElement.IsMuted = true;
 
             TimelineSegment? segment = recordingSegment;
             recordingSegment = null;
@@ -3015,6 +3064,7 @@ namespace SubtitleForge
                 pendingProxyJobs.Clear();
                 sourceProxies.Clear();
                 sourceReadyFractions.Clear();
+                sourceAudioFiles.Clear();
                 videoMetrics = new VideoMetrics();
                 projectDirty = false;
                 UpdateTitleState();
@@ -3147,14 +3197,15 @@ namespace SubtitleForge
             return ordered;
         }
 
+        private const double TranscriptionChunkSeconds = 150.0;
+        private const double TranscriptionChunkOverlapSeconds = 0.5;
+
         private async Task<List<SubtitleCue>> TranscribeSegmentsAsync(
             List<TimelineSegment> segments,
             string wavFolder,
             CancellationToken cancellationToken)
         {
-            List<SubtitleCue> combined = new List<SubtitleCue>();
-            string? runtimeDescription = null;
-            string detectedLanguage = string.Empty;
+            List<TranscriptionWindow> windows = new List<TranscriptionWindow>();
 
             int index = 0;
             foreach (TimelineSegment segment in segments)
@@ -3162,122 +3213,143 @@ namespace SubtitleForge
                 index++;
                 cancellationToken.ThrowIfCancellationRequested();
 
-                SetStatus("Transcribing audio " + index.ToString(CultureInfo.InvariantCulture)
-                    + " of " + segments.Count.ToString(CultureInfo.InvariantCulture) + "…");
-
-                string wavPath = Path.Combine(
-                    wavFolder,
-                    "audio-" + Guid.NewGuid().ToString("N") + ".wav");
-
-                bool hasSource = false;
-
-                if (segment.HasRecordedAudio && segment.Samples.Length > 0)
+                double duration = segment.DurationSeconds;
+                if (duration <= 0.05)
                 {
-                    int startSample = segment.TimelineToSampleIndex(segment.StartSeconds);
-                    int sampleCount = (int)Math.Round(segment.DurationSeconds * TimelineSegment.SampleRate);
-                    WavFile.Write(wavPath, segment.Samples, startSample, sampleCount);
-                    hasSource = true;
+                    continue;
                 }
-                else if (!string.IsNullOrEmpty(segment.SourcePath) && File.Exists(segment.SourcePath))
+
+                // Whisper's alignment drifts and it starts looping when handed many minutes of
+                // audio at once (the classic "subtitles speed up after ~3 minutes, then one cue
+                // sits there forever"). Cutting the audio into independent windows bounds any
+                // bad window to 150 seconds.
+                double chunkSeconds = duration > TranscriptionChunkSeconds ? TranscriptionChunkSeconds : duration;
+                int chunkCount = (int)Math.Ceiling(duration / chunkSeconds);
+                string? ffmpeg = FfmpegLocator.Resolve("ffmpeg", App.Settings.FfmpegDirectory);
+
+                for (int chunk = 0; chunk < chunkCount; chunk++)
                 {
-                    string? ffmpeg = FfmpegLocator.Resolve("ffmpeg", App.Settings.FfmpegDirectory);
-                    if (ffmpeg != null)
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    double chunkStart = chunk == 0 ? 0.0 : (chunk * chunkSeconds) - TranscriptionChunkOverlapSeconds;
+                    double chunkEnd = Math.Min(duration, (chunk + 1) * chunkSeconds);
+                    double chunkDuration = chunkEnd - chunkStart;
+                    if (chunkDuration <= 0.5)
+                    {
+                        continue;
+                    }
+
+                    string part = chunkCount > 1
+                        ? " (part " + (chunk + 1).ToString(CultureInfo.InvariantCulture)
+                            + " of " + chunkCount.ToString(CultureInfo.InvariantCulture) + ")"
+                        : string.Empty;
+
+                    SetStatus("Preparing audio " + index.ToString(CultureInfo.InvariantCulture)
+                        + " of " + segments.Count.ToString(CultureInfo.InvariantCulture) + part + "…");
+
+                    string wavPath = Path.Combine(
+                        wavFolder,
+                        "audio-" + Guid.NewGuid().ToString("N") + ".wav");
+
+                    bool hasSource = false;
+
+                    if (segment.HasRecordedAudio && segment.Samples.Length > 0)
+                    {
+                        int startSample = segment.TimelineToSampleIndex(segment.StartSeconds + chunkStart);
+                        int sampleCount = (int)Math.Round(chunkDuration * TimelineSegment.SampleRate);
+                        WavFile.Write(wavPath, segment.Samples, startSample, sampleCount);
+                        hasSource = true;
+                    }
+                    else if (!string.IsNullOrEmpty(segment.SourcePath) && File.Exists(segment.SourcePath) && ffmpeg != null)
                     {
                         await AudioTrackExtractor
                             .ExtractSegmentAsync(
                                 ffmpeg,
                                 segment.SourcePath,
                                 wavPath,
-                                segment.SourceOffsetSeconds,
-                                segment.DurationSeconds,
+                                segment.SourceOffsetSeconds + chunkStart,
+                                chunkDuration,
                                 null,
                                 cancellationToken)
                             .ConfigureAwait(true);
                         hasSource = true;
                     }
-                }
 
-                if (!hasSource)
-                {
-                    continue;
-                }
-
-                try
-                {
-                    TranscriptionPiece piece = await TranscribeOneFileAsync(wavPath, cancellationToken).ConfigureAwait(true);
-                    runtimeDescription = piece.RuntimeDescription;
-                    if (!string.IsNullOrEmpty(piece.DetectedLanguage))
+                    if (!hasSource)
                     {
-                        detectedLanguage = piece.DetectedLanguage;
+                        continue;
                     }
 
-                    double offsetSeconds = segment.StartSeconds;
-                    foreach (SubtitleCue cue in piece.Cues)
-                    {
-                        combined.Add(new SubtitleCue(
-                            cue.Start + TimeSpan.FromSeconds(offsetSeconds),
-                            cue.End + TimeSpan.FromSeconds(offsetSeconds),
-                            cue.Text,
-                            cue.Confidence));
-                    }
-                }
-                finally
-                {
-                    TryDeleteFile(wavPath);
+                    TranscriptionWindow window = new TranscriptionWindow();
+                    window.WavPath = wavPath;
+                    window.OffsetSeconds = segment.StartSeconds + chunkStart;
+                    window.SkipBeforeSeconds = chunk == 0 ? 0.0 : TranscriptionChunkOverlapSeconds;
+                    windows.Add(window);
                 }
             }
 
-            combined.Sort(delegate (SubtitleCue left, SubtitleCue right)
+            if (windows.Count == 0)
             {
-                return left.Start.CompareTo(right.Start);
-            });
-
-            lastRuntimeDescription = runtimeDescription ?? "unknown runtime";
-            lastDetectedLanguage = detectedLanguage;
-            return combined;
-        }
-
-        private async Task<TranscriptionPiece> TranscribeOneFileAsync(string wavPath, CancellationToken cancellationToken)
-        {
-            WhisperModelInfo? model = ModelComboBox.SelectedItem as WhisperModelInfo;
-            if (model == null)
-            {
-                throw new InvalidOperationException("Choose a Whisper model first.");
+                return new List<SubtitleCue>();
             }
 
-            IProgress<string> modelStatus = new Progress<string>(SetStatus);
-            IProgress<double> downloadProgress = new Progress<double>(delegate (double fraction)
+            try
             {
-                SetProgress(fraction * 0.10);
-            });
+                WhisperModelInfo? model = ModelComboBox.SelectedItem as WhisperModelInfo;
+                if (model == null)
+                {
+                    throw new InvalidOperationException("Choose a Whisper model first.");
+                }
 
-            string modelPath = await WhisperModelStore
-                .EnsureModelAsync(model.FileName, modelStatus, downloadProgress, cancellationToken)
-                .ConfigureAwait(true);
+                IProgress<string> modelStatus = new Progress<string>(SetStatus);
+                IProgress<double> downloadProgress = new Progress<double>(delegate (double fraction)
+                {
+                    SetProgress(fraction * 0.10);
+                });
 
-            TranscriptionRequest request = new TranscriptionRequest();
-            request.WavPath = wavPath;
-            request.ModelPath = modelPath;
-            request.Language = App.Settings.Language;
-            request.TranslateToEnglish = App.Settings.TranslateToEnglish;
-            request.UseGpu = App.Settings.UseGpu;
-            request.SkipNonSpeech = App.Settings.SkipNonSpeech;
-            request.Threads = App.Settings.Threads;
+                string modelPath = await WhisperModelStore
+                    .EnsureModelAsync(model.FileName, modelStatus, downloadProgress, cancellationToken)
+                    .ConfigureAwait(true);
 
-            IProgress<double> progress = new Progress<double>(delegate (double fraction)
+                TranscriptionRequest request = new TranscriptionRequest();
+                request.WavPath = windows[0].WavPath;
+                request.ModelPath = modelPath;
+                request.Language = App.Settings.Language;
+                request.TranslateToEnglish = App.Settings.TranslateToEnglish;
+                request.UseGpu = App.Settings.UseGpu;
+                request.SkipNonSpeech = App.Settings.SkipNonSpeech;
+                request.Threads = App.Settings.Threads;
+
+                IProgress<double> progress = new Progress<double>(delegate (double fraction)
+                {
+                    SetProgress(0.25 + (fraction * 0.70));
+                });
+
+                // One model load for all the windows.
+                TranscriptionResult result = await transcriber
+                    .TranscribeWindowsAsync(request, windows, progress, new Progress<string>(SetStatus), cancellationToken)
+                    .ConfigureAwait(true);
+
+                lastRuntimeDescription = string.IsNullOrEmpty(result.RuntimeDescription)
+                    ? "unknown runtime"
+                    : result.RuntimeDescription;
+                lastDetectedLanguage = result.DetectedLanguage;
+
+                List<SubtitleCue> ordered = new List<SubtitleCue>(result.Cues);
+                ordered.Sort(delegate (SubtitleCue left, SubtitleCue right)
+                {
+                    return left.Start.CompareTo(right.Start);
+                });
+
+                return ordered;
+            }
+            finally
             {
-                SetProgress(0.25 + (fraction * 0.70));
-            });
-
-            TranscriptionResult result = await transcriber
-                .TranscribeAsync(request, progress, new Progress<string>(SetStatus), cancellationToken)
-                .ConfigureAwait(true);
-
-            TranscriptionPiece piece = new TranscriptionPiece();
-            piece.Cues = result.Cues;
-            piece.RuntimeDescription = result.RuntimeDescription;
-            piece.DetectedLanguage = result.DetectedLanguage;
-            return piece;
+                foreach (TranscriptionWindow window in windows)
+                {
+                    TryDeleteFile(window.WavPath);
+                }
+            }
         }
 
         // ── Timeline playback ──────────────────────────────────────────────
@@ -3379,20 +3451,32 @@ namespace SubtitleForge
                 return tempPath;
             }
 
-            if (!string.IsNullOrEmpty(segment.SourcePath) && File.Exists(segment.SourcePath))
+            string? source = segment.SourcePath;
+            if (!string.IsNullOrEmpty(source))
             {
-                return segment.SourcePath;
+                // Decoding a 4K file just to hear its audio is what made playback stutter: use the
+                // cached audio-only M4A when it exists, and the source file until it does.
+                string cached;
+                if (sourceAudioFiles.TryGetValue(source, out cached) && File.Exists(cached))
+                {
+                    return cached;
+                }
+
+                if (File.Exists(source))
+                {
+                    return source;
+                }
             }
 
             return null;
         }
 
-        private MediaPlayer? EnsureAudioPlayer(TimelineSegment segment)
+        private AudioPlaybackSlot? EnsureAudioPlayer(TimelineSegment segment)
         {
-            MediaPlayer? player;
-            if (audioPlayers.TryGetValue(segment, out player))
+            AudioPlaybackSlot? slot;
+            if (audioPlayers.TryGetValue(segment, out slot))
             {
-                return player;
+                return slot;
             }
 
             string? mediaPath = SegmentMediaPath(segment);
@@ -3403,9 +3487,12 @@ namespace SubtitleForge
 
             try
             {
-                MediaPlayer created = new MediaPlayer();
-                created.Open(new Uri(mediaPath, UriKind.Absolute));
-                created.Volume = 1.0;
+                MediaPlayer player = new MediaPlayer();
+                player.Volume = 1.0;
+                player.Open(new Uri(mediaPath, UriKind.Absolute));
+
+                AudioPlaybackSlot created = new AudioPlaybackSlot();
+                created.Player = player;
                 audioPlayers[segment] = created;
                 return created;
             }
@@ -3416,11 +3503,19 @@ namespace SubtitleForge
             }
         }
 
-        private void CueAudioSegments(double seconds, bool play)
+        /// <summary>
+        /// Keeps the audio lanes in step with the playhead.
+        ///
+        /// This used to re-set <see cref="MediaPlayer.Position"/> on every tick whenever it drifted
+        /// more than 400 ms from the master clock, so any clock skew turned into a seek — audible
+        /// as "a bit of audio every now and then". Now a slot is positioned once when it becomes
+        /// active (or when the user seeks) and only re-synced if it is more than a second off.
+        /// </summary>
+        private void CueAudioSegments(double seconds, bool play, bool force)
         {
             List<TimelineSegment> active = ActiveAudioSegments(seconds);
 
-            foreach (KeyValuePair<TimelineSegment, MediaPlayer> pair in audioPlayers)
+            foreach (KeyValuePair<TimelineSegment, AudioPlaybackSlot> pair in audioPlayers)
             {
                 if (active.Contains(pair.Key))
                 {
@@ -3429,48 +3524,69 @@ namespace SubtitleForge
 
                 try
                 {
-                    pair.Value.Pause();
+                    pair.Value.Player.Pause();
                 }
                 catch (Exception)
                 {
                     // Player closed mid-flight — nothing to stop.
                 }
+
+                pair.Value.Playing = false;
+                pair.Value.PositionApplied = false;
             }
 
             foreach (TimelineSegment segment in active)
             {
-                MediaPlayer? player = EnsureAudioPlayer(segment);
-                if (player == null)
+                AudioPlaybackSlot? slot = EnsureAudioPlayer(segment);
+                if (slot == null)
                 {
                     continue;
                 }
 
+                double mediaSeconds = SegmentMediaSeconds(segment, seconds);
+
                 try
                 {
-                    TimeSpan target = TimeSpan.FromSeconds(SegmentMediaSeconds(segment, seconds));
-                    if (Math.Abs((player.Position - target).TotalMilliseconds) > 400.0)
+                    if (force)
                     {
-                        player.Position = target;
+                        slot.PositionApplied = false;
+                        slot.Playing = false;
                     }
 
-                    if (play)
+                    TimeSpan target = TimeSpan.FromSeconds(mediaSeconds);
+
+                    if (!slot.PositionApplied)
                     {
-                        player.Play();
+                        slot.Player.Position = target;
+                        slot.PositionApplied = true;
                     }
-                    else
+                    else if (Math.Abs((slot.Player.Position - target).TotalSeconds) > 1.0)
                     {
-                        player.Pause();
+                        // Really out of step (long stall, resumed window): resync once.
+                        slot.Player.Position = target;
+                        slot.Playing = false;
+                    }
+
+                    if (play && !slot.Playing)
+                    {
+                        slot.Player.Play();
+                        slot.Playing = true;
+                    }
+                    else if (!play && slot.Playing)
+                    {
+                        slot.Player.Pause();
+                        slot.Playing = false;
                     }
                 }
                 catch (Exception)
                 {
-                    // The player is still opening; the next tick re-cues it.
+                    // The player is still opening; the next tick retries.
+                    slot.PositionApplied = false;
                 }
             }
 
-            // Audio lanes own the sound; the video's own audio track would double it up.
-            // Recording mutes the preview too, to keep the microphone out of the speakers.
-            VideoElement.IsMuted = active.Count > 0 || isRecording;
+            // The preview never makes a sound of its own: all audio comes from the audio lanes.
+            VideoElement.IsMuted = true;
         }
 
         private void CueVideoSegment(TimelineSegment? segment, double timelineSeconds, bool play)
@@ -3601,7 +3717,7 @@ namespace SubtitleForge
                 }
             }
 
-            CueAudioSegments(seconds, play);
+            CueAudioSegments(seconds, play, false);
         }
 
         private void StartTimelinePlayback()
@@ -3651,16 +3767,19 @@ namespace SubtitleForge
                 // Nothing loaded.
             }
 
-            foreach (KeyValuePair<TimelineSegment, MediaPlayer> pair in audioPlayers)
+            foreach (KeyValuePair<TimelineSegment, AudioPlaybackSlot> pair in audioPlayers)
             {
                 try
                 {
-                    pair.Value.Pause();
+                    pair.Value.Player.Pause();
                 }
                 catch (Exception)
                 {
                     // Player already gone.
                 }
+
+                pair.Value.Playing = false;
+                pair.Value.PositionApplied = false;
             }
         }
 
@@ -3676,7 +3795,7 @@ namespace SubtitleForge
             }
 
             List<TimelineSegment> stale = new List<TimelineSegment>();
-            foreach (KeyValuePair<TimelineSegment, MediaPlayer> pair in audioPlayers)
+            foreach (KeyValuePair<TimelineSegment, AudioPlaybackSlot> pair in audioPlayers)
             {
                 if (!live.Contains(pair.Key))
                 {
@@ -3686,12 +3805,12 @@ namespace SubtitleForge
 
             foreach (TimelineSegment segment in stale)
             {
-                MediaPlayer player;
-                if (audioPlayers.TryGetValue(segment, out player))
+                AudioPlaybackSlot slot;
+                if (audioPlayers.TryGetValue(segment, out slot))
                 {
                     try
                     {
-                        player.Close();
+                        slot.Player.Close();
                     }
                     catch (Exception)
                     {
@@ -3705,12 +3824,12 @@ namespace SubtitleForge
 
         private void InvalidateAudioPlayer(TimelineSegment segment)
         {
-            MediaPlayer player;
-            if (audioPlayers.TryGetValue(segment, out player))
+            AudioPlaybackSlot slot;
+            if (audioPlayers.TryGetValue(segment, out slot))
             {
                 try
                 {
-                    player.Close();
+                    slot.Player.Close();
                 }
                 catch (Exception)
                 {
@@ -3723,13 +3842,35 @@ namespace SubtitleForge
             recordedClipFiles.Remove(segment);
         }
 
+        /// <summary>
+        /// Drops the players of every lane that reads this source, so the next cue reopens them
+        /// against the freshly cached audio-only file.
+        /// </summary>
+        private void InvalidateAudioPlayersForSource(string sourcePath)
+        {
+            List<TimelineSegment> affected = new List<TimelineSegment>();
+            foreach (KeyValuePair<TimelineSegment, AudioPlaybackSlot> pair in audioPlayers)
+            {
+                if (!string.IsNullOrEmpty(pair.Key.SourcePath)
+                    && string.Equals(pair.Key.SourcePath, sourcePath, StringComparison.OrdinalIgnoreCase))
+                {
+                    affected.Add(pair.Key);
+                }
+            }
+
+            foreach (TimelineSegment segment in affected)
+            {
+                InvalidateAudioPlayer(segment);
+            }
+        }
+
         private void DisposeAudioPlayers()
         {
-            foreach (KeyValuePair<TimelineSegment, MediaPlayer> pair in audioPlayers)
+            foreach (KeyValuePair<TimelineSegment, AudioPlaybackSlot> pair in audioPlayers)
             {
                 try
                 {
-                    pair.Value.Close();
+                    pair.Value.Player.Close();
                 }
                 catch (Exception)
                 {
@@ -3843,6 +3984,46 @@ namespace SubtitleForge
 
                         // Only this file gets encoded — cached proxies of other sources stay.
                         QueueProxyBuild(path, fileDuration);
+
+                        // A video clip has to be audible too: give it an audio lane directly
+                        // below, filled with its own audio, exactly like an imported audio file.
+                        TimelineTrack videoAudioTrack = new TimelineTrack(
+                            TrackKind.Audio,
+                            Path.GetFileNameWithoutExtension(path) + " audio",
+                            NextTrackColor(TrackKind.Audio));
+
+                        TimelineSegment videoAudioSegment = new TimelineSegment(TrackKind.Audio);
+                        videoAudioSegment.StartSeconds = insertSeconds;
+                        videoAudioSegment.SourceOffsetSeconds = 0.0;
+                        videoAudioSegment.DurationSeconds = fileDuration;
+                        videoAudioSegment.SourceDuration = fileDuration;
+                        videoAudioSegment.SourcePath = path;
+                        videoAudioTrack.Segments.Add(videoAudioSegment);
+
+                        if (insertRow >= 0 && insertRow <= tracks.Count)
+                        {
+                            tracks.Insert(insertRow, videoAudioTrack);
+                            insertRow++;
+                        }
+                        else
+                        {
+                            tracks.Add(videoAudioTrack);
+                        }
+
+                        try
+                        {
+                            short[] videoAudioSamples = await AudioSampleLoader
+                                .LoadAsync(ffmpeg, path, CancellationToken.None)
+                                .ConfigureAwait(true);
+                            videoAudioSegment.Samples = videoAudioSamples;
+                            videoAudioSegment.RebuildPeaks();
+                        }
+                        catch (Exception exception)
+                        {
+                            CrashLog.Write(exception, "DropVideoAudio");
+                        }
+
+                        videoAudioTrack.NotifyContentChanged();
                     }
                     else if (ffmpeg != null)
                     {

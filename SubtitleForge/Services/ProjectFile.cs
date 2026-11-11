@@ -48,7 +48,7 @@ namespace SubtitleForge.Services
 
         public string Text { get; set; } = string.Empty;
 
-        public float Confidence { get; set; } = 1f;
+        public double Confidence { get; set; } = 1.0;
     }
 
     public class ProjectFileData

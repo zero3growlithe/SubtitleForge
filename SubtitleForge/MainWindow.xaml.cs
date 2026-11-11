@@ -257,6 +257,8 @@ namespace SubtitleForge
                 return;
             }
 
+            // A brand-new video starts a brand-new project: Ctrl+S must ask for a file again.
+            projectPath = null;
             LoadVideo(dialog.FileName);
         }
 
@@ -1966,7 +1968,7 @@ namespace SubtitleForge
 
             MenuItem colorItem = new MenuItem();
             colorItem.Header = "Background colour";
-            AddColorEntries(colorItem, track);
+            AddColorEntries(colorItem.Items, track);
             menu.Items.Add(colorItem);
 
             MenuItem splitItem = new MenuItem();
@@ -2077,7 +2079,7 @@ namespace SubtitleForge
             }
 
             ContextMenu menu = new ContextMenu();
-            AddColorEntries(menu, selection[0]);
+            AddColorEntries(menu.Items, selection[0]);
             menu.PlacementTarget = TrackColorButton;
             menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
             menu.IsOpen = true;

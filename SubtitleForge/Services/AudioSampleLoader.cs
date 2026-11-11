@@ -36,7 +36,7 @@ namespace SubtitleForge.Services
                 "-sn",
                 "-dn",
                 "-ac", "1",
-                "-ar", TimelineTrack.SampleRate.ToString(CultureInfo.InvariantCulture),
+                "-ar", TimelineSegment.SampleRate.ToString(CultureInfo.InvariantCulture),
                 "-f", "s16le",
                 "pipe:1"
             };

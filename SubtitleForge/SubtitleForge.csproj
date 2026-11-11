@@ -33,8 +33,9 @@
   <ItemGroup>
     <PackageReference Include="Whisper.net" Version="1.9.1" />
     <PackageReference Include="Whisper.net.Runtime" Version="1.9.1" />
-    <!-- CUDA 12 natives are 560 MB; -p:EnableCuda=false produces the small CPU-only build. -->
-    <PackageReference Include="Whisper.net.Runtime.Cuda12" Version="1.9.1" Condition="'$(EnableCuda)' != 'false'" />
+    <!-- Windows-only CUDA 12 natives (the cross-platform meta package also drags in a 544 MB
+         linux-x64 blob). They are 560 MB, so -p:EnableCuda=false produces the small CPU-only build. -->
+    <PackageReference Include="Whisper.net.Runtime.Cuda12.Windows" Version="1.9.1" Condition="'$(EnableCuda)' != 'false'" />
   </ItemGroup>
 
   <ItemGroup>

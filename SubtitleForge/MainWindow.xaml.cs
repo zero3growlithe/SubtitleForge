@@ -1689,6 +1689,59 @@ namespace SubtitleForge
             style.FontSize = App.Settings.FontSize;
             style.OutlineThickness = App.Settings.OutlineThickness;
             style.MarginVertical = App.Settings.MarginVertical;
+
+            // Burned-in exports follow the default text style profile so the rendered video looks
+            // like the preview. Profile sizes are pixels on a 1080-tall design canvas; the ASS
+            // script uses PlayResY 480, hence the 480 / 1080 factor.
+            StyleProfile? profile = App.Profiles.ResolveStyle(App.Settings.DefaultStyleProfileId);
+            if (profile != null)
+            {
+                double factor = 480.0 / SubtitleOverlay.DesignHeight;
+
+                style.FontName = profile.FontFamily;
+                style.FontSize = Math.Max(8, (int)Math.Round(profile.FontSize * factor));
+                style.Bold = profile.Bold;
+                style.Italic = profile.Italic;
+                style.PrimaryColour = StyleBrushes.ToAssColor(profile.Fill, profile.Opacity);
+
+                OutlineLayer? outline = null;
+                foreach (OutlineLayer candidate in profile.Outlines)
+                {
+                    if (candidate.Enabled && string.Equals(candidate.Target, EffectTarget.Font, StringComparison.OrdinalIgnoreCase))
+                    {
+                        outline = candidate;
+                        break;
+                    }
+                }
+
+                if (outline != null)
+                {
+                    style.OutlineThickness = (int)Math.Max(1.0, Math.Round(outline.Thickness * factor));
+                    style.OutlineColour = StyleBrushes.ToAssColor(outline.Color, 1.0);
+                }
+                else
+                {
+                    style.OutlineThickness = 0;
+                }
+
+                ShadowLayer? shadow = null;
+                foreach (ShadowLayer candidate in profile.Shadows)
+                {
+                    if (candidate.Enabled && string.Equals(candidate.Target, EffectTarget.Font, StringComparison.OrdinalIgnoreCase))
+                    {
+                        shadow = candidate;
+                        break;
+                    }
+                }
+
+                if (shadow != null)
+                {
+                    double depth = Math.Max(Math.Abs(shadow.OffsetX), Math.Abs(shadow.OffsetY)) * factor;
+                    style.ShadowDepth = Math.Max(0.5, Math.Round(depth, 1));
+                    style.BackColour = StyleBrushes.ToAssColor(shadow.Color, shadow.Opacity);
+                }
+            }
+
             return style;
         }
 

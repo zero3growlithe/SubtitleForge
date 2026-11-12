@@ -92,6 +92,22 @@ namespace SubtitleForge.Services
             return Color.FromArgb((byte)Math.Round(alpha), color.R, color.G, color.B);
         }
 
+        /// <summary>
+        /// Converts a colour spec into an ASS/libass colour literal (<c>&amp;HAABBGGRR</c>), using the
+        /// first stop of a gradient because ASS has no gradient support in style lines.
+        /// </summary>
+        public static string ToAssColor(ColorSpec? spec, double opacity)
+        {
+            Color color = ParseColor(spec == null ? null : spec.StartColor, Colors.White);
+            color = ApplyOpacity(color, Math.Max(0.0, Math.Min(1.0, opacity)));
+            int alpha = 255 - color.A;
+            return "&H"
+                + alpha.ToString("X2")
+                + color.B.ToString("X2")
+                + color.G.ToString("X2")
+                + color.R.ToString("X2");
+        }
+
         public static void ResolveDirection(string? direction, Rect bounds, out Point start, out Point end)
         {
             double midX = bounds.Left + (bounds.Width * 0.5);

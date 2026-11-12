@@ -16,6 +16,24 @@ namespace SubtitleForge.Services
         public int OutlineThickness { get; set; } = 1;
 
         public int MarginVertical { get; set; } = 40;
+
+        /// <summary>Text fill colour (<c>&amp;HAABBGGRR</c>).</summary>
+        public string PrimaryColour { get; set; } = "&H00FFFFFF";
+
+        public string SecondaryColour { get; set; } = "&H000000FF";
+
+        /// <summary>Outline colour (<c>&amp;HAABBGGRR</c>).</summary>
+        public string OutlineColour { get; set; } = "&H00000000";
+
+        /// <summary>Shadow colour (<c>&amp;HAABBGGRR</c>).</summary>
+        public string BackColour { get; set; } = "&H80000000";
+
+        public bool Bold { get; set; }
+
+        public bool Italic { get; set; }
+
+        /// <summary>Shadow offset in ASS pixels; 0 disables the shadow.</summary>
+        public double ShadowDepth { get; set; }
     }
 
     /// <summary>
@@ -84,9 +102,23 @@ namespace SubtitleForge.Services
                 + SanitizeStyleText(style.FontName)
                 + ","
                 + style.FontSize.ToString(CultureInfo.InvariantCulture)
-                + ",&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,"
+                + ","
+                + style.PrimaryColour
+                + ","
+                + style.SecondaryColour
+                + ","
+                + style.OutlineColour
+                + ","
+                + style.BackColour
+                + ","
+                + (style.Bold ? "1" : "0")
+                + ","
+                + (style.Italic ? "1" : "0")
+                + ",0,0,100,100,0,0,1,"
                 + Math.Max(0, style.OutlineThickness).ToString("0.#", CultureInfo.InvariantCulture)
-                + ",0.5,2,40,40,"
+                + ","
+                + Math.Max(0.0, style.ShadowDepth).ToString("0.#", CultureInfo.InvariantCulture)
+                + ",2,40,40,"
                 + Math.Max(0, style.MarginVertical).ToString(CultureInfo.InvariantCulture)
                 + ",1");
             builder.AppendLine();

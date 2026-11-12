@@ -17,7 +17,8 @@ namespace SubtitleForge.Controls
     /// </summary>
     public sealed class SubtitleOverlay : FrameworkElement
     {
-        private const double DesignHeight = 1080.0;
+        /// <summary>Height of the design canvas the profile font sizes are authored against.</summary>
+        public const double DesignHeight = 1080.0;
         private const double DefaultCharacterStagger = 0.06;
 
         private readonly List<GlyphBox> glyphs = new List<GlyphBox>();

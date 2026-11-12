@@ -120,6 +120,10 @@ its own. Three kinds of named profile drive it:
 Outlines and shadows each carry a **target**: `Font` applies them to the glyphs, `Composition`
 applies them around the finished font + outlines + shadows stack.
 
+The default text style profile also drives **burned-in** exports: `As MP4…` with *Burn in
+subtitles* uses its font, size, weight, fill colour and the first font-targeted outline and shadow,
+so the exported video matches the preview (animations are not baked in).
+
 Three buttons in the toolbar open one creator per kind — **Text style…**, **Idle anim…** and
 **Pop-in…**. Each one lists the saved profiles of that kind with `New`, `Delete` and
 `Set as default`, edits every field with numeric inputs and colour/gradient pickers, and shows a

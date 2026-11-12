@@ -14,6 +14,8 @@ namespace SubtitleForge.Models
         private int number;
 
         private bool isOverlapping;
+
+        private bool touchesNeighbour;
         private TimeSpan start;
         private TimeSpan end;
         private string text;
@@ -123,6 +125,7 @@ namespace SubtitleForge.Models
                     OnPropertyChanged(nameof(HasCustomLook));
                     OnPropertyChanged(nameof(LabelBrush));
                     OnPropertyChanged(nameof(NumberDisplay));
+                    OnPropertyChanged(nameof(LabelWeight));
                 }
             }
         }
@@ -140,6 +143,7 @@ namespace SubtitleForge.Models
                     OnPropertyChanged(nameof(HasCustomLook));
                     OnPropertyChanged(nameof(LabelBrush));
                     OnPropertyChanged(nameof(NumberDisplay));
+                    OnPropertyChanged(nameof(LabelWeight));
                 }
             }
         }
@@ -157,6 +161,7 @@ namespace SubtitleForge.Models
                     OnPropertyChanged(nameof(HasCustomLook));
                     OnPropertyChanged(nameof(LabelBrush));
                     OnPropertyChanged(nameof(NumberDisplay));
+                    OnPropertyChanged(nameof(LabelWeight));
                 }
             }
         }
@@ -221,6 +226,8 @@ namespace SubtitleForge.Models
 
         private static readonly Brush OverlapLabelBrush = CreateBrush("#FFE5484D");
 
+        private static readonly Brush TouchingLabelBrush = CreateBrush("#FF8FD2FF");
+
         /// <summary>
         /// Set by the window when this cue's times overlap another cue's. Overlapping cues are a
         /// real timing problem, so they get the loud colour instead of a decorative one.
@@ -239,6 +246,36 @@ namespace SubtitleForge.Models
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(LabelBrush));
             }
+        }
+
+        /// <summary>
+        /// Set by the window when this cue starts exactly where the previous one ends (within a
+        /// tenth of a millisecond). Contiguous cues are not a problem, so they are marked rather
+        /// than warned about.
+        /// </summary>
+        public bool TouchesNeighbour
+        {
+            get { return touchesNeighbour; }
+            set
+            {
+                if (touchesNeighbour == value)
+                {
+                    return;
+                }
+
+                touchesNeighbour = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(LabelBrush));
+            }
+        }
+
+        /// <summary>
+        /// Bold for cues that do not use the default profiles. The colour is left alone because it
+        /// tracks overlapping times, and two meanings in one channel would be unreadable.
+        /// </summary>
+        public FontWeight LabelWeight
+        {
+            get { return HasCustomLook ? FontWeights.Bold : FontWeights.Normal; }
         }
 
         /// <summary>
@@ -261,7 +298,15 @@ namespace SubtitleForge.Models
         /// </summary>
         public Brush LabelBrush
         {
-            get { return isOverlapping ? OverlapLabelBrush : PlainLabelBrush; }
+            get
+            {
+                if (isOverlapping)
+                {
+                    return OverlapLabelBrush;
+                }
+
+                return touchesNeighbour ? TouchingLabelBrush : PlainLabelBrush;
+            }
         }
 
         private static Brush CreateBrush(string value)

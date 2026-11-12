@@ -167,10 +167,15 @@ creator saves the edits of the profile you were just in, so the picker doubles a
 in any field submits it — the value is validated and the field gives up focus instead of triggering
 the window's Save button — and `Esc` puts the previous value back.
 
-**Overlapping cues are tinted red in the cue list.** Times are checked as a whole, so a cue nested
-inside a longer one flags both, which is what a doubled-up subtitle looks like on screen. Cues that
-carry their own style, idle or pop-in profile keep the default colour but get a `*` after their
-number in the `#` column. Hovering a row draws an outline instead of a
+**The cue list colours cue times, and weights overrides.**
+
+- **Red** — the cue overlaps another cue. Times are checked as a whole, so a cue nested inside a
+  longer one flags both, which is what a doubled-up subtitle looks like on screen.
+- **Light blue** — the cue ends exactly where the next one starts (or within a tenth of a
+  millisecond). That is a clean handover, not a problem, so it is marked but not warned about.
+- **Bold with a `*` after the number** — the cue carries its own style, idle or pop-in profile. The
+  colour is left to the timing state; weight and the star carry the "not the defaults" meaning, so
+  one row never has to say two things in one channel. Hovering a row draws an outline instead of a
 background, which used to paint over the selection colour and make selected rows look unselected.
 
 **Cue placement is edited as an offset.** The `X` / `Y` fields under the cue editor show how far the

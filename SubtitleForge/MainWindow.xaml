@@ -256,21 +256,24 @@
                             <GridViewColumn Header="#" Width="34">
                                 <GridViewColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="{Binding NumberDisplay}" Foreground="{Binding LabelBrush}" />
+                                        <TextBlock Text="{Binding NumberDisplay}" Foreground="{Binding LabelBrush}"
+                                                   FontWeight="{Binding LabelWeight}" />
                                     </DataTemplate>
                                 </GridViewColumn.CellTemplate>
                             </GridViewColumn>
                             <GridViewColumn Header="Start" Width="86">
                                 <GridViewColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="{Binding StartDisplay}" Foreground="{Binding LabelBrush}" />
+                                        <TextBlock Text="{Binding StartDisplay}" Foreground="{Binding LabelBrush}"
+                                                   FontWeight="{Binding LabelWeight}" />
                                     </DataTemplate>
                                 </GridViewColumn.CellTemplate>
                             </GridViewColumn>
                             <GridViewColumn Header="End" Width="86">
                                 <GridViewColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="{Binding EndDisplay}" Foreground="{Binding LabelBrush}" />
+                                        <TextBlock Text="{Binding EndDisplay}" Foreground="{Binding LabelBrush}"
+                                                   FontWeight="{Binding LabelWeight}" />
                                     </DataTemplate>
                                 </GridViewColumn.CellTemplate>
                             </GridViewColumn>
@@ -278,7 +281,8 @@
                                 <GridViewColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding TextPreview}" TextTrimming="CharacterEllipsis"
-                                                   Foreground="{Binding LabelBrush}" />
+                                                   Foreground="{Binding LabelBrush}"
+                                                   FontWeight="{Binding LabelWeight}" />
                                     </DataTemplate>
                                 </GridViewColumn.CellTemplate>
                             </GridViewColumn>

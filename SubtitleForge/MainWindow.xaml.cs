@@ -1501,12 +1501,16 @@ namespace SubtitleForge
         }
 
         /// <summary>
-        /// Marks both cues of every overlapping pair. Sorted by start time a running end and the cue
-        /// that owns it are enough, and the owner only moves when the end actually grows, so a cue
-        /// nested inside a long one still flags the long one.
+        /// Marks both cues of every overlapping pair, and both cues of every pair that simply meets
+        /// end-to-start. Sorted by start time a running end and the cue that owns it are enough, and
+        /// the owner only moves when the end actually grows, so a cue nested inside a long one still
+        /// flags the long one. A cue that ends where the next one starts, give or take a tenth of a
+        /// millisecond, is not an overlap — that is a clean handover.
         /// </summary>
         private void RefreshCueOverlaps()
         {
+            TimeSpan tolerance = TimeSpan.FromMilliseconds(0.1);
+
             List<SubtitleCue> ordered = new List<SubtitleCue>(cues);
             ordered.Sort(delegate (SubtitleCue left, SubtitleCue right)
             {
@@ -1516,16 +1520,35 @@ namespace SubtitleForge
             foreach (SubtitleCue cue in ordered)
             {
                 cue.IsOverlapping = false;
+                cue.TouchesNeighbour = false;
             }
 
             SubtitleCue? owner = null;
             TimeSpan runningEnd = TimeSpan.Zero;
             foreach (SubtitleCue cue in ordered)
             {
-                if (owner != null && cue.Start < runningEnd)
+                if (owner != null)
                 {
-                    cue.IsOverlapping = true;
-                    owner.IsOverlapping = true;
+                    TimeSpan gap = cue.Start - runningEnd;
+                    if (gap < TimeSpan.Zero)
+                    {
+                        if (-gap > tolerance)
+                        {
+                            cue.IsOverlapping = true;
+                            owner.IsOverlapping = true;
+                        }
+                        else
+                        {
+                            // The previous cue runs a hair past this one: still a handover.
+                            cue.TouchesNeighbour = true;
+                            owner.TouchesNeighbour = true;
+                        }
+                    }
+                    else if (gap <= tolerance)
+                    {
+                        cue.TouchesNeighbour = true;
+                        owner.TouchesNeighbour = true;
+                    }
                 }
 
                 if (owner == null || cue.End > runningEnd)

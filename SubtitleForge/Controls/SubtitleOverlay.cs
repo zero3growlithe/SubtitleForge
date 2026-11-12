@@ -26,6 +26,7 @@ namespace SubtitleForge.Controls
         private string layoutKey = string.Empty;
         private Rect textBounds = Rect.Empty;
         private int activeWordIndex = -1;
+        private int highlightWordIndex = -1;
         private int renderedWordIndex = -1;
         private double layoutFontSize;
 
@@ -35,6 +36,8 @@ namespace SubtitleForge.Controls
             public Rect Bounds = Rect.Empty;
             public int WordIndex;
             public int IndexInWord;
+
+            /// <summary>Glyph index inside the cue, spaces excluded.</summary>
             public int Index;
             public double AppearSeconds;
         }
@@ -175,12 +178,6 @@ namespace SubtitleForge.Controls
             double originX = (PositionX * ActualWidth) - (textBounds.Width * 0.5);
             double originY = (PositionY * ActualHeight) - (textBounds.Height * 0.5);
 
-            Rect absoluteBounds = new Rect(
-                originX + textBounds.X,
-                originY + textBounds.Y,
-                textBounds.Width,
-                textBounds.Height);
-
             double globalOpacity = style.Opacity < 0.0 ? 0.0 : (style.Opacity > 1.0 ? 1.0 : style.Opacity);
             if (globalOpacity <= 0.001)
             {
@@ -194,7 +191,10 @@ namespace SubtitleForge.Controls
             double popDuration = popIn == null ? 0.0 : Math.Max(0.01, popIn.DurationSeconds);
             double transformScale = canvasScale * Math.Max(0.05, Scale);
 
-            PaintSet paint = BuildPaintSet(style, absoluteBounds, transformScale);
+            // Gradients are resolved in the same space the geometry is drawn in (the glyph space,
+            // before the origin translate), otherwise a gradient anchored at the viewport position
+            // of the text only shows a sliver of its ramp and looks like a flat colour.
+            PaintSet paint = BuildPaintSet(style, textBounds, transformScale);
 
             drawingContext.PushOpacity(globalOpacity);
             drawingContext.PushTransform(new TranslateTransform(originX, originY));
@@ -410,6 +410,8 @@ namespace SubtitleForge.Controls
             public double[] ShadowOffsetY = Array.Empty<double>();
             public double[] OutlineOffsetX = Array.Empty<double>();
             public double[] OutlineOffsetY = Array.Empty<double>();
+            public bool[] OutlineInside = Array.Empty<bool>();
+            public bool[] OutlineFilled = Array.Empty<bool>();
         }
 
         private static Pen CreatePen(Brush brush, double thickness)
@@ -461,6 +463,8 @@ namespace SubtitleForge.Controls
             paint.OutlinePens = new Pen?[style.Outlines.Count];
             paint.OutlineOffsetX = new double[style.Outlines.Count];
             paint.OutlineOffsetY = new double[style.Outlines.Count];
+            paint.OutlineInside = new bool[style.Outlines.Count];
+            paint.OutlineFilled = new bool[style.Outlines.Count];
             for (int index = 0; index < style.Outlines.Count; index++)
             {
                 OutlineLayer outline = style.Outlines[index];
@@ -473,8 +477,14 @@ namespace SubtitleForge.Controls
 
                 Brush? brush = StyleBrushes.CreateBrush(outline.Color, bounds, 1.0);
                 paint.Outline[index] = brush;
+                paint.OutlineFilled[index] = outline.Filled;
 
-                double width = Math.Max(0.0, outline.Thickness * scaleFactor) * 2.0;
+                // A negative thickness is the shorthand for an inside outline; the pen keeps its
+                // full width and the glyph is clipped to its own geometry, which leaves half of the
+                // stroke visible on the inside.
+                paint.OutlineInside[index] = outline.Inside || outline.Thickness < 0.0;
+
+                double width = Math.Abs(outline.Thickness) * scaleFactor * 2.0;
                 if (brush != null && width > 0.2)
                 {
                     paint.OutlinePens[index] = CreatePen(brush, width);
@@ -499,7 +509,7 @@ namespace SubtitleForge.Controls
             DrawOutlines(drawingContext, geometry, style, paint, EffectTarget.Font);
             DrawOutlines(drawingContext, geometry, style, paint, EffectTarget.Composition);
 
-            bool highlighted = style.HighlightSpokenWord && glyph.WordIndex == activeWordIndex;
+            bool highlighted = style.HighlightSpokenWord && glyph.WordIndex == highlightWordIndex;
             Brush? brush = highlighted && paint.Highlight != null ? paint.Highlight : paint.Fill;
             if (brush != null)
             {
@@ -573,7 +583,8 @@ namespace SubtitleForge.Controls
                 }
 
                 Pen? pen = paint.OutlinePens[index];
-                if (pen == null)
+                Brush? fill = paint.OutlineFilled[index] ? paint.Outline[index] : null;
+                if (pen == null && fill == null)
                 {
                     continue;
                 }
@@ -581,13 +592,24 @@ namespace SubtitleForge.Controls
                 double offsetX = paint.OutlineOffsetX[index];
                 double offsetY = paint.OutlineOffsetY[index];
                 bool shifted = Math.Abs(offsetX) > 0.001 || Math.Abs(offsetY) > 0.001;
+                bool inside = paint.OutlineInside[index];
 
                 if (shifted)
                 {
                     drawingContext.PushTransform(new TranslateTransform(offsetX, offsetY));
                 }
 
-                drawingContext.DrawGeometry(null, pen, geometry);
+                if (inside)
+                {
+                    drawingContext.PushClip(geometry);
+                }
+
+                drawingContext.DrawGeometry(fill, pen, geometry);
+
+                if (inside)
+                {
+                    drawingContext.Pop();
+                }
 
                 if (shifted)
                 {
@@ -614,6 +636,20 @@ namespace SubtitleForge.Controls
             renderedWordIndex = activeWordIndex;
             List<WordTiming> visible = SubtitleTextPlan.WindowWords(words, activeWordIndex, style.WordsPerDisplay);
             string display = SubtitleTextPlan.JoinWords(visible);
+
+            // The window shifts the word indices, so the highlight has to be expressed in the same
+            // (window-local) space the glyphs use.
+            int windowOffset = 0;
+            if (words.Count > 0 && visible.Count > 0 && visible.Count < words.Count)
+            {
+                int offset = words.IndexOf(visible[0]);
+                if (offset > 0)
+                {
+                    windowOffset = offset;
+                }
+            }
+
+            highlightWordIndex = activeWordIndex < 0 ? -1 : activeWordIndex - windowOffset;
 
             PopInProfile? popIn = PopIn;
             bool enterAnimation = popIn != null
@@ -646,7 +682,11 @@ namespace SubtitleForge.Controls
                 "|",
                 activeWordIndex.ToString(CultureInfo.InvariantCulture),
                 "|",
-                style.WordsPerDisplay.ToString(CultureInfo.InvariantCulture));
+                style.WordsPerDisplay.ToString(CultureInfo.InvariantCulture),
+                "|",
+                style.CharacterSpacing.ToString("0.###", CultureInfo.InvariantCulture),
+                "|",
+                style.WordSpacing.ToString("0.###", CultureInfo.InvariantCulture));
 
             if (string.Equals(key, layoutKey, StringComparison.Ordinal))
             {
@@ -679,9 +719,18 @@ namespace SubtitleForge.Controls
                 pixelsPerDip = 1.0;
             }
 
+            // Spacing is authored in design pixels, so it has to follow the same scale as the font.
+            double spacingScale = style.FontSize > 0.001 ? fontSize / style.FontSize : 1.0;
+            double characterSpacing = style.CharacterSpacing * spacingScale;
+            double wordSpacing = style.WordSpacing * spacingScale;
+
             double cursorX = 0.0;
             double lineHeight = fontSize * 1.35;
-            int globalIndex = 0;
+
+            // A per-character entrance runs through the whole cue as one continuous sequence, spaces
+            // included, so the letters arrive in reading order instead of restarting at every word.
+            int staggerIndex = 0;
+            int glyphIndex = 0;
             Rect union = Rect.Empty;
 
             for (int wordIndex = 0; wordIndex < visible.Count; wordIndex++)
@@ -719,7 +768,7 @@ namespace SubtitleForge.Controls
                             box.Bounds = bounds;
                             box.WordIndex = wordIndex;
                             box.IndexInWord = wordPosition;
-                            box.Index = globalIndex;
+                            box.Index = glyphIndex;
                             double appearBase = style.WordsPerDisplay > 0
                                 ? word.StartSeconds
                                 : CueStartSeconds;
@@ -730,7 +779,7 @@ namespace SubtitleForge.Controls
                             }
                             else if (perCharacterEnter)
                             {
-                                enterStagger = wordPosition * characterDelay;
+                                enterStagger = staggerIndex * characterDelay;
                             }
 
                             box.AppearSeconds = appearBase + enterStagger;
@@ -744,8 +793,9 @@ namespace SubtitleForge.Controls
                         wordPosition++;
                     }
 
-                    cursorX += advance;
-                    globalIndex++;
+                    cursorX += advance + characterSpacing;
+                    staggerIndex++;
+                    glyphIndex++;
                 }
 
                 // Space between words.
@@ -759,7 +809,8 @@ namespace SubtitleForge.Controls
                         fontSize,
                         Brushes.White,
                         pixelsPerDip);
-                    cursorX += space.WidthIncludingTrailingWhitespace;
+                    cursorX += space.WidthIncludingTrailingWhitespace + characterSpacing + wordSpacing;
+                    staggerIndex++;
                 }
             }
 

@@ -19,6 +19,12 @@ namespace SubtitleForge.Models
         /// <summary>Font size in pixels on a 1080-tall canvas; the overlay scales it.</summary>
         public double FontSize { get; set; } = 64.0;
 
+        /// <summary>Extra gap after every glyph, in design pixels.</summary>
+        public double CharacterSpacing { get; set; }
+
+        /// <summary>Extra gap between words, in design pixels, on top of the character spacing.</summary>
+        public double WordSpacing { get; set; }
+
         public ColorSpec Fill { get; set; } = ColorSpec.Solid("#FFFFFFFF");
 
         public List<OutlineLayer> Outlines { get; set; } = OutlineLayer.CreateDefaults();
@@ -44,6 +50,8 @@ namespace SubtitleForge.Models
             copy.Bold = Bold;
             copy.Italic = Italic;
             copy.FontSize = FontSize;
+            copy.CharacterSpacing = CharacterSpacing;
+            copy.WordSpacing = WordSpacing;
             copy.Fill = Fill.Clone();
             copy.Outlines = new List<OutlineLayer>();
             foreach (OutlineLayer outline in Outlines)

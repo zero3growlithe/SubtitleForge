@@ -19,6 +19,7 @@ namespace SubtitleForge.Controls
         private bool dragCandidate;
         private bool dragging;
         private bool updatingText;
+        private bool mixed;
 
         public NumericDragBox()
         {
@@ -58,6 +59,15 @@ namespace SubtitleForge.Controls
             get { return string.IsNullOrWhiteSpace(Text); }
         }
 
+        /// <summary>
+        /// True while the field shows the "several different values" placeholder. The value is
+        /// meaningless until the user types or drags, which is what clears it.
+        /// </summary>
+        public bool IsMixed
+        {
+            get { return mixed; }
+        }
+
         public double Value
         {
             get
@@ -88,7 +98,26 @@ namespace SubtitleForge.Controls
             updatingText = true;
             try
             {
+                mixed = false;
                 Text = Clamp(value).ToString(Format, CultureInfo.InvariantCulture);
+            }
+            finally
+            {
+                updatingText = false;
+            }
+        }
+
+        /// <summary>
+        /// Shows the multi-selection placeholder without raising <see cref="ValueChanged"/>; the
+        /// field stops reporting a value until the user changes it.
+        /// </summary>
+        public void SetMixed()
+        {
+            updatingText = true;
+            try
+            {
+                mixed = true;
+                Text = "\u2014";
             }
             finally
             {
@@ -102,6 +131,7 @@ namespace SubtitleForge.Controls
             updatingText = true;
             try
             {
+                mixed = false;
                 Text = string.Empty;
             }
             finally
@@ -119,6 +149,7 @@ namespace SubtitleForge.Controls
                 return;
             }
 
+            mixed = false;
             ValueChanged?.Invoke(this, EventArgs.Empty);
         }
 
@@ -154,6 +185,11 @@ namespace SubtitleForge.Controls
             {
                 // Unity starts scrubbing only after the pointer really moved, so a plain click
                 // still edits the text.
+                if (mixed)
+                {
+                    dragStartValue = Minimum > double.MinValue ? Minimum : 0.0;
+                }
+
                 double threshold = Math.Max(2.0, SystemParameters.MinimumHorizontalDragDistance * 0.5);
                 if (Math.Abs(deltaX) < threshold && Math.Abs(deltaY) < threshold)
                 {
@@ -247,7 +283,7 @@ namespace SubtitleForge.Controls
         {
             base.OnLostKeyboardFocus(e);
 
-            if (updatingText || AllowEmpty && IsEmpty)
+            if (updatingText || mixed || (AllowEmpty && IsEmpty))
             {
                 return;
             }

@@ -72,6 +72,10 @@ namespace SubtitleForge
         private bool videoElementReady;
         private bool isBusy;
         private bool isUpdatingCueEditor;
+
+        private bool startMixed;
+        private bool endMixed;
+        private bool cueTextMixed;
         private bool suppressSliderSeek;
 
         private readonly ObservableCollection<TimelineTrack> tracks = new ObservableCollection<TimelineTrack>();
@@ -129,6 +133,32 @@ namespace SubtitleForge
             UpdateCommandStates();
             DrawTimeline();
             UpdateTimelineDuration();
+        }
+
+        /// <summary>Unity-style placeholder for a field whose value differs across the selection.</summary>
+        private const string MixedValueText = "\u2014";
+
+        private List<SubtitleCue> SelectedCueList()
+        {
+            List<SubtitleCue> selection = new List<SubtitleCue>();
+            if (CueList != null)
+            {
+                foreach (object item in CueList.SelectedItems)
+                {
+                    SubtitleCue? cue = item as SubtitleCue;
+                    if (cue != null && !selection.Contains(cue))
+                    {
+                        selection.Add(cue);
+                    }
+                }
+            }
+
+            if (selection.Count == 0 && SelectedCue != null)
+            {
+                selection.Add(SelectedCue);
+            }
+
+            return selection;
         }
 
         private SubtitleCue? SelectedCue
@@ -649,6 +679,11 @@ namespace SubtitleForge
             SubtitleOverlayView.PlayheadSeconds = position.TotalSeconds;
             SubtitleOverlayView.IdleSeconds = idleSeconds;
 
+            if (isPlaying && active != null)
+            {
+                SelectCueFollowingPlayback(active);
+            }
+
             if (active == null)
             {
                 if (SubtitleOverlayView.HasContent || SubtitleOverlayView.CueText.Length > 0)
@@ -662,6 +697,33 @@ namespace SubtitleForge
 
             ApplyCueAppearance(active);
             SubtitleOverlayView.Refresh();
+        }
+
+        /// <summary>
+        /// Keeps the cue list on the cue that is being spoken, so the editor always shows the line
+        /// that is on screen. Skipped while the user is multi-selecting or typing in the editor.
+        /// </summary>
+        private void SelectCueFollowingPlayback(SubtitleCue active)
+        {
+            if (CueList.SelectedItems.Count > 1)
+            {
+                return;
+            }
+
+            if (ReferenceEquals(CueList.SelectedItem, active))
+            {
+                return;
+            }
+
+            if (StartEditor.IsKeyboardFocusWithin
+                || EndEditor.IsKeyboardFocusWithin
+                || CueTextEditor.IsKeyboardFocusWithin)
+            {
+                return;
+            }
+
+            CueList.SelectedItem = active;
+            CueList.ScrollIntoView(active);
         }
 
         /// <summary>Points the overlay at the cue's style / idle / pop-in profiles and placement.</summary>
@@ -704,6 +766,10 @@ namespace SubtitleForge
 
         private sealed class ProfileChoice
         {
+            public const string MixedId = "\u0001mixed";
+
+            public static readonly ProfileChoice Mixed = new ProfileChoice(MixedId, MixedValueText);
+
             public ProfileChoice(string? id, string name)
             {
                 Id = id;
@@ -713,6 +779,12 @@ namespace SubtitleForge
             public string? Id { get; private set; }
 
             public string Name { get; private set; }
+
+            /// <summary>True when the field shows the "several different values" placeholder.</summary>
+            public bool IsMixed
+            {
+                get { return string.Equals(Id, MixedId, StringComparison.Ordinal); }
+            }
 
             public override string ToString()
             {
@@ -732,6 +804,8 @@ namespace SubtitleForge
                     CueStyleCombo.Items.Add(new ProfileChoice(style.Id, style.Name));
                 }
 
+                CueStyleCombo.Items.Add(ProfileChoice.Mixed);
+
                 CueIdleCombo.Items.Clear();
                 CueIdleCombo.Items.Add(new ProfileChoice(null, "(default idle)"));
                 foreach (IdleAnimationProfile idle in App.Profiles.Idle)
@@ -739,12 +813,16 @@ namespace SubtitleForge
                     CueIdleCombo.Items.Add(new ProfileChoice(idle.Id, idle.Name));
                 }
 
+                CueIdleCombo.Items.Add(ProfileChoice.Mixed);
+
                 CuePopInCombo.Items.Clear();
                 CuePopInCombo.Items.Add(new ProfileChoice(null, "(default pop-in)"));
                 foreach (PopInProfile popIn in App.Profiles.PopIns)
                 {
                     CuePopInCombo.Items.Add(new ProfileChoice(popIn.Id, popIn.Name));
                 }
+
+                CuePopInCombo.Items.Add(ProfileChoice.Mixed);
             }
             finally
             {
@@ -756,15 +834,11 @@ namespace SubtitleForge
 
         private void UpdateCueAppearanceFromSelection()
         {
-            SubtitleCue? cue = SelectedCue;
+            List<SubtitleCue> selection = SelectedCueList();
             suppressCueAppearanceEvents = true;
             try
             {
-                SelectChoice(CueStyleCombo, cue == null ? null : cue.StyleProfileId);
-                SelectChoice(CueIdleCombo, cue == null ? null : cue.IdleProfileId);
-                SelectChoice(CuePopInCombo, cue == null ? null : cue.PopInProfileId);
-
-                bool enabled = cue != null;
+                bool enabled = selection.Count > 0;
                 CueStyleCombo.IsEnabled = enabled;
                 CueIdleCombo.IsEnabled = enabled;
                 CuePopInCombo.IsEnabled = enabled;
@@ -773,45 +847,90 @@ namespace SubtitleForge
                 CueScaleBox.IsEnabled = enabled;
                 CuePlacementResetButton.IsEnabled = enabled;
 
-                if (cue == null)
+                if (!enabled)
                 {
+                    SelectChoice(CueStyleCombo, null);
+                    SelectChoice(CueIdleCombo, null);
+                    SelectChoice(CuePopInCombo, null);
                     CuePositionXBox.ClearSilently();
                     CuePositionYBox.ClearSilently();
                     CueScaleBox.ClearSilently();
                     return;
                 }
 
-                if (cue.PositionX.HasValue)
-                {
-                    CuePositionXBox.SetValueSilently(cue.PositionX.Value);
-                }
-                else
-                {
-                    CuePositionXBox.ClearSilently();
-                }
+                SelectSharedChoice(CueStyleCombo, selection, cue => cue.StyleProfileId);
+                SelectSharedChoice(CueIdleCombo, selection, cue => cue.IdleProfileId);
+                SelectSharedChoice(CuePopInCombo, selection, cue => cue.PopInProfileId);
 
-                if (cue.PositionY.HasValue)
-                {
-                    CuePositionYBox.SetValueSilently(cue.PositionY.Value);
-                }
-                else
-                {
-                    CuePositionYBox.ClearSilently();
-                }
-
-                if (cue.Scale.HasValue)
-                {
-                    CueScaleBox.SetValueSilently(cue.Scale.Value);
-                }
-                else
-                {
-                    CueScaleBox.ClearSilently();
-                }
+                ApplySharedNumber(CuePositionXBox, selection, cue => cue.PositionX);
+                ApplySharedNumber(CuePositionYBox, selection, cue => cue.PositionY);
+                ApplySharedNumber(CueScaleBox, selection, cue => cue.Scale);
             }
             finally
             {
                 suppressCueAppearanceEvents = false;
             }
+        }
+
+        /// <summary>
+        /// Selects the shared value of a field, or the placeholder when the selected cues disagree.
+        /// </summary>
+        private static void SelectSharedChoice(
+            ComboBox combo,
+            List<SubtitleCue> selection,
+            Func<SubtitleCue, string?> selector)
+        {
+            string? first = selector(selection[0]);
+            for (int index = 1; index < selection.Count; index++)
+            {
+                if (!string.Equals(first, selector(selection[index]), StringComparison.Ordinal))
+                {
+                    SelectChoice(combo, ProfileChoice.MixedId);
+                    return;
+                }
+            }
+
+            SelectChoice(combo, first);
+        }
+
+        private static void ApplySharedNumber(
+            NumericDragBox box,
+            List<SubtitleCue> selection,
+            Func<SubtitleCue, double?> selector)
+        {
+            double? first = selector(selection[0]);
+            for (int index = 1; index < selection.Count; index++)
+            {
+                if (!SameOptionalNumber(first, selector(selection[index])))
+                {
+                    box.SetMixed();
+                    return;
+                }
+            }
+
+            if (first.HasValue)
+            {
+                box.SetValueSilently(first.Value);
+            }
+            else
+            {
+                box.ClearSilently();
+            }
+        }
+
+        private static bool SameOptionalNumber(double? left, double? right)
+        {
+            if (!left.HasValue && !right.HasValue)
+            {
+                return true;
+            }
+
+            if (!left.HasValue || !right.HasValue)
+            {
+                return false;
+            }
+
+            return Math.Abs(left.Value - right.Value) < 0.0005;
         }
 
         private static void SelectChoice(ComboBox combo, string? id)
@@ -845,14 +964,25 @@ namespace SubtitleForge
                 return;
             }
 
-            SubtitleCue? cue = SelectedCue;
-            if (cue == null)
+            List<SubtitleCue> selection = SelectedCueList();
+            if (selection.Count == 0)
             {
                 return;
             }
 
+            ProfileChoice? choice = CueStyleCombo.SelectedItem as ProfileChoice;
+            if (choice == null || choice.IsMixed)
+            {
+                // Re-selecting the placeholder means "leave every cue alone".
+                return;
+            }
+
             List<SubtitleCue> before = CaptureCueSnapshot();
-            cue.StyleProfileId = SelectedChoiceId(CueStyleCombo);
+            foreach (SubtitleCue cue in selection)
+            {
+                cue.StyleProfileId = choice.Id;
+            }
+
             PushCueUndoIfChanged("cue style", before);
             MarkProjectDirty();
             UpdateOverlay(CurrentPosition);
@@ -865,14 +995,25 @@ namespace SubtitleForge
                 return;
             }
 
-            SubtitleCue? cue = SelectedCue;
-            if (cue == null)
+            List<SubtitleCue> selection = SelectedCueList();
+            if (selection.Count == 0)
             {
                 return;
             }
 
+            ProfileChoice? choice = CueIdleCombo.SelectedItem as ProfileChoice;
+            if (choice == null || choice.IsMixed)
+            {
+                // Re-selecting the placeholder means "leave every cue alone".
+                return;
+            }
+
             List<SubtitleCue> before = CaptureCueSnapshot();
-            cue.IdleProfileId = SelectedChoiceId(CueIdleCombo);
+            foreach (SubtitleCue cue in selection)
+            {
+                cue.IdleProfileId = choice.Id;
+            }
+
             PushCueUndoIfChanged("cue idle animation", before);
             MarkProjectDirty();
             UpdateOverlay(CurrentPosition);
@@ -885,14 +1026,25 @@ namespace SubtitleForge
                 return;
             }
 
-            SubtitleCue? cue = SelectedCue;
-            if (cue == null)
+            List<SubtitleCue> selection = SelectedCueList();
+            if (selection.Count == 0)
             {
                 return;
             }
 
+            ProfileChoice? choice = CuePopInCombo.SelectedItem as ProfileChoice;
+            if (choice == null || choice.IsMixed)
+            {
+                // Re-selecting the placeholder means "leave every cue alone".
+                return;
+            }
+
             List<SubtitleCue> before = CaptureCueSnapshot();
-            cue.PopInProfileId = SelectedChoiceId(CuePopInCombo);
+            foreach (SubtitleCue cue in selection)
+            {
+                cue.PopInProfileId = choice.Id;
+            }
+
             PushCueUndoIfChanged("cue pop-in animation", before);
             MarkProjectDirty();
             UpdateOverlay(CurrentPosition);
@@ -905,8 +1057,8 @@ namespace SubtitleForge
                 return;
             }
 
-            SubtitleCue? cue = SelectedCue;
-            if (cue == null)
+            List<SubtitleCue> selection = SelectedCueList();
+            if (selection.Count == 0)
             {
                 return;
             }
@@ -918,9 +1070,25 @@ namespace SubtitleForge
                 pendingPlacementSnapshot = CaptureCueSnapshot();
             }
 
-            cue.PositionX = CuePositionXBox.IsEmpty ? null : (double?)CuePositionXBox.Value;
-            cue.PositionY = CuePositionYBox.IsEmpty ? null : (double?)CuePositionYBox.Value;
-            cue.Scale = CueScaleBox.IsEmpty ? null : (double?)CueScaleBox.Value;
+            foreach (SubtitleCue cue in selection)
+            {
+                // A field still showing the mixed placeholder must not overwrite the cues that
+                // already had their own value.
+                if (!CuePositionXBox.IsMixed)
+                {
+                    cue.PositionX = CuePositionXBox.IsEmpty ? null : (double?)CuePositionXBox.Value;
+                }
+
+                if (!CuePositionYBox.IsMixed)
+                {
+                    cue.PositionY = CuePositionYBox.IsEmpty ? null : (double?)CuePositionYBox.Value;
+                }
+
+                if (!CueScaleBox.IsMixed)
+                {
+                    cue.Scale = CueScaleBox.IsEmpty ? null : (double?)CueScaleBox.Value;
+                }
+            }
             MarkProjectDirty();
             UpdateOverlay(CurrentPosition);
         }
@@ -939,16 +1107,20 @@ namespace SubtitleForge
 
         private void CuePlacementResetClick(object sender, RoutedEventArgs e)
         {
-            SubtitleCue? cue = SelectedCue;
-            if (cue == null)
+            List<SubtitleCue> selection = SelectedCueList();
+            if (selection.Count == 0)
             {
                 return;
             }
 
             List<SubtitleCue> before = CaptureCueSnapshot();
-            cue.PositionX = null;
-            cue.PositionY = null;
-            cue.Scale = null;
+            foreach (SubtitleCue cue in selection)
+            {
+                cue.PositionX = null;
+                cue.PositionY = null;
+                cue.Scale = null;
+            }
+
             PushCueUndoIfChanged("reset cue placement", before);
             UpdateCueAppearanceFromSelection();
             MarkProjectDirty();
@@ -991,7 +1163,8 @@ namespace SubtitleForge
             baseline.Opacity = 0.35;
             TimelineCanvas.Children.Add(baseline);
 
-            SubtitleCue? selected = SelectedCue;
+            List<SubtitleCue> selectedCues = SelectedCueList();
+            HashSet<SubtitleCue> selectedLookup = new HashSet<SubtitleCue>(selectedCues);
             foreach (SubtitleCue cue in cues)
             {
                 double left = (cue.Start.TotalSeconds / total) * width;
@@ -1010,7 +1183,7 @@ namespace SubtitleForge
                 block.Width = blockWidth;
                 block.Height = markerHeight;
                 // Fully opaque by request: the bars have to read clearly against the slider.
-                block.Fill = cue == selected ? accent : idleCueBrush;
+                block.Fill = selectedLookup.Contains(cue) ? accent : idleCueBrush;
                 block.Opacity = 1.0;
                 block.RadiusX = 2.0;
                 block.RadiusY = 2.0;
@@ -1115,59 +1288,91 @@ namespace SubtitleForge
 
         private void CueListSelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            SubtitleCue? cue = SelectedCue;
-            isUpdatingCueEditor = true;
-            try
-            {
-                if (cue == null)
-                {
-                    StartEditor.Text = string.Empty;
-                    EndEditor.Text = string.Empty;
-                    CueTextEditor.Text = string.Empty;
-                }
-                else
-                {
-                    StartEditor.Text = SubtitleCue.FormatTimestamp(cue.Start);
-                    EndEditor.Text = SubtitleCue.FormatTimestamp(cue.End);
-                    CueTextEditor.Text = cue.Text;
-                }
-            }
-            finally
-            {
-                isUpdatingCueEditor = false;
-            }
-
+            UpdateCueEditorFields();
             UpdateCueAppearanceFromSelection();
-
             UpdateCommandStates();
             DrawTimeline();
         }
 
         private void RefreshCueEditor()
         {
-            SubtitleCue? cue = SelectedCue;
+            UpdateCueEditorFields();
+        }
+
+        /// <summary>
+        /// Fills the text/timing editors from the selection, showing the mixed placeholder wherever
+        /// the selected cues disagree — the same behaviour Unity uses for multi-object editing.
+        /// </summary>
+        private void UpdateCueEditorFields()
+        {
+            List<SubtitleCue> selection = SelectedCueList();
             isUpdatingCueEditor = true;
             try
             {
-                if (cue == null)
+                string startText = string.Empty;
+                string endText = string.Empty;
+                string cueText = string.Empty;
+
+                if (selection.Count > 0)
                 {
-                    StartEditor.Text = string.Empty;
-                    EndEditor.Text = string.Empty;
-                    CueTextEditor.Text = string.Empty;
+                    startText = SharedText(selection, cue => SubtitleCue.FormatTimestamp(cue.Start));
+                    endText = SharedText(selection, cue => SubtitleCue.FormatTimestamp(cue.End));
+                    cueText = SharedText(selection, cue => cue.Text ?? string.Empty);
                 }
-                else
+
+                startMixed = string.Equals(startText, MixedValueText, StringComparison.Ordinal);
+                endMixed = string.Equals(endText, MixedValueText, StringComparison.Ordinal);
+                cueTextMixed = string.Equals(cueText, MixedValueText, StringComparison.Ordinal);
+
+                if (!string.Equals(StartEditor.Text, startText, StringComparison.Ordinal))
                 {
-                    StartEditor.Text = SubtitleCue.FormatTimestamp(cue.Start);
-                    EndEditor.Text = SubtitleCue.FormatTimestamp(cue.End);
-                    if (!string.Equals(CueTextEditor.Text, cue.Text, StringComparison.Ordinal))
-                    {
-                        CueTextEditor.Text = cue.Text;
-                    }
+                    StartEditor.Text = startText;
                 }
+
+                if (!string.Equals(EndEditor.Text, endText, StringComparison.Ordinal))
+                {
+                    EndEditor.Text = endText;
+                }
+
+                if (!string.Equals(CueTextEditor.Text, cueText, StringComparison.Ordinal))
+                {
+                    CueTextEditor.Text = cueText;
+                }
+
+                ApplyMixedLook(StartEditor, startMixed);
+                ApplyMixedLook(EndEditor, endMixed);
+                ApplyMixedLook(CueTextEditor, cueTextMixed);
             }
             finally
             {
                 isUpdatingCueEditor = false;
+            }
+        }
+
+        private static string SharedText(List<SubtitleCue> selection, Func<SubtitleCue, string> selector)
+        {
+            string first = selector(selection[0]) ?? string.Empty;
+            for (int index = 1; index < selection.Count; index++)
+            {
+                string value = selector(selection[index]) ?? string.Empty;
+                if (!string.Equals(first, value, StringComparison.Ordinal))
+                {
+                    return MixedValueText;
+                }
+            }
+
+            return first;
+        }
+
+        private void ApplyMixedLook(TextBox box, bool mixed)
+        {
+            if (mixed)
+            {
+                box.Foreground = (Brush)FindResource("SubtleTextBrush");
+            }
+            else
+            {
+                box.ClearValue(Control.ForegroundProperty);
             }
         }
 
@@ -1195,14 +1400,43 @@ namespace SubtitleForge
                 return;
             }
 
-            SubtitleCue? cue = SelectedCue;
-            if (cue == null)
+            List<SubtitleCue> selection = SelectedCueList();
+            if (selection.Count == 0)
             {
                 return;
             }
 
-            cue.Text = CueTextEditor.Text;
+            string value = CueTextEditor.Text;
+            if (cueTextMixed)
+            {
+                if (string.Equals(value, MixedValueText, StringComparison.Ordinal))
+                {
+                    // The placeholder is still on screen: nothing was typed yet.
+                    return;
+                }
+
+                cueTextMixed = false;
+                ApplyMixedLook(CueTextEditor, false);
+            }
+
+            foreach (SubtitleCue cue in selection)
+            {
+                cue.Text = value;
+            }
+
             DrawTimeline();
+            UpdateOverlay(CurrentPosition);
+        }
+
+        private void CueTextEditorGotFocusCore(object sender, RoutedEventArgs e)
+        {
+            if (!cueTextMixed)
+            {
+                return;
+            }
+
+            // Typing has to replace the placeholder instead of appending to it.
+            CueTextEditor.SelectAll();
         }
 
         private void StartEditorLostFocusCore(object sender, RoutedEventArgs e)
@@ -1228,30 +1462,66 @@ namespace SubtitleForge
 
         private void CommitTimeEditors()
         {
-            SubtitleCue? cue = SelectedCue;
-            if (cue == null || isUpdatingCueEditor)
+            List<SubtitleCue> selection = SelectedCueList();
+            if (selection.Count == 0 || isUpdatingCueEditor)
             {
                 return;
             }
 
-            TimeSpan start;
-            if (SubtitleCue.TryParseTimestamp(StartEditor.Text, out start))
+            // Definite-assignment: with the short-circuit `&&` the out parameter is not guaranteed
+            // to be written, so both are seeded first.
+            TimeSpan start = TimeSpan.Zero;
+            bool hasStart = !startMixed;
+            if (hasStart)
             {
-                cue.Start = start;
+                hasStart = SubtitleCue.TryParseTimestamp(StartEditor.Text, out start);
             }
 
-            TimeSpan end;
-            if (SubtitleCue.TryParseTimestamp(EndEditor.Text, out end))
+            TimeSpan end = TimeSpan.Zero;
+            bool hasEnd = !endMixed;
+            if (hasEnd)
             {
-                cue.End = end;
+                hasEnd = SubtitleCue.TryParseTimestamp(EndEditor.Text, out end);
             }
 
-            if (cue.End <= cue.Start)
+            if (!hasStart && !hasEnd)
             {
-                cue.End = cue.Start + TimeSpan.FromMilliseconds(200);
+                // A mixed field that was never retyped keeps whatever each cue already had.
+                RefreshCueEditor();
+                return;
+            }
+
+            List<SubtitleCue> before = CaptureCueSnapshot();
+            bool multiple = selection.Count > 1;
+
+            foreach (SubtitleCue cue in selection)
+            {
+                TimeSpan length = cue.End - cue.Start;
+
+                if (hasStart)
+                {
+                    cue.Start = start;
+                    if (multiple && length > TimeSpan.Zero)
+                    {
+                        // Across several cues the start moves them, it does not flatten them onto
+                        // one instant, so every cue keeps its own length.
+                        cue.End = start + length;
+                    }
+                }
+
+                if (hasEnd)
+                {
+                    cue.End = end;
+                }
+
+                if (cue.End <= cue.Start)
+                {
+                    cue.End = cue.Start + TimeSpan.FromMilliseconds(200);
+                }
             }
 
             CuePostProcessor.Renumber(cues);
+            PushCueUndoIfChanged("cue timing", before);
             RefreshCueEditor();
             DrawTimeline();
             UpdateOverlay(CurrentPosition);
@@ -1259,16 +1529,19 @@ namespace SubtitleForge
 
         private void SetStartClickCore(object sender, RoutedEventArgs e)
         {
-            SubtitleCue? cue = SelectedCue;
-            if (cue == null)
+            List<SubtitleCue> selection = SelectedCueList();
+            if (selection.Count == 0)
             {
                 return;
             }
 
-            cue.Start = CurrentPosition;
-            if (cue.End <= cue.Start)
+            foreach (SubtitleCue cue in selection)
             {
-                cue.End = cue.Start + TimeSpan.FromMilliseconds(400);
+                cue.Start = CurrentPosition;
+                if (cue.End <= cue.Start)
+                {
+                    cue.End = cue.Start + TimeSpan.FromMilliseconds(400);
+                }
             }
 
             RefreshCueEditor();
@@ -1278,19 +1551,22 @@ namespace SubtitleForge
 
         private void SetEndClickCore(object sender, RoutedEventArgs e)
         {
-            SubtitleCue? cue = SelectedCue;
-            if (cue == null)
+            List<SubtitleCue> selection = SelectedCueList();
+            if (selection.Count == 0)
             {
                 return;
             }
 
-            cue.End = CurrentPosition;
-            if (cue.End <= cue.Start)
+            foreach (SubtitleCue cue in selection)
             {
-                cue.Start = cue.End - TimeSpan.FromMilliseconds(400);
-                if (cue.Start < TimeSpan.Zero)
+                cue.End = CurrentPosition;
+                if (cue.End <= cue.Start)
                 {
-                    cue.Start = TimeSpan.Zero;
+                    cue.Start = cue.End - TimeSpan.FromMilliseconds(400);
+                    if (cue.Start < TimeSpan.Zero)
+                    {
+                        cue.Start = TimeSpan.Zero;
+                    }
                 }
             }
 
@@ -1315,8 +1591,7 @@ namespace SubtitleForge
         /// </summary>
         private void NudgeSelectedAndPlayhead(TimeSpan delta)
         {
-            SubtitleCue? cue = SelectedCue;
-            if (cue == null)
+            if (SelectedCueList().Count == 0)
             {
                 SetStatus("Select a cue to nudge it.");
                 return;
@@ -1336,13 +1611,17 @@ namespace SubtitleForge
 
         private void NudgeSelected(TimeSpan delta)
         {
-            SubtitleCue? cue = SelectedCue;
-            if (cue == null)
+            List<SubtitleCue> selection = SelectedCueList();
+            if (selection.Count == 0)
             {
                 return;
             }
 
-            CuePostProcessor.ShiftCue(cue, delta);
+            foreach (SubtitleCue cue in selection)
+            {
+                CuePostProcessor.ShiftCue(cue, delta);
+            }
+
             RefreshCueEditor();
             DrawTimeline();
             UpdateOverlay(CurrentPosition);
@@ -1420,14 +1699,20 @@ namespace SubtitleForge
 
         private void DeleteCueClickCore(object sender, RoutedEventArgs e)
         {
-            SubtitleCue? cue = SelectedCue;
-            if (cue == null)
+            List<SubtitleCue> selection = SelectedCueList();
+            if (selection.Count == 0)
             {
                 return;
             }
 
-            int index = cues.IndexOf(cue);
-            cues.Remove(cue);
+            List<SubtitleCue> before = CaptureCueSnapshot();
+            int index = cues.IndexOf(selection[0]);
+            foreach (SubtitleCue selected in selection)
+            {
+                cues.Remove(selected);
+            }
+
+            PushCueUndoIfChanged("delete cues", before);
             CuePostProcessor.Renumber(cues);
             if (cues.Count > 0)
             {
@@ -1798,6 +2083,11 @@ namespace SubtitleForge
             UpdateCommandStates();
             SetStatus("Building the timeline…");
 
+            // The waveform and the preview frames take a while on a long file, so the build has to
+            // show up in the background-task list like every other long job.
+            timelineBuildTask = BeginBackgroundTask("Timeline — " + Path.GetFileName(path));
+            UpdateBackgroundTask(timelineBuildTask, -1.0, "Reading the audio waveform and the preview frames…");
+
             string? ffmpeg = FfmpegLocator.Resolve("ffmpeg", App.Settings.FfmpegDirectory);
             string? ffprobe = FfmpegLocator.Resolve("ffprobe", App.Settings.FfmpegDirectory);
 
@@ -1825,6 +2115,9 @@ namespace SubtitleForge
 
             if (ffmpeg == null)
             {
+                UpdateBackgroundTask(timelineBuildTask, 100.0, "ffmpeg was not found.");
+                FinishBackgroundTask(timelineBuildTask);
+                timelineBuildTask = null;
                 SetStatus("ffmpeg was not found, so the timeline has no waveform and no preview frames.");
                 return;
             }
@@ -1834,6 +2127,10 @@ namespace SubtitleForge
             Task waveformTask = BuildWaveformAsync(ffmpeg, path, audioSegment);
             Task thumbnailTask = LoadThumbnailsAsync(ffmpeg, videoSegment, total);
             await Task.WhenAll(waveformTask, thumbnailTask).ConfigureAwait(true);
+
+            UpdateBackgroundTask(timelineBuildTask, 100.0, "Done.");
+            FinishBackgroundTask(timelineBuildTask);
+            timelineBuildTask = null;
 
             TrackTimelineView.Refresh();
             UpdateTimelineDuration();
@@ -4465,6 +4762,21 @@ namespace SubtitleForge
         private void OnOverlayTimerTick(object? sender, EventArgs e)
         {
             idleSeconds = overlayClock.Elapsed.TotalSeconds;
+
+            // The playback timer only runs every 120 ms, so while playing the subtitle clock used to
+            // advance in eight coarse steps a second: the text stepped while the video ran smoothly.
+            // Advance the subtitle clock here, on the 16 ms timer, along with the idle channels.
+            if (isPlaying && playbackClock != null)
+            {
+                double timelineSeconds = playbackAnchorSeconds + playbackClock.Elapsed.TotalSeconds;
+                if (timelineSeconds < 0.0)
+                {
+                    timelineSeconds = 0.0;
+                }
+
+                UpdateOverlay(TimeSpan.FromSeconds(timelineSeconds));
+            }
+
             if (!SubtitleOverlayView.HasContent)
             {
                 return;
@@ -4833,6 +5145,8 @@ namespace SubtitleForge
 
         private BackgroundTask? transcriptionTask;
 
+        private BackgroundTask? timelineBuildTask;
+
         private BackgroundTask BeginBackgroundTask(string title)
         {
             BackgroundTask task = new BackgroundTask();
@@ -4914,15 +5228,17 @@ namespace SubtitleForge
 
         private void StatusBarClick(object sender, MouseButtonEventArgs e)
         {
+            BackgroundTasksList.ItemsSource = backgroundTasks;
+            NoBackgroundTasksText.Visibility = backgroundTasks.Count == 0
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+
             if (backgroundTasks.Count == 0)
             {
                 SetStatus("Nothing is running in the background right now.");
-                BackgroundTasksPopup.IsOpen = false;
-                return;
             }
 
-            BackgroundTasksList.ItemsSource = backgroundTasks;
-            NoBackgroundTasksText.Visibility = Visibility.Collapsed;
+            // Always open the panel: closing it on an empty list just looked like a dead click.
             BackgroundTasksPopup.IsOpen = !BackgroundTasksPopup.IsOpen;
         }
 
@@ -5138,6 +5454,16 @@ namespace SubtitleForge
                 {
                     return false;
                 }
+
+                if (!string.Equals(left.StyleProfileId, right.StyleProfileId, StringComparison.Ordinal)
+                    || !string.Equals(left.IdleProfileId, right.IdleProfileId, StringComparison.Ordinal)
+                    || !string.Equals(left.PopInProfileId, right.PopInProfileId, StringComparison.Ordinal)
+                    || !SameOptionalNumber(left.PositionX, right.PositionX)
+                    || !SameOptionalNumber(left.PositionY, right.PositionY)
+                    || !SameOptionalNumber(left.Scale, right.Scale))
+                {
+                    return false;
+                }
             }
 
             return true;
@@ -5244,20 +5570,26 @@ namespace SubtitleForge
 
         private void StartEditorLostFocus(object sender, RoutedEventArgs e)
         {
-            List<SubtitleCue> before = CaptureCueSnapshot();
             StartEditorLostFocusCore(sender, e);
-            PushCueUndoIfChanged("edit cue timing", before);
         }
 
         private void EndEditorLostFocus(object sender, RoutedEventArgs e)
         {
-            List<SubtitleCue> before = CaptureCueSnapshot();
             EndEditorLostFocusCore(sender, e);
-            PushCueUndoIfChanged("edit cue timing", before);
+        }
+
+        private void CueTextEditorGotFocus(object sender, RoutedEventArgs e)
+        {
+            CueTextEditorGotFocusCore(sender, e);
         }
 
         private void CueTextEditorTextChanged(object sender, TextChangedEventArgs e)
         {
+            if (isUpdatingCueEditor)
+            {
+                return;
+            }
+
             if (pendingCueTextSnapshot == null)
             {
                 pendingCueTextSnapshot = CaptureCueSnapshot();
@@ -5355,6 +5687,20 @@ namespace SubtitleForge
             if (control && e.Key == Key.Q)
             {
                 AddCueClick(this, new RoutedEventArgs());
+                e.Handled = true;
+                return;
+            }
+
+            if (control && !shift && e.Key == Key.R)
+            {
+                RecordClick(this, new RoutedEventArgs());
+                e.Handled = true;
+                return;
+            }
+
+            if (control && !shift && e.Key == Key.T)
+            {
+                AddAudioTrackClick(this, new RoutedEventArgs());
                 e.Handled = true;
                 return;
             }

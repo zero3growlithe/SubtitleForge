@@ -19,6 +19,9 @@ namespace SubtitleForge
         private readonly System.Diagnostics.Stopwatch previewClock = System.Diagnostics.Stopwatch.StartNew();
 
         private IdleAnimationProfile draft = new IdleAnimationProfile();
+
+        /// <summary>Font size used by the preview only, never written into the profile.</summary>
+        private double previewFontSize = 190.0;
         private bool suppress;
 
         public IdleProfileWindow(ProfileStore profileStore, string? startProfileId, string? defaultProfileId)
@@ -37,6 +40,7 @@ namespace SubtitleForge
             PreviewOverlay.CueEndSeconds = 1000.0;
             PreviewOverlay.CueText = "Sample Text";
             PreviewOverlay.PlayheadSeconds = 5.0;
+            PreviewSizeBox.SetValueSilently(previewFontSize);
 
             previewTimer = new DispatcherTimer(DispatcherPriority.Render);
             previewTimer.Interval = TimeSpan.FromMilliseconds(16);
@@ -208,9 +212,17 @@ namespace SubtitleForge
             return string.IsNullOrEmpty(tag) ? StaggerGroupings.Character : tag;
         }
 
+        private void PreviewSizeChanged(object? sender, EventArgs e)
+        {
+            previewFontSize = PreviewSizeBox.Value;
+            UpdatePreview();
+        }
+
         private void UpdatePreview()
         {
-            PreviewOverlay.TextStyle = PreviewStyle ?? ProfileStore.CreateDefaultStyle();
+            StyleProfile preview = (PreviewStyle ?? ProfileStore.CreateDefaultStyle()).Clone();
+            preview.FontSize = previewFontSize;
+            PreviewOverlay.TextStyle = preview;
             PreviewOverlay.Idle = draft;
             PreviewOverlay.PopIn = null;
             PreviewOverlay.InvalidateLayout();

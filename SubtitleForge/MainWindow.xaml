@@ -226,6 +226,7 @@
 
                 <ListView x:Name="CueList"
                           Grid.Row="1"
+                          SelectionMode="Extended"
                           SelectionChanged="CueListSelectionChanged"
                           MouseDoubleClick="CueListMouseDoubleClick">
                     <ListView.View>
@@ -263,6 +264,7 @@
                              VerticalScrollBarVisibility="Auto"
                              VerticalContentAlignment="Top"
                              TextChanged="CueTextEditorTextChanged"
+                             GotFocus="CueTextEditorGotFocus"
                              LostFocus="CueTextEditorLostFocus" />
 
                     <WrapPanel Grid.Row="2" Orientation="Horizontal" Margin="0,6,0,0">

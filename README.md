@@ -108,6 +108,8 @@ its own. Three kinds of named profile drive it:
   (each with its own colour/gradient, thickness, offset and opacity), how many words to show at
   a time (`0` = the whole cue, `1` = one word at a time), and an optional highlight colour for
   the word currently being spoken.
+- **Style, spacing** — character spacing and word spacing (in design pixels, negative values
+  tighten the text), so a title can be tracked out without touching the font.
 - **Idle animation** — shake, sine drift on X and Y (amplitude as a multiple of the font size,
   frequency in Hz, phase), pulsing scale, wiggle rotation and a spin around the vertical axis
   (faked by squashing the width). Each channel has its own on/off switch, and the profile can
@@ -118,7 +120,10 @@ its own. Three kinds of named profile drive it:
   enters at once or the characters enter one by one with an adjustable delay.
 
 Outlines and shadows each carry a **target**: `Font` applies them to the glyphs, `Composition`
-applies them around the finished font + outlines + shadows stack.
+applies them around the finished font + outlines + shadows stack. An outline can be drawn
+**inside** the glyph (either the `Inside` switch or a negative thickness) and can **fill** the
+glyph with its colour as a base layer, which is how a solid silhouette under a translucent
+gradient is made.
 
 The default text style profile also drives **burned-in** exports: `As MP4…` with *Burn in
 subtitles* uses its font, size, weight, fill colour and the first font-targeted outline and shadow,
@@ -136,7 +141,15 @@ phase, or animate the entire line as one block.
 Three buttons in the toolbar open one creator per kind — **Text style…**, **Idle anim…** and
 **Pop-in…**. Each one lists the saved profiles of that kind with `New`, `Delete` and
 `Set as default`, edits every field with numeric inputs and colour/gradient pickers, and shows a
-live preview that loops the animation so you can judge it before saving.
+live preview that loops the animation so you can judge it before saving. The preview has its own
+**preview size** field: the profile's font size is authored for a 1080-tall canvas and would be
+far too large in a small preview, so the preview ignores it and uses the size you set there.
+
+A **multi-selection** in the cue list can be edited as one: every field in the cue editor — text,
+start, end, style, idle, pop-in, X, Y and scale — shows a dash `—` while the selected cues
+disagree, and whatever you then choose or type is written to all of them. Setting the start while
+several cues are selected keeps each cue's own length. While the video plays, the cue list follows
+the spoken cue so the editor always shows the line that is on screen.
 
 Profiles live in `%AppData%\SubtitleForge\profiles` (`styles.json`, `idle.json`,
 `popin.json`) and are plain JSON, so they can be shared or hand-edited. Every cue uses the
@@ -161,15 +174,16 @@ stays a few kilobytes.
 - `Space` — play / pause
 - `,` / `.` — step one frame back / forward (frame rate read from the file)
 - `←` / `→` — seek one second; `Shift`+`←` / `Shift`+`→` — seek ten seconds
-- `Del` — delete the selected track(s) or clip(s)
+- `Del` — delete the selected track(s), clip(s) or cue(s)
 - `Ctrl+Shift+D` — split every selected clip at the playhead
 - `Ctrl+Shift+J` — join the selected neighbouring clips (also in a track's right-click menu)
 - `Ctrl+Z` — undo the last edit (move, add, delete, split, join, reorder, rename, recolour,
   record, and every cue edit: add, delete, split, merge, nudge, timing and text changes)
 - `Ctrl+Y` (or `Ctrl+Shift+Z`) — redo whatever was undone last; the toolbar has a `Redo` button too
 - `Ctrl+Q` — add a cue at the playhead
+- `Ctrl+R` — start / stop recording; `Ctrl+T` — add an audio track
 - `Ctrl+[` / `Ctrl+]` — set the selected cue's start / end to the playhead
-- `Ctrl+-` / `Ctrl++` — move the selected cue by 100 ms and drag the playhead along with it
+- `Ctrl+-` / `Ctrl++` — move the selected cue(s) by 100 ms and drag the playhead along with it
 - `Ctrl+S` — save the project; `Ctrl+Shift+S` — save as…
 - double-click a track header — rename it; right-click a track — colour / split / delete
 

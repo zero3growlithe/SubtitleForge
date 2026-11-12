@@ -18,6 +18,9 @@ namespace SubtitleForge
         private readonly System.Diagnostics.Stopwatch previewClock = System.Diagnostics.Stopwatch.StartNew();
 
         private PopInProfile draft = new PopInProfile();
+
+        /// <summary>Font size used by the preview only, never written into the profile.</summary>
+        private double previewFontSize = 190.0;
         private bool suppress;
 
         public PopInProfileWindow(ProfileStore profileStore, string? startProfileId, string? defaultProfileId)
@@ -33,6 +36,7 @@ namespace SubtitleForge
             PreviewOverlay.CueStartSeconds = 0.0;
             PreviewOverlay.CueEndSeconds = 1000.0;
             PreviewOverlay.CueText = "Sample Text";
+            PreviewSizeBox.SetValueSilently(previewFontSize);
 
             previewTimer = new DispatcherTimer(DispatcherPriority.Render);
             previewTimer.Interval = TimeSpan.FromMilliseconds(16);
@@ -209,9 +213,17 @@ namespace SubtitleForge
             UpdatePreview();
         }
 
+        private void PreviewSizeChanged(object? sender, EventArgs e)
+        {
+            previewFontSize = PreviewSizeBox.Value;
+            UpdatePreview();
+        }
+
         private void UpdatePreview()
         {
-            PreviewOverlay.TextStyle = PreviewStyle ?? ProfileStore.CreateDefaultStyle();
+            StyleProfile preview = (PreviewStyle ?? ProfileStore.CreateDefaultStyle()).Clone();
+            preview.FontSize = previewFontSize;
+            PreviewOverlay.TextStyle = preview;
             PreviewOverlay.Idle = PreviewIdle;
             PreviewOverlay.PopIn = draft;
             PreviewOverlay.InvalidateLayout();

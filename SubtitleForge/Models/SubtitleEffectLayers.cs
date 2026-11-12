@@ -21,8 +21,17 @@ namespace SubtitleForge.Models
 
         public ColorSpec Color { get; set; } = ColorSpec.Solid("#FF000000");
 
-        /// <summary>Stroke width in design pixels (1080-tall canvas).</summary>
+        /// <summary>
+        /// Stroke width in design pixels (1080-tall canvas). A negative value renders the outline
+        /// on the inside of the glyph instead of around it.
+        /// </summary>
         public double Thickness { get; set; } = 3.0;
+
+        /// <summary>Draws the outline inside the glyph edge instead of around it.</summary>
+        public bool Inside { get; set; }
+
+        /// <summary>Also fills the glyph itself with the outline colour, as a base layer.</summary>
+        public bool Filled { get; set; }
 
         public double OffsetX { get; set; }
 
@@ -37,6 +46,8 @@ namespace SubtitleForge.Models
             copy.Enabled = Enabled;
             copy.Color = Color.Clone();
             copy.Thickness = Thickness;
+            copy.Inside = Inside;
+            copy.Filled = Filled;
             copy.OffsetX = OffsetX;
             copy.OffsetY = OffsetY;
             copy.Target = Target;
@@ -88,6 +99,8 @@ namespace SubtitleForge.Models
             copy.Enabled = Enabled;
             copy.Color = Color.Clone();
             copy.Thickness = Thickness;
+            copy.Inside = Inside;
+            copy.Filled = Filled;
             copy.OffsetX = OffsetX;
             copy.OffsetY = OffsetY;
             copy.Opacity = Opacity;

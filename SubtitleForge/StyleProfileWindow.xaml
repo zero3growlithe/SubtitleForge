@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="clr-namespace:SubtitleForge.Controls"
         Title="Text style profile"
-        Height="840"
+        Height="900"
         Width="940"
         MinHeight="620"
         MinWidth="780"
@@ -91,6 +91,28 @@
                                             ValueChanged="BasicsChanged" />
                 </WrapPanel>
 
+                <WrapPanel Margin="0,8,0,0">
+                    <TextBlock Text="Character spacing" Style="{StaticResource SectionLabelStyle}" />
+                    <controls:NumericDragBox x:Name="CharacterSpacingBox"
+                                            Width="64"
+                                            Margin="0,0,14,0"
+                                            Minimum="-40"
+                                            Maximum="200"
+                                            DragStep="0.25"
+                                            Format="0.#"
+                                            ToolTip="Extra gap after every character, in design pixels. Negative values tighten the text."
+                                            ValueChanged="BasicsChanged" />
+                    <TextBlock Text="Word spacing" Style="{StaticResource SectionLabelStyle}" />
+                    <controls:NumericDragBox x:Name="WordSpacingBox"
+                                            Width="64"
+                                            Minimum="-40"
+                                            Maximum="200"
+                                            DragStep="0.25"
+                                            Format="0.#"
+                                            ToolTip="Extra gap between words, on top of the character spacing"
+                                            ValueChanged="BasicsChanged" />
+                </WrapPanel>
+
                 <TextBlock Text="Fill" FontWeight="SemiBold" Margin="0,14,0,4" />
                 <controls:ColorSpecPicker x:Name="FillPicker" ValueChanged="FillChanged" />
 
@@ -133,10 +155,11 @@
                             <controls:NumericDragBox x:Name="OutlineThicknessBox"
                                                      Width="56"
                                                      Margin="0,0,10,0"
-                                                     Minimum="0"
+                                                     Minimum="-40"
                                                      Maximum="40"
                                                      DragStep="0.1"
                                                      Format="0.#"
+                                                     ToolTip="Negative values render the outline to the inside"
                                                      ValueChanged="OutlineFieldChanged" />
                             <TextBlock Text="Offset X" Style="{StaticResource SectionLabelStyle}" />
                             <controls:NumericDragBox x:Name="OutlineOffsetXBox"
@@ -155,6 +178,17 @@
                                                      DragStep="0.5"
                                                      Format="0.#"
                                                      ValueChanged="OutlineFieldChanged" />
+                        </WrapPanel>
+                        <WrapPanel Margin="0,6,0,0">
+                            <CheckBox x:Name="OutlineInsideCheck"
+                                      Content="Inside the glyph"
+                                      Margin="0,0,14,0"
+                                      ToolTip="Draws the outline on the inside edge instead of around the outside (a negative thickness does the same)"
+                                      Click="OutlineFieldChanged" />
+                            <CheckBox x:Name="OutlineFilledCheck"
+                                      Content="Fill the glyph"
+                                      ToolTip="Also fills the glyph with the outline colour, as a base layer under the fill"
+                                      Click="OutlineFieldChanged" />
                         </WrapPanel>
                         <controls:ColorSpecPicker x:Name="OutlineColorPicker" Margin="0,6,0,0" ValueChanged="OutlineColorChanged" />
                     </StackPanel>
@@ -232,17 +266,41 @@
         </ScrollViewer>
 
         <!-- Preview -->
-        <Border Grid.Row="2" Height="150" Margin="0,12,0,0" Background="#FF14141A" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1">
-            <Grid>
-                <controls:SubtitleOverlay x:Name="PreviewOverlay" IsHitTestVisible="False" />
-                <TextBlock Text="Live preview — Sample Text"
-                           HorizontalAlignment="Left"
-                           VerticalAlignment="Top"
-                           Margin="8"
+<Grid Grid.Row="2" Margin="0,12,0,0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <WrapPanel Grid.Row="0" Margin="0,0,0,6">
+                <TextBlock Text="Preview size" Style="{StaticResource SectionLabelStyle}" />
+                <controls:NumericDragBox x:Name="PreviewSizeBox"
+                                         Width="64"
+                                         Margin="0,0,8,0"
+                                         Minimum="8"
+                                         Maximum="400"
+                                         DragStep="0.5"
+                                         Format="0.#"
+                                         ToolTip="Font size used by this preview only — it never touches the profile"
+                                         ValueChanged="PreviewSizeChanged" />
+                <TextBlock Text="used by the preview only; the profile keeps its own font size"
                            FontSize="11"
+                           VerticalAlignment="Center"
                            Foreground="{StaticResource SubtleTextBrush}" />
-            </Grid>
-        </Border>
+            </WrapPanel>
+
+            <Border Grid.Row="1" Height="250" Background="#FF14141A" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1">
+                <Grid>
+                    <controls:SubtitleOverlay x:Name="PreviewOverlay" IsHitTestVisible="False" />
+                    <TextBlock Text="Live preview — Sample Text"
+                               HorizontalAlignment="Left"
+                               VerticalAlignment="Top"
+                               Margin="8"
+                               FontSize="11"
+                               Foreground="{StaticResource SubtleTextBrush}" />
+                </Grid>
+            </Border>
+        </Grid>
 
         <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
             <Button Content="Cancel" MinWidth="90" IsCancel="True" Click="CancelClick" />

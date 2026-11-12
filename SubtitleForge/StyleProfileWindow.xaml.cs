@@ -22,6 +22,12 @@ namespace SubtitleForge
         private StyleProfile draft = new StyleProfile();
         private bool suppress;
 
+        /// <summary>
+        /// Font size used by the preview only. The profile keeps its own size, which is authored for
+        /// a 1080-tall canvas and would render far too large in a 250 px preview.
+        /// </summary>
+        private double previewFontSize = 190.0;
+
         public StyleProfileWindow(ProfileStore profileStore, string? startProfileId, string? defaultProfileId)
         {
             InitializeComponent();
@@ -37,6 +43,7 @@ namespace SubtitleForge
             PreviewOverlay.CueStartSeconds = 0.0;
             PreviewOverlay.CueEndSeconds = 4.0;
             PreviewOverlay.CueText = SampleText;
+            PreviewSizeBox.SetValueSilently(previewFontSize);
 
             previewTimer = new DispatcherTimer(DispatcherPriority.Render);
             previewTimer.Interval = TimeSpan.FromMilliseconds(16);
@@ -175,6 +182,8 @@ namespace SubtitleForge
                 BoldCheck.IsChecked = draft.Bold;
                 ItalicCheck.IsChecked = draft.Italic;
                 FontSizeBox.SetValueSilently(draft.FontSize);
+                CharacterSpacingBox.SetValueSilently(draft.CharacterSpacing);
+                WordSpacingBox.SetValueSilently(draft.WordSpacing);
                 WordsBox.SetValueSilently(draft.WordsPerDisplay);
                 OpacityBox.SetValueSilently(draft.Opacity);
                 HighlightCheck.IsChecked = draft.HighlightSpokenWord;
@@ -259,6 +268,8 @@ namespace SubtitleForge
                 OutlineThicknessBox.IsEnabled = enabled;
                 OutlineOffsetXBox.IsEnabled = enabled;
                 OutlineOffsetYBox.IsEnabled = enabled;
+                OutlineInsideCheck.IsEnabled = enabled;
+                OutlineFilledCheck.IsEnabled = enabled;
                 OutlineColorPicker.IsEnabled = enabled;
 
                 if (outline == null)
@@ -273,6 +284,8 @@ namespace SubtitleForge
                 OutlineThicknessBox.SetValueSilently(outline.Thickness);
                 OutlineOffsetXBox.SetValueSilently(outline.OffsetX);
                 OutlineOffsetYBox.SetValueSilently(outline.OffsetY);
+                OutlineInsideCheck.IsChecked = outline.Inside;
+                OutlineFilledCheck.IsChecked = outline.Filled;
                 OutlineColorPicker.Load(outline.Color);
             }
             finally
@@ -360,6 +373,8 @@ namespace SubtitleForge
             outline.Thickness = OutlineThicknessBox.Value;
             outline.OffsetX = OutlineOffsetXBox.Value;
             outline.OffsetY = OutlineOffsetYBox.Value;
+            outline.Inside = OutlineInsideCheck.IsChecked == true;
+            outline.Filled = OutlineFilledCheck.IsChecked == true;
             outline.Color = OutlineColorPicker.Capture();
 
             RefreshOutlineList();
@@ -576,6 +591,8 @@ namespace SubtitleForge
             draft.Bold = BoldCheck.IsChecked == true;
             draft.Italic = ItalicCheck.IsChecked == true;
             draft.FontSize = FontSizeBox.Value;
+            draft.CharacterSpacing = CharacterSpacingBox.Value;
+            draft.WordSpacing = WordSpacingBox.Value;
             draft.WordsPerDisplay = WordsBox.IntValue;
             draft.Opacity = OpacityBox.Value;
             draft.HighlightSpokenWord = HighlightCheck.IsChecked == true;
@@ -595,9 +612,17 @@ namespace SubtitleForge
             UpdatePreview();
         }
 
+        private void PreviewSizeChanged(object? sender, EventArgs e)
+        {
+            previewFontSize = PreviewSizeBox.Value;
+            UpdatePreview();
+        }
+
         private void UpdatePreview()
         {
-            PreviewOverlay.TextStyle = draft;
+            StyleProfile preview = draft.Clone();
+            preview.FontSize = previewFontSize;
+            PreviewOverlay.TextStyle = preview;
             PreviewOverlay.Idle = PreviewIdle;
             PreviewOverlay.PopIn = PreviewPopIn;
             PreviewOverlay.InvalidateLayout();

@@ -5205,11 +5205,12 @@ namespace SubtitleForge
         /// live list is handed back untouched when there is no offset, so nothing is copied for
         /// the usual case.
         /// </summary>
-        private List<SubtitleCue> CuesForExport()
+        private IEnumerable<SubtitleCue> CuesForExport()
         {
             double offset = SubtitleOffsetSeconds;
             if (Math.Abs(offset) < 0.0005)
             {
+                // The live collection, so the usual case copies nothing at all.
                 return cues;
             }
 

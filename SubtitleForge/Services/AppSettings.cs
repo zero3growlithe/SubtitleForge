@@ -39,6 +39,24 @@ namespace SubtitleForge.Services
 
         public int OutlineThickness { get; set; } = 1;
 
+        /// <summary>Style profile used by every cue that does not override it.</summary>
+        public string? DefaultStyleProfileId { get; set; }
+
+        /// <summary>Idle animation profile used by every cue that does not override it.</summary>
+        public string? DefaultIdleProfileId { get; set; }
+
+        /// <summary>Pop-in animation profile used by every cue that does not override it.</summary>
+        public string? DefaultPopInProfileId { get; set; }
+
+        /// <summary>Horizontal anchor of the subtitle text centre, 0-1 of the frame.</summary>
+        public double OverlayPositionX { get; set; } = 0.5;
+
+        /// <summary>Vertical anchor of the subtitle text centre, 0-1 of the frame.</summary>
+        public double OverlayPositionY { get; set; } = 0.86;
+
+        /// <summary>Extra scale applied on top of the style's font size.</summary>
+        public double OverlayScale { get; set; } = 1.0;
+
         public string BurnPreset { get; set; } = "medium";
 
         public int BurnCrf { get; set; } = 20;

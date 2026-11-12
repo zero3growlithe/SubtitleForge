@@ -98,11 +98,40 @@ Everything runs on your machine. No cloud, no API keys, no uploads.
   (proxy encodes, the audio cache, transcription, exports) with its live percentage; the same
   bar shows how many tasks are running.
 
+### Subtitle appearance profiles
+
+The subtitle overlay is rendered as per-character geometry, so every glyph can be animated on
+its own. Three kinds of named profile drive it:
+
+- **Style** — font family, bold/italic, size (pixels on a 1080-tall canvas), fill colour
+  (solid or a two-stop gradient with a direction), any number of **outlines** and **shadows**
+  (each with its own colour/gradient, thickness, offset and opacity), how many words to show at
+  a time (`0` = the whole cue, `1` = one word at a time), and an optional highlight colour for
+  the word currently being spoken.
+- **Idle animation** — shake, sine drift on X and Y (amplitude as a multiple of the font size,
+  frequency in Hz, phase), pulsing scale, wiggle rotation and a spin around the vertical axis
+  (faked by squashing the width). Each channel has its own on/off switch, and the profile can
+  animate the whole text or every character with a stagger - which is what turns the sine into
+  a wave travelling through the letters.
+- **Pop-in animation** — slide in from any side with a damped spring, scale in with jelly
+  wobble (separate X/Y amplitude, frequency and falloff), or fade in. Either the whole text
+  enters at once or the characters enter one by one with an adjustable delay.
+
+Outlines and shadows each carry a **target**: `Font` applies them to the glyphs, `Composition`
+applies them around the finished font + outlines + shadows stack.
+
+Profiles live in `%AppData%\SubtitleForge\profiles` (`styles.json`, `idle.json`,
+`popin.json`) and are plain JSON, so they can be shared or hand-edited. Every cue uses the
+default profile of its kind unless it overrides one in the Cues view; a cue can also override
+its own **position** (X/Y as a fraction of the frame) and **scale**. All of it — profile
+choices included — is saved in the `.sfproj` project.
+
 ### Projects
 
 Closing the window with unsaved edits asks whether to save the project first.
 
-`.sfproj` files are JSON. Media is only **referenced** — the video path and any imported
+`.sfproj` files are JSON and carry the per-cue style/idle/pop-in overrides plus the cue
+placement. Media is only **referenced** — the video path and any imported
 audio path — while microphone takes are exported next to the project as
 `<project>-track<n>-clip<m>.wav` clips and referenced by name, so the project file itself
 stays a few kilobytes.

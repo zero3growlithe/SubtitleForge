@@ -10,6 +10,9 @@ namespace SubtitleForge
     {
         public static AppSettings Settings { get; private set; } = new AppSettings();
 
+        /// <summary>Named style / idle / pop-in profiles shared by the window and the editors.</summary>
+        public static ProfileStore Profiles { get; private set; } = new ProfileStore();
+
         public static string VersionDescription
         {
             get { return "build " + BuildInfo.ShortSha; }
@@ -19,6 +22,7 @@ namespace SubtitleForge
         {
             base.OnStartup(e);
             Settings = AppSettings.Load();
+            Profiles = ProfileStore.Load();
 
             DispatcherUnhandledException += OnDispatcherUnhandledException;
             AppDomain.CurrentDomain.UnhandledException += OnDomainUnhandledException;
@@ -28,6 +32,7 @@ namespace SubtitleForge
         protected override void OnExit(ExitEventArgs e)
         {
             Settings.Save();
+            Profiles.Save();
             base.OnExit(e);
         }
 

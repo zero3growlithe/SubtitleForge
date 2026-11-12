@@ -75,6 +75,10 @@ namespace SubtitleForge
         private bool suppressSliderSeek;
 
         private readonly ObservableCollection<TimelineTrack> tracks = new ObservableCollection<TimelineTrack>();
+        private readonly Stopwatch overlayClock = Stopwatch.StartNew();
+        private readonly DispatcherTimer overlayTimer;
+        private double idleSeconds;
+        private bool suppressCueAppearanceEvents;
         private readonly UndoStack undoStack = new UndoStack();
         private readonly MicrophoneRecorder microphoneRecorder = new MicrophoneRecorder();
 
@@ -107,6 +111,12 @@ namespace SubtitleForge
             playbackTimer = new DispatcherTimer(DispatcherPriority.Render);
             playbackTimer.Interval = TimeSpan.FromMilliseconds(120);
             playbackTimer.Tick += OnPlaybackTimerTick;
+
+            // The idle animation needs its own clock so it keeps moving while playback is paused.
+            overlayTimer = new DispatcherTimer(DispatcherPriority.Render);
+            overlayTimer.Interval = TimeSpan.FromMilliseconds(16);
+            overlayTimer.Tick += OnOverlayTimerTick;
+            overlayTimer.Start();
 
             Title = "SubtitleForge — " + App.VersionDescription;
 
@@ -195,8 +205,7 @@ namespace SubtitleForge
             MarginTextBox.Text = settings.MarginVertical.ToString(CultureInfo.InvariantCulture);
 
             RuntimeText.Text = "Runtime: unknown";
-            SubtitleOverlayText.FontSize = settings.FontSize;
-            SubtitleOverlayBorder.Margin = new Thickness(16, 0, 16, settings.MarginVertical);
+            RefreshCueAppearanceCombos();
         }
 
         private void ApplyUiToSettings()
@@ -242,8 +251,6 @@ namespace SubtitleForge
                 settings.MarginVertical = margin;
             }
 
-            SubtitleOverlayText.FontSize = settings.FontSize;
-            SubtitleOverlayBorder.Margin = new Thickness(16, 0, 16, settings.MarginVertical);
             DrawTimeline();
         }
 
@@ -639,15 +646,331 @@ namespace SubtitleForge
                 }
             }
 
+            SubtitleOverlayView.PlayheadSeconds = position.TotalSeconds;
+            SubtitleOverlayView.IdleSeconds = idleSeconds;
+
             if (active == null)
             {
-                SubtitleOverlayBorder.Visibility = Visibility.Collapsed;
-                SubtitleOverlayText.Text = string.Empty;
+                if (SubtitleOverlayView.HasContent || SubtitleOverlayView.CueText.Length > 0)
+                {
+                    SubtitleOverlayView.CueText = string.Empty;
+                    SubtitleOverlayView.InvalidateLayout();
+                }
+
                 return;
             }
 
-            SubtitleOverlayText.Text = active.Text;
-            SubtitleOverlayBorder.Visibility = Visibility.Visible;
+            ApplyCueAppearance(active);
+            SubtitleOverlayView.Refresh();
+        }
+
+        /// <summary>Points the overlay at the cue's style / idle / pop-in profiles and placement.</summary>
+        private void ApplyCueAppearance(SubtitleCue cue)
+        {
+            ProfileStore store = App.Profiles;
+            StyleProfile style = store.ResolveStyle(cue.StyleProfileId ?? App.Settings.DefaultStyleProfileId);
+            IdleAnimationProfile idle = store.ResolveIdle(cue.IdleProfileId ?? App.Settings.DefaultIdleProfileId);
+            PopInProfile popIn = store.ResolvePopIn(cue.PopInProfileId ?? App.Settings.DefaultPopInProfileId);
+
+            bool profileChanged = !ReferenceEquals(SubtitleOverlayView.TextStyle, style)
+                || !ReferenceEquals(SubtitleOverlayView.Idle, idle)
+                || !ReferenceEquals(SubtitleOverlayView.PopIn, popIn)
+                || Math.Abs(SubtitleOverlayView.CueStartSeconds - cue.Start.TotalSeconds) > 0.0005
+                || Math.Abs(SubtitleOverlayView.CueEndSeconds - cue.End.TotalSeconds) > 0.0005;
+
+            SubtitleOverlayView.TextStyle = style;
+            SubtitleOverlayView.Idle = idle;
+            SubtitleOverlayView.PopIn = popIn;
+            SubtitleOverlayView.CueStartSeconds = cue.Start.TotalSeconds;
+            SubtitleOverlayView.CueEndSeconds = cue.End.TotalSeconds;
+            SubtitleOverlayView.PositionX = cue.PositionX ?? App.Settings.OverlayPositionX;
+            SubtitleOverlayView.PositionY = cue.PositionY ?? App.Settings.OverlayPositionY;
+            SubtitleOverlayView.Scale = cue.Scale ?? App.Settings.OverlayScale;
+
+            string text = cue.Text ?? string.Empty;
+            bool textChanged = !string.Equals(SubtitleOverlayView.CueText, text, StringComparison.Ordinal);
+            if (textChanged)
+            {
+                SubtitleOverlayView.CueText = text;
+            }
+
+            if (profileChanged || textChanged)
+            {
+                SubtitleOverlayView.InvalidateLayout();
+            }
+        }
+
+        // ── Cue appearance overrides ───────────────────────────────────────
+
+        private sealed class ProfileChoice
+        {
+            public ProfileChoice(string? id, string name)
+            {
+                Id = id;
+                Name = string.IsNullOrEmpty(name) ? "(unnamed)" : name;
+            }
+
+            public string? Id { get; private set; }
+
+            public string Name { get; private set; }
+
+            public override string ToString()
+            {
+                return Name;
+            }
+        }
+
+        private void RefreshCueAppearanceCombos()
+        {
+            suppressCueAppearanceEvents = true;
+            try
+            {
+                CueStyleCombo.Items.Clear();
+                CueStyleCombo.Items.Add(new ProfileChoice(null, "(default style)"));
+                foreach (StyleProfile style in App.Profiles.Styles)
+                {
+                    CueStyleCombo.Items.Add(new ProfileChoice(style.Id, style.Name));
+                }
+
+                CueIdleCombo.Items.Clear();
+                CueIdleCombo.Items.Add(new ProfileChoice(null, "(default idle)"));
+                foreach (IdleAnimationProfile idle in App.Profiles.Idle)
+                {
+                    CueIdleCombo.Items.Add(new ProfileChoice(idle.Id, idle.Name));
+                }
+
+                CuePopInCombo.Items.Clear();
+                CuePopInCombo.Items.Add(new ProfileChoice(null, "(default pop-in)"));
+                foreach (PopInProfile popIn in App.Profiles.PopIns)
+                {
+                    CuePopInCombo.Items.Add(new ProfileChoice(popIn.Id, popIn.Name));
+                }
+            }
+            finally
+            {
+                suppressCueAppearanceEvents = false;
+            }
+
+            UpdateCueAppearanceFromSelection();
+        }
+
+        private void UpdateCueAppearanceFromSelection()
+        {
+            SubtitleCue? cue = SelectedCue;
+            suppressCueAppearanceEvents = true;
+            try
+            {
+                SelectChoice(CueStyleCombo, cue == null ? null : cue.StyleProfileId);
+                SelectChoice(CueIdleCombo, cue == null ? null : cue.IdleProfileId);
+                SelectChoice(CuePopInCombo, cue == null ? null : cue.PopInProfileId);
+
+                bool enabled = cue != null;
+                CueStyleCombo.IsEnabled = enabled;
+                CueIdleCombo.IsEnabled = enabled;
+                CuePopInCombo.IsEnabled = enabled;
+                CuePositionXBox.IsEnabled = enabled;
+                CuePositionYBox.IsEnabled = enabled;
+                CueScaleBox.IsEnabled = enabled;
+                CuePlacementResetButton.IsEnabled = enabled;
+
+                if (cue == null)
+                {
+                    CuePositionXBox.Text = string.Empty;
+                    CuePositionYBox.Text = string.Empty;
+                    CueScaleBox.Text = string.Empty;
+                    return;
+                }
+
+                CuePositionXBox.Text = cue.PositionX.HasValue
+                    ? cue.PositionX.Value.ToString("0.###", CultureInfo.InvariantCulture)
+                    : string.Empty;
+                CuePositionYBox.Text = cue.PositionY.HasValue
+                    ? cue.PositionY.Value.ToString("0.###", CultureInfo.InvariantCulture)
+                    : string.Empty;
+                CueScaleBox.Text = cue.Scale.HasValue
+                    ? cue.Scale.Value.ToString("0.###", CultureInfo.InvariantCulture)
+                    : string.Empty;
+            }
+            finally
+            {
+                suppressCueAppearanceEvents = false;
+            }
+        }
+
+        private static void SelectChoice(ComboBox combo, string? id)
+        {
+            for (int index = 0; index < combo.Items.Count; index++)
+            {
+                ProfileChoice? choice = combo.Items[index] as ProfileChoice;
+                if (choice != null && string.Equals(choice.Id, id, StringComparison.Ordinal))
+                {
+                    combo.SelectedIndex = index;
+                    return;
+                }
+            }
+
+            if (combo.Items.Count > 0)
+            {
+                combo.SelectedIndex = 0;
+            }
+        }
+
+        private static string? SelectedChoiceId(ComboBox combo)
+        {
+            ProfileChoice? choice = combo.SelectedItem as ProfileChoice;
+            return choice == null ? null : choice.Id;
+        }
+
+        private void CueStyleSelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (suppressCueAppearanceEvents)
+            {
+                return;
+            }
+
+            SubtitleCue? cue = SelectedCue;
+            if (cue == null)
+            {
+                return;
+            }
+
+            List<SubtitleCue> before = CaptureCueSnapshot();
+            cue.StyleProfileId = SelectedChoiceId(CueStyleCombo);
+            PushCueUndoIfChanged("cue style", before);
+            MarkProjectDirty();
+            UpdateOverlay(CurrentPosition);
+        }
+
+        private void CueIdleSelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (suppressCueAppearanceEvents)
+            {
+                return;
+            }
+
+            SubtitleCue? cue = SelectedCue;
+            if (cue == null)
+            {
+                return;
+            }
+
+            List<SubtitleCue> before = CaptureCueSnapshot();
+            cue.IdleProfileId = SelectedChoiceId(CueIdleCombo);
+            PushCueUndoIfChanged("cue idle animation", before);
+            MarkProjectDirty();
+            UpdateOverlay(CurrentPosition);
+        }
+
+        private void CuePopInSelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (suppressCueAppearanceEvents)
+            {
+                return;
+            }
+
+            SubtitleCue? cue = SelectedCue;
+            if (cue == null)
+            {
+                return;
+            }
+
+            List<SubtitleCue> before = CaptureCueSnapshot();
+            cue.PopInProfileId = SelectedChoiceId(CuePopInCombo);
+            PushCueUndoIfChanged("cue pop-in animation", before);
+            MarkProjectDirty();
+            UpdateOverlay(CurrentPosition);
+        }
+
+        private void CuePlacementChanged(object sender, RoutedEventArgs e)
+        {
+            if (suppressCueAppearanceEvents)
+            {
+                return;
+            }
+
+            SubtitleCue? cue = SelectedCue;
+            if (cue == null)
+            {
+                return;
+            }
+
+            List<SubtitleCue> before = CaptureCueSnapshot();
+            cue.PositionX = ParseOptionalFraction(CuePositionXBox.Text);
+            cue.PositionY = ParseOptionalFraction(CuePositionYBox.Text);
+            cue.Scale = ParseOptionalScale(CueScaleBox.Text);
+            PushCueUndoIfChanged("cue placement", before);
+            MarkProjectDirty();
+            UpdateOverlay(CurrentPosition);
+        }
+
+        private void CuePlacementResetClick(object sender, RoutedEventArgs e)
+        {
+            SubtitleCue? cue = SelectedCue;
+            if (cue == null)
+            {
+                return;
+            }
+
+            List<SubtitleCue> before = CaptureCueSnapshot();
+            cue.PositionX = null;
+            cue.PositionY = null;
+            cue.Scale = null;
+            PushCueUndoIfChanged("reset cue placement", before);
+            UpdateCueAppearanceFromSelection();
+            MarkProjectDirty();
+            UpdateOverlay(CurrentPosition);
+        }
+
+        private static double? ParseOptionalFraction(string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return null;
+            }
+
+            double value;
+            if (!double.TryParse(text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out value))
+            {
+                return null;
+            }
+
+            if (value < 0.0)
+            {
+                value = 0.0;
+            }
+
+            if (value > 1.0)
+            {
+                value = 1.0;
+            }
+
+            return value;
+        }
+
+        private static double? ParseOptionalScale(string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return null;
+            }
+
+            double value;
+            if (!double.TryParse(text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out value))
+            {
+                return null;
+            }
+
+            if (value < 0.05)
+            {
+                value = 0.05;
+            }
+
+            if (value > 8.0)
+            {
+                value = 8.0;
+            }
+
+            return value;
         }
 
         // ── Timeline strip ─────────────────────────────────────────────────
@@ -829,6 +1152,8 @@ namespace SubtitleForge
             {
                 isUpdatingCueEditor = false;
             }
+
+            UpdateCueAppearanceFromSelection();
 
             UpdateCommandStates();
             DrawTimeline();
@@ -2728,6 +3053,12 @@ namespace SubtitleForge
                     cueData.EndSeconds = Math.Round(cue.End.TotalSeconds, 3);
                     cueData.Text = cue.Text;
                     cueData.Confidence = cue.Confidence;
+                    cueData.StyleProfileId = cue.StyleProfileId;
+                    cueData.IdleProfileId = cue.IdleProfileId;
+                    cueData.PopInProfileId = cue.PopInProfileId;
+                    cueData.PositionX = cue.PositionX;
+                    cueData.PositionY = cue.PositionY;
+                    cueData.Scale = cue.Scale;
                     data.Cues.Add(cueData);
                 }
 
@@ -2887,11 +3218,18 @@ namespace SubtitleForge
                 cues.Clear();
                 foreach (ProjectCueData cueData in data.Cues)
                 {
-                    cues.Add(new SubtitleCue(
+                    SubtitleCue loadedCue = new SubtitleCue(
                         TimeSpan.FromSeconds(cueData.StartSeconds),
                         TimeSpan.FromSeconds(cueData.EndSeconds),
                         cueData.Text,
-                        cueData.Confidence));
+                        cueData.Confidence);
+                    loadedCue.StyleProfileId = cueData.StyleProfileId;
+                    loadedCue.IdleProfileId = cueData.IdleProfileId;
+                    loadedCue.PopInProfileId = cueData.PopInProfileId;
+                    loadedCue.PositionX = cueData.PositionX;
+                    loadedCue.PositionY = cueData.PositionY;
+                    loadedCue.Scale = cueData.Scale;
+                    cues.Add(loadedCue);
                 }
 
                 CuePostProcessor.Renumber(cues);
@@ -3905,6 +4243,31 @@ namespace SubtitleForge
             SetStatus(added == 1
                 ? "Added the dropped file as its own track. Ctrl+Z undoes it."
                 : "Added " + added.ToString(CultureInfo.InvariantCulture) + " dropped files as tracks. Ctrl+Z undoes it.");
+        }
+
+        private void OnOverlayTimerTick(object? sender, EventArgs e)
+        {
+            idleSeconds = overlayClock.Elapsed.TotalSeconds;
+            if (!SubtitleOverlayView.HasContent)
+            {
+                return;
+            }
+
+            SubtitleOverlayView.IdleSeconds = idleSeconds;
+
+            // Without an idle animation the picture only changes on a seek or a cue change.
+            IdleAnimationProfile? idle = SubtitleOverlayView.Idle;
+            bool animated = idle != null && idle.HasAnyChannel;
+            PopInProfile? popIn = SubtitleOverlayView.PopIn;
+            bool entering = popIn != null
+                && !string.Equals(popIn.Kind, PopInKind.None, StringComparison.OrdinalIgnoreCase)
+                && SubtitleOverlayView.PlayheadSeconds
+                    < SubtitleOverlayView.CueStartSeconds + (popIn.DurationSeconds * 2.0);
+
+            if (animated || entering)
+            {
+                SubtitleOverlayView.Refresh();
+            }
         }
 
         // ── Export ─────────────────────────────────────────────────────────

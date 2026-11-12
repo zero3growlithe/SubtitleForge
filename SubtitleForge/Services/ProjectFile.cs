@@ -49,6 +49,18 @@ namespace SubtitleForge.Services
         public string Text { get; set; } = string.Empty;
 
         public double Confidence { get; set; } = 1.0;
+
+        public string? StyleProfileId { get; set; }
+
+        public string? IdleProfileId { get; set; }
+
+        public string? PopInProfileId { get; set; }
+
+        public double? PositionX { get; set; }
+
+        public double? PositionY { get; set; }
+
+        public double? Scale { get; set; }
     }
 
     public class ProjectFileData

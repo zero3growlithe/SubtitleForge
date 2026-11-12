@@ -15,6 +15,12 @@ namespace SubtitleForge.Models
         private TimeSpan end;
         private string text;
         private double confidence;
+        private string? styleProfileId;
+        private string? idleProfileId;
+        private string? popInProfileId;
+        private double? positionX;
+        private double? positionY;
+        private double? scale;
 
         public SubtitleCue(TimeSpan start, TimeSpan end, string text, double confidence = 1.0)
         {
@@ -101,6 +107,90 @@ namespace SubtitleForge.Models
             }
         }
 
+        /// <summary>Overrides the default visual style for this cue only (null = default).</summary>
+        public string? StyleProfileId
+        {
+            get { return styleProfileId; }
+            set
+            {
+                if (styleProfileId != value)
+                {
+                    styleProfileId = value;
+                    OnPropertyChanged();
+                }
+            }
+        }
+
+        /// <summary>Overrides the default idle animation for this cue only (null = default).</summary>
+        public string? IdleProfileId
+        {
+            get { return idleProfileId; }
+            set
+            {
+                if (idleProfileId != value)
+                {
+                    idleProfileId = value;
+                    OnPropertyChanged();
+                }
+            }
+        }
+
+        /// <summary>Overrides the default pop-in animation for this cue only (null = default).</summary>
+        public string? PopInProfileId
+        {
+            get { return popInProfileId; }
+            set
+            {
+                if (popInProfileId != value)
+                {
+                    popInProfileId = value;
+                    OnPropertyChanged();
+                }
+            }
+        }
+
+        /// <summary>Horizontal anchor override, 0-1 of the frame width (null = default).</summary>
+        public double? PositionX
+        {
+            get { return positionX; }
+            set
+            {
+                if (positionX != value)
+                {
+                    positionX = value;
+                    OnPropertyChanged();
+                }
+            }
+        }
+
+        /// <summary>Vertical anchor override, 0-1 of the frame height (null = default).</summary>
+        public double? PositionY
+        {
+            get { return positionY; }
+            set
+            {
+                if (positionY != value)
+                {
+                    positionY = value;
+                    OnPropertyChanged();
+                }
+            }
+        }
+
+        /// <summary>Scale override on top of the style's font size (null = default).</summary>
+        public double? Scale
+        {
+            get { return scale; }
+            set
+            {
+                if (scale != value)
+                {
+                    scale = value;
+                    OnPropertyChanged();
+                }
+            }
+        }
+
         public TimeSpan Duration
         {
             get { return end > start ? end - start : TimeSpan.Zero; }
@@ -135,7 +225,15 @@ namespace SubtitleForge.Models
 
         public SubtitleCue Clone()
         {
-            return new SubtitleCue(start, end, text, confidence);
+            SubtitleCue copy = new SubtitleCue(start, end, text, confidence);
+            copy.Number = number;
+            copy.StyleProfileId = styleProfileId;
+            copy.IdleProfileId = idleProfileId;
+            copy.PopInProfileId = popInProfileId;
+            copy.PositionX = positionX;
+            copy.PositionY = positionY;
+            copy.Scale = scale;
+            return copy;
         }
 
         protected void OnPropertyChanged([CallerMemberName] string? propertyName = null)

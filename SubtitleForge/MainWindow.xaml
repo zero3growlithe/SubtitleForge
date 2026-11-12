@@ -108,20 +108,10 @@
                                    Foreground="#FF6E6E7A"
                                    HorizontalAlignment="Center"
                                    VerticalAlignment="Center" />
-                        <Border x:Name="SubtitleOverlayBorder"
-                                Visibility="Collapsed"
-                                VerticalAlignment="Bottom"
-                                HorizontalAlignment="Center"
-                                Margin="16,0,16,26"
-                                Background="#B0000000"
-                                CornerRadius="3"
-                                Padding="12,5">
-                            <TextBlock x:Name="SubtitleOverlayText"
-                                       Foreground="White"
-                                       FontSize="20"
-                                       TextWrapping="Wrap"
-                                       TextAlignment="Center" />
-                        </Border>
+                        <controls:SubtitleOverlay x:Name="SubtitleOverlayView"
+                                                  IsHitTestVisible="False"
+                                                  HorizontalAlignment="Stretch"
+                                                  VerticalAlignment="Stretch" />
                     </Grid>
                 </Border>
 
@@ -272,12 +262,43 @@
                         <Button x:Name="DeleteCueButton" Content="Delete" MinWidth="0" Padding="8,4" Click="DeleteCueClick" />
                     </WrapPanel>
 
-                    <TextBlock Grid.Row="3"
-                               Margin="0,8,0,0"
-                               FontSize="11"
-                               TextWrapping="Wrap"
-                               Foreground="{StaticResource SubtleTextBrush}"
-                               Text="Double-click a cue to jump there. Start and End accept 00:00:12.500, 00:00:12,500 or plain seconds." />
+                    <Grid Grid.Row="3" Margin="0,8,0,0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <WrapPanel Grid.Row="0" Orientation="Horizontal">
+                            <TextBlock Text="Style" Style="{StaticResource SectionLabelStyle}" />
+                            <ComboBox x:Name="CueStyleCombo"
+                                      Width="118"
+                                      Margin="0,0,6,0"
+                                      SelectionChanged="CueStyleSelectionChanged" />
+                            <TextBlock Text="Idle" Style="{StaticResource SectionLabelStyle}" />
+                            <ComboBox x:Name="CueIdleCombo"
+                                      Width="118"
+                                      Margin="0,0,6,0"
+                                      SelectionChanged="CueIdleSelectionChanged" />
+                            <TextBlock Text="Pop-in" Style="{StaticResource SectionLabelStyle}" />
+                            <ComboBox x:Name="CuePopInCombo"
+                                      Width="118"
+                                      SelectionChanged="CuePopInSelectionChanged" />
+                        </WrapPanel>
+
+                        <WrapPanel Grid.Row="1" Orientation="Horizontal" Margin="0,6,0,0">
+                            <TextBlock Text="X" Style="{StaticResource SectionLabelStyle}" />
+                            <TextBox x:Name="CuePositionXBox" Width="52" Margin="0,0,6,0" LostFocus="CuePlacementChanged" />
+                            <TextBlock Text="Y" Style="{StaticResource SectionLabelStyle}" />
+                            <TextBox x:Name="CuePositionYBox" Width="52" Margin="0,0,6,0" LostFocus="CuePlacementChanged" />
+                            <TextBlock Text="Scale" Style="{StaticResource SectionLabelStyle}" />
+                            <TextBox x:Name="CueScaleBox" Width="52" Margin="0,0,6,0" LostFocus="CuePlacementChanged" />
+                            <Button x:Name="CuePlacementResetButton"
+                                    Content="Reset placement"
+                                    MinWidth="0"
+                                    Padding="8,4"
+                                    Click="CuePlacementResetClick" />
+                        </WrapPanel>
+                    </Grid>
                 </Grid>
             </Grid>
         </Grid>

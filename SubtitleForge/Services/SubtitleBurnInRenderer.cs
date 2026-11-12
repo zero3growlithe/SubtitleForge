@@ -71,6 +71,8 @@ namespace SubtitleForge.Services
                 throw new ArgumentOutOfRangeException(nameof(width), "The burn-in needs a real frame size.");
             }
 
+            WriteCommand(executablePath, arguments, width, height);
+
             ProcessStartInfo startInfo = new ProcessStartInfo();
             startInfo.FileName = executablePath;
             startInfo.UseShellExecute = false;
@@ -260,10 +262,6 @@ namespace SubtitleForge.Services
                 totalFrames = 1;
             }
 
-            Grid host = new Grid();
-            host.Width = width;
-            host.Height = height;
-
             List<Slot> slots = new List<Slot>();
             foreach (BurnInCue cue in cues)
             {
@@ -279,16 +277,17 @@ namespace SubtitleForge.Services
                 overlay.PositionY = cue.PositionY;
                 overlay.Scale = cue.Scale;
                 overlay.CueText = string.Empty;
-                host.Children.Add(overlay);
                 slots.Add(new Slot(cue, overlay));
             }
 
-            host.Measure(new Size(width, height));
-            host.Arrange(new Rect(0.0, 0.0, width, height));
-
             RenderTargetBitmap bitmap = new RenderTargetBitmap(width, height, 96.0, 96.0, PixelFormats.Pbgra32);
+
+            // One visual reused for every frame: opening a drawing context on it replaces the
+            // previous frame's commands, so nothing has to be measured, arranged or laid out.
+            DrawingVisual frameVisual = new DrawingVisual();
             int stride = width * 4;
             byte[] frame = new byte[stride * height];
+            bool diagnosticsWritten = false;
 
             for (long index = 0; index < totalFrames; index++)
             {
@@ -300,6 +299,7 @@ namespace SubtitleForge.Services
                 foreach (Slot slot in slots)
                 {
                     bool visible = time >= slot.Cue.StartSeconds && time < slot.Cue.EndSeconds;
+                    slot.Visible = visible;
                     if (!visible)
                     {
                         if (slot.Element.CueText.Length != 0)
@@ -324,11 +324,28 @@ namespace SubtitleForge.Services
 
                 if (anythingVisible)
                 {
-                    // Clearing first makes the render pass redraw every dirty glyph instead of
-                    // keeping the previous frame's commands.
+                    // Cleared and redrawn from scratch every frame: no dirty-region bookkeeping and
+                    // no layout pass, so what the painter draws is exactly what lands in the pipe.
                     bitmap.Clear();
-                    bitmap.Render(host);
+                    using (DrawingContext drawingContext = frameVisual.RenderOpen())
+                    {
+                        foreach (Slot slot in slots)
+                        {
+                            if (slot.Visible)
+                            {
+                                slot.Element.PaintFrame(drawingContext, width, height);
+                            }
+                        }
+                    }
+
+                    bitmap.Render(frameVisual);
                     bitmap.CopyPixels(frame, stride, 0);
+
+                    if (!diagnosticsWritten)
+                    {
+                        diagnosticsWritten = true;
+                        WriteDiagnostics(width, height, fps, slots.Count, cues.Count, frame, stride, bitmap);
+                    }
                 }
                 else
                 {
@@ -360,6 +377,158 @@ namespace SubtitleForge.Services
             progress?.Report(1.0);
         }
 
+        /// <summary>
+        /// Writes what the first painted frame actually contained, plus the frame itself as a PNG.
+        /// A burn-in that comes out empty is almost always a size or an alpha problem, and neither
+        /// can be told apart from the video alone.
+        /// </summary>
+        private static void WriteDiagnostics(
+            int width,
+            int height,
+            double frameRate,
+            int overlayCount,
+            int cueCount,
+            byte[] frame,
+            int stride,
+            BitmapSource bitmap)
+        {
+            try
+            {
+                int opaque = 0;
+                int partial = 0;
+                int minimumX = width;
+                int minimumY = height;
+                int maximumX = -1;
+                int maximumY = -1;
+
+                for (int y = 0; y < height; y++)
+                {
+                    int rowOffset = y * stride;
+                    for (int x = 0; x < width; x++)
+                    {
+                        byte alpha = frame[rowOffset + (x * 4) + 3];
+                        if (alpha == 0)
+                        {
+                            continue;
+                        }
+
+                        if (alpha == 255)
+                        {
+                            opaque++;
+                        }
+                        else
+                        {
+                            partial++;
+                        }
+
+                        if (x < minimumX)
+                        {
+                            minimumX = x;
+                        }
+
+                        if (y < minimumY)
+                        {
+                            minimumY = y;
+                        }
+
+                        if (x > maximumX)
+                        {
+                            maximumX = x;
+                        }
+
+                        if (y > maximumY)
+                        {
+                            maximumY = y;
+                        }
+                    }
+                }
+
+                StringBuilder report = new StringBuilder();
+                report.AppendLine("SubtitleForge burn-in diagnostics");
+                report.AppendLine("frame: " + width.ToString(CultureInfo.InvariantCulture)
+                    + "x" + height.ToString(CultureInfo.InvariantCulture)
+                    + " at " + frameRate.ToString("0.###", CultureInfo.InvariantCulture) + " fps");
+                report.AppendLine("cues: " + cueCount.ToString(CultureInfo.InvariantCulture)
+                    + ", overlays: " + overlayCount.ToString(CultureInfo.InvariantCulture));
+                report.AppendLine("pixels with alpha: " + (opaque + partial).ToString(CultureInfo.InvariantCulture)
+                    + " (opaque " + opaque.ToString(CultureInfo.InvariantCulture)
+                    + ", partial " + partial.ToString(CultureInfo.InvariantCulture) + ")");
+                report.AppendLine(maximumX < 0
+                    ? "painted area: none, the frame came out fully transparent"
+                    : "painted area: x " + minimumX.ToString(CultureInfo.InvariantCulture)
+                        + ".." + maximumX.ToString(CultureInfo.InvariantCulture)
+                        + ", y " + minimumY.ToString(CultureInfo.InvariantCulture)
+                        + ".." + maximumY.ToString(CultureInfo.InvariantCulture));
+
+                string? folder = DiagnosticFolder();
+                if (folder == null)
+                {
+                    return;
+                }
+
+                File.WriteAllText(Path.Combine(folder, "burn-in-diagnostics.txt"), report.ToString());
+
+                PngBitmapEncoder encoder = new PngBitmapEncoder();
+                encoder.Frames.Add(BitmapFrame.Create(bitmap));
+                using (FileStream stream = File.Create(Path.Combine(folder, "burn-in-first-frame.png")))
+                {
+                    encoder.Save(stream);
+                }
+            }
+            catch (Exception)
+            {
+                // Diagnostics must never break an export.
+            }
+        }
+
+        /// <summary>
+        /// Records the exact ffmpeg invocation next to the frame dump, so a broken burn-in can be
+        /// reproduced outside the app.
+        /// </summary>
+        private static void WriteCommand(string executablePath, IEnumerable<string> arguments, int width, int height)
+        {
+            try
+            {
+                string? folder = DiagnosticFolder();
+                if (folder == null)
+                {
+                    return;
+                }
+
+                StringBuilder command = new StringBuilder();
+                command.AppendLine("frame: " + width.ToString(CultureInfo.InvariantCulture)
+                    + "x" + height.ToString(CultureInfo.InvariantCulture));
+                command.Append(executablePath);
+                foreach (string argument in arguments)
+                {
+                    command.Append(' ');
+                    command.Append(argument.IndexOf(' ') >= 0 ? "\"" + argument + "\"" : argument);
+                }
+
+                File.WriteAllText(Path.Combine(folder, "burn-in-command.txt"), command.ToString());
+            }
+            catch (Exception)
+            {
+                // Diagnostics must never break an export.
+            }
+        }
+
+        private static string? DiagnosticFolder()
+        {
+            try
+            {
+                string path = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "SubtitleForge");
+                Directory.CreateDirectory(path);
+                return path;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
         private sealed class Slot
         {
             public Slot(BurnInCue cue, SubtitleOverlay element)
@@ -369,6 +538,9 @@ namespace SubtitleForge.Services
             }
 
             public BurnInCue Cue { get; }
+
+            /// <summary>Whether the cue covers the frame currently being drawn.</summary>
+            public bool Visible { get; set; }
 
             public SubtitleOverlay Element { get; }
         }

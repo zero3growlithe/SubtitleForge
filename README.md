@@ -285,6 +285,10 @@ large-v3-turbo ≈ 1.6 GB). Progress is shown in the status bar.
 - Models: `%LocalAppData%\SubtitleForge\models`
 - Crash reports: `%LocalAppData%\SubtitleForge\crash.log` — every entry starts with the
   build sha, which is also shown in the window title.
+- Burn-in diagnostics: `%LocalAppData%\SubtitleForge\burn-in-command.txt`,
+  `burn-in-diagnostics.txt` and `burn-in-first-frame.png` — the exact ffmpeg command, the frame
+  size, and the first frame that had a cue in it, so a burn-in that comes out empty can be
+  inspected instead of guessed at.
 
 ## Build
 
@@ -308,7 +312,9 @@ dotnet publish SubtitleForge/SubtitleForge.csproj -c Release -r win-x64 --self-c
 - Whisper reads the whole extracted 16 kHz mono track into memory: roughly 230 MB of
   samples per hour of audio.
 - Burn-in (and any export that is not a plain remux) re-encodes the video, so it is
-  CPU/GPU-bound and much slower than exporting a sidecar `.srt`.
+  CPU/GPU-bound and much slower than exporting a sidecar `.srt`. The subtitle frames are drawn
+  with the preview's own painter into a `DrawingVisual` rather than a laid-out control, because a
+  detached WPF visual has no `RenderSize` and silently drew nothing.
 - Cue splitting is proportional to text length; it does not do word-level forced
   alignment, so a very long single Whisper segment may still need manual `Split`.
 

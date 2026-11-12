@@ -376,17 +376,16 @@ namespace SubtitleForge.Services
                 // The backdrop is generated at the output size already.
                 builder.Append("[0:v]setsar=1[bg];");
             }
-            else if (options.ResizesPicture)
+            else
             {
+                // The picture is always forced to the exact size the subtitle frames are drawn at.
+                // Skipping the scale when the sizes happened to be "equal" is what left the overlay
+                // covering a quarter of the video whenever the probed size was stale.
                 builder.Append("[0:v]scale=");
                 builder.Append(options.EffectiveWidth.ToString(CultureInfo.InvariantCulture));
                 builder.Append(":");
                 builder.Append(options.EffectiveHeight.ToString(CultureInfo.InvariantCulture));
                 builder.Append(":flags=bicubic,setsar=1[bg];");
-            }
-            else
-            {
-                builder.Append("[0:v]setsar=1[bg];");
             }
 
             builder.Append("[bg][");
@@ -399,7 +398,9 @@ namespace SubtitleForge.Services
                 builder.Append(":alpha=premultiplied");
             }
 
-            builder.Append(":format=auto:eof_action=pass,format=yuv420p[v]");
+            // Blending in RGB keeps the alpha of the subtitle frames; the automatic format can pick a
+            // YUV variant that drops it and paints a flat black rectangle instead of the text.
+            builder.Append(":format=rgb:eof_action=pass,format=yuv420p[v]");
             return builder.ToString();
         }
 

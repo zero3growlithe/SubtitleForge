@@ -163,14 +163,24 @@ namespace SubtitleForge.Controls
         protected override void OnRender(DrawingContext drawingContext)
         {
             base.OnRender(drawingContext);
+            PaintFrame(drawingContext, ActualWidth, ActualHeight);
+        }
 
+        /// <summary>
+        /// Paints one frame into a canvas of an explicit size. The burn-in renderer calls this on its
+        /// own drawing visual, so an exported frame never depends on WPF having laid this control
+        /// out — a detached visual has no RenderSize, and the old code silently drew nothing
+        /// because of that.
+        /// </summary>
+        public void PaintFrame(DrawingContext drawingContext, double canvasWidth, double canvasHeight)
+        {
             StyleProfile? style = TextStyle;
-            if (style == null || ActualHeight <= 1.0 || ActualWidth <= 1.0)
+            if (style == null || canvasHeight <= 1.0 || canvasWidth <= 1.0)
             {
                 return;
             }
 
-            double canvasScale = ActualHeight / DesignHeight;
+            double canvasScale = canvasHeight / DesignHeight;
             double fontSize = style.FontSize * canvasScale * Math.Max(0.05, Scale);
             if (fontSize < 4.0)
             {
@@ -183,8 +193,8 @@ namespace SubtitleForge.Controls
                 return;
             }
 
-            double originX = (PositionX * ActualWidth) - (textBounds.Width * 0.5);
-            double originY = (PositionY * ActualHeight) - (textBounds.Height * 0.5);
+            double originX = (PositionX * canvasWidth) - (textBounds.Width * 0.5);
+            double originY = (PositionY * canvasHeight) - (textBounds.Height * 0.5);
 
             double globalOpacity = style.Opacity < 0.0 ? 0.0 : (style.Opacity > 1.0 ? 1.0 : style.Opacity);
             if (globalOpacity <= 0.001)

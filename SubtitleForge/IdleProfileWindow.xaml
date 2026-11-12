@@ -35,7 +35,10 @@
                 <Button Content="Duplicate" MinWidth="0" Padding="10,4" Margin="4,0,0,0"
                         ToolTip="Copy this profile under a new name"
                         Click="DuplicateProfileClick" />
-                <Button Content="Delete" MinWidth="0" Padding="10,4" Click="DeleteProfileClick" />
+                <Button Content="Copy to…" MinWidth="0" Padding="10,4" Margin="4,0,0,0"
+                        ToolTip="Copy these settings onto another profile"
+                        Click="CopyToProfileClick" />
+                <Button Content="Delete" MinWidth="0" Padding="10,4" Margin="4,0,0,0" Click="DeleteProfileClick" />
                 <Button x:Name="DefaultButton" Content="Set as default" MinWidth="0" Padding="10,4" Click="SetDefaultClick" />
             </StackPanel>
         </Grid>

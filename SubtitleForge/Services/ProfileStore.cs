@@ -191,6 +191,143 @@ namespace SubtitleForge.Services
             return PopIns[0];
         }
 
+        /// <summary>
+        /// Copies every setting of one style profile onto another, keeping the target's id and name.
+        /// Cues and settings reference profiles by id, so the copy has to stay in place instead of
+        /// being added under a new identity.
+        /// </summary>
+        public bool CopyStyleSettings(string sourceId, string targetId)
+        {
+            if (string.Equals(sourceId, targetId, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            int targetIndex = IndexOfStyle(targetId);
+            StyleProfile? source = FindStyle(sourceId);
+            if (targetIndex < 0 || source == null)
+            {
+                return false;
+            }
+
+            StyleProfile target = Styles[targetIndex];
+            StyleProfile copy = source.Clone();
+            copy.Id = target.Id;
+            copy.Name = target.Name;
+            Styles[targetIndex] = copy;
+            Save();
+            return true;
+        }
+
+        /// <summary>Copies every setting of one idle profile onto another, keeping the target's id.</summary>
+        public bool CopyIdleSettings(string sourceId, string targetId)
+        {
+            if (string.Equals(sourceId, targetId, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            IdleAnimationProfile? source = FindIdle(sourceId);
+            if (source == null)
+            {
+                return false;
+            }
+
+            for (int index = 0; index < Idle.Count; index++)
+            {
+                if (!string.Equals(Idle[index].Id, targetId, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                IdleAnimationProfile copy = source.Clone();
+                copy.Id = Idle[index].Id;
+                copy.Name = Idle[index].Name;
+                Idle[index] = copy;
+                Save();
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>Copies every setting of one pop-in profile onto another, keeping the target's id.</summary>
+        public bool CopyPopInSettings(string sourceId, string targetId)
+        {
+            if (string.Equals(sourceId, targetId, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            PopInProfile? source = FindPopIn(sourceId);
+            if (source == null)
+            {
+                return false;
+            }
+
+            for (int index = 0; index < PopIns.Count; index++)
+            {
+                if (!string.Equals(PopIns[index].Id, targetId, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                PopInProfile copy = source.Clone();
+                copy.Id = PopIns[index].Id;
+                copy.Name = PopIns[index].Name;
+                PopIns[index] = copy;
+                Save();
+                return true;
+            }
+
+            return false;
+        }
+
+        private StyleProfile? FindStyle(string id)
+        {
+            int index = IndexOfStyle(id);
+            return index < 0 ? null : Styles[index];
+        }
+
+        private int IndexOfStyle(string id)
+        {
+            for (int index = 0; index < Styles.Count; index++)
+            {
+                if (string.Equals(Styles[index].Id, id, StringComparison.Ordinal))
+                {
+                    return index;
+                }
+            }
+
+            return -1;
+        }
+
+        private IdleAnimationProfile? FindIdle(string id)
+        {
+            foreach (IdleAnimationProfile profile in Idle)
+            {
+                if (string.Equals(profile.Id, id, StringComparison.Ordinal))
+                {
+                    return profile;
+                }
+            }
+
+            return null;
+        }
+
+        private PopInProfile? FindPopIn(string id)
+        {
+            foreach (PopInProfile profile in PopIns)
+            {
+                if (string.Equals(profile.Id, id, StringComparison.Ordinal))
+                {
+                    return profile;
+                }
+            }
+
+            return null;
+        }
+
         public void UpsertStyle(StyleProfile profile)
         {
             for (int index = 0; index < Styles.Count; index++)

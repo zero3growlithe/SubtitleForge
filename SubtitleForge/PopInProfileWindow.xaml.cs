@@ -310,6 +310,73 @@ namespace SubtitleForge
             }
         }
 
+        /// <summary>
+        /// Offers the other profiles of this kind so the current settings can be pushed into one of
+        /// them, which is how a variant is started from an existing look.
+        /// </summary>
+        private void CopyToProfileClick(object sender, RoutedEventArgs e)
+        {
+            CommitDraftToStore();
+
+            ContextMenu menu = new ContextMenu();
+            UIElement? anchor = sender as UIElement;
+            if (anchor != null)
+            {
+                menu.PlacementTarget = anchor;
+            }
+
+            foreach (PopInProfile profile in store.PopIns)
+            {
+                if (string.Equals(profile.Id, draft.Id, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                MenuItem entry = new MenuItem();
+                entry.Header = profile.Name;
+                entry.Tag = profile.Id;
+                entry.Click += CopySettingsToClick;
+                menu.Items.Add(entry);
+            }
+
+            if (menu.Items.Count == 0)
+            {
+                MessageBox.Show(
+                    "There is no other profile to copy these settings into yet.",
+                    "Copy settings",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
+            menu.IsOpen = true;
+        }
+
+        private void CopySettingsToClick(object sender, RoutedEventArgs e)
+        {
+            MenuItem? entry = sender as MenuItem;
+            if (entry == null || !(entry.Tag is string targetId))
+            {
+                return;
+            }
+
+            // The draft is the source, so it has to be in the store before it is copied out of it.
+            CommitDraftToStore();
+            if (!store.CopyPopInSettings(draft.Id, targetId))
+            {
+                return;
+            }
+
+            ReloadProfileList(draft.Id);
+            UpdateDefaultButton();
+
+            MessageBox.Show(
+                "The settings were copied to \"" + store.ResolvePopIn(targetId).Name + "\".",
+                "Copy settings",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+
         private void DuplicateProfileClick(object sender, RoutedEventArgs e)
         {
             CommitDraftToStore();

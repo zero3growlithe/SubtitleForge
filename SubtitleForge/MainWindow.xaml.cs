@@ -5268,9 +5268,43 @@ namespace SubtitleForge
             MediaExportOptions options = window.Options;
             options.SourcePath = ResolveExportSourcePath();
             options.DurationSeconds = durationSeconds > 0.0 ? durationSeconds : EstimatedDuration();
-            options.Width = videoMetrics.Width > 0 ? videoMetrics.Width : 1920;
-            options.Height = videoMetrics.Height > 0 ? videoMetrics.Height : 1080;
-            options.FrameRate = videoMetrics.FrameRate > 1.0 ? videoMetrics.FrameRate : 30.0;
+            // The metrics cached when the timeline was built can be stale — a project loaded from disk
+            // never probes at all — and a stale pixel size is what makes the burned-in overlay cover a
+            // fraction of the picture instead of all of it, so the source is measured again here.
+            int sourceWidth = videoMetrics.Width;
+            int sourceHeight = videoMetrics.Height;
+            double sourceFrameRate = videoMetrics.FrameRate;
+            if (!string.IsNullOrEmpty(options.SourcePath))
+            {
+                string? metricsProbe = FfmpegLocator.Resolve("ffprobe", App.Settings.FfmpegDirectory);
+                if (metricsProbe != null)
+                {
+                    try
+                    {
+                        VideoMetrics fresh = await MediaInspector
+                            .GetVideoMetricsAsync(metricsProbe, options.SourcePath, CancellationToken.None)
+                            .ConfigureAwait(true);
+                        if (fresh.Width > 0 && fresh.Height > 0)
+                        {
+                            sourceWidth = fresh.Width;
+                            sourceHeight = fresh.Height;
+                        }
+
+                        if (fresh.FrameRate > 1.0)
+                        {
+                            sourceFrameRate = fresh.FrameRate;
+                        }
+                    }
+                    catch (Exception exception)
+                    {
+                        CrashLog.Write(exception, "ExportVideoMetricsProbe");
+                    }
+                }
+            }
+
+            options.Width = sourceWidth > 0 ? sourceWidth : 1920;
+            options.Height = sourceHeight > 0 ? sourceHeight : 1080;
+            options.FrameRate = sourceFrameRate > 1.0 ? sourceFrameRate : 30.0;
 
             bool solidBackdrop = options.BurnSubtitles && !options.IncludeVideo;
             if (!solidBackdrop && options.NeedsMediaFile && string.IsNullOrEmpty(options.SourcePath))

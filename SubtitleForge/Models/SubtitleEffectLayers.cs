@@ -99,8 +99,6 @@ namespace SubtitleForge.Models
             copy.Enabled = Enabled;
             copy.Color = Color.Clone();
             copy.Thickness = Thickness;
-            copy.Inside = Inside;
-            copy.Filled = Filled;
             copy.OffsetX = OffsetX;
             copy.OffsetY = OffsetY;
             copy.Opacity = Opacity;

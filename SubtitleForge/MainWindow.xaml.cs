@@ -4766,7 +4766,7 @@ namespace SubtitleForge
             // The playback timer only runs every 120 ms, so while playing the subtitle clock used to
             // advance in eight coarse steps a second: the text stepped while the video ran smoothly.
             // Advance the subtitle clock here, on the 16 ms timer, along with the idle channels.
-            if (isPlaying && playbackClock != null)
+            if (isPlaying)
             {
                 double timelineSeconds = playbackAnchorSeconds + playbackClock.Elapsed.TotalSeconds;
                 if (timelineSeconds < 0.0)

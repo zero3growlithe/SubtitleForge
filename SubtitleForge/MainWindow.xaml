@@ -308,7 +308,8 @@
                                                      Format="0.###"
                                                      AllowEmpty="True"
                                                      ToolTip="Horizontal centre, 0 = left edge, 1 = right edge. Empty follows the global default."
-                                                     ValueChanged="CuePlacementChanged" />
+                                                     ValueChanged="CuePlacementChanged"
+                                                     LostFocus="CuePlacementCommit" />
                             <TextBlock Text="Y" Style="{StaticResource SectionLabelStyle}" />
                             <controls:NumericDragBox x:Name="CuePositionYBox"
                                                      Width="56"
@@ -319,7 +320,8 @@
                                                      Format="0.###"
                                                      AllowEmpty="True"
                                                      ToolTip="Vertical centre, 0 = top edge, 1 = bottom edge. Empty follows the global default."
-                                                     ValueChanged="CuePlacementChanged" />
+                                                     ValueChanged="CuePlacementChanged"
+                                                     LostFocus="CuePlacementCommit" />
                             <TextBlock Text="Scale" Style="{StaticResource SectionLabelStyle}" />
                             <controls:NumericDragBox x:Name="CueScaleBox"
                                                      Width="56"
@@ -330,7 +332,8 @@
                                                      Format="0.###"
                                                      AllowEmpty="True"
                                                      ToolTip="Size multiplier. Empty follows the global default."
-                                                     ValueChanged="CuePlacementChanged" />
+                                                     ValueChanged="CuePlacementChanged"
+                                                     LostFocus="CuePlacementCommit" />
                             <Button x:Name="CuePlacementResetButton"
                                     Content="Reset placement"
                                     MinWidth="0"

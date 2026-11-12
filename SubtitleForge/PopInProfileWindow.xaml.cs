@@ -136,7 +136,7 @@ namespace SubtitleForge
                 NameBox.Text = draft.Name;
                 SelectTag(KindCombo, draft.Kind);
                 SelectTag(DirectionCombo, draft.Direction);
-                DurationBox.Text = draft.DurationSeconds.ToString("0.###", CultureInfo.InvariantCulture);
+                DurationBox.SetValueSilently(draft.DurationSeconds);
                 PerCharacterCheck.IsChecked = draft.PerCharacter;
                 CharacterDelayBox.SetValueSilently(draft.CharacterDelaySeconds);
                 DistanceBox.SetValueSilently(draft.DistanceMultiplier);

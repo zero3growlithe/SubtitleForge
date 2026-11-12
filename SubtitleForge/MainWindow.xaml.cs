@@ -911,13 +911,30 @@ namespace SubtitleForge
                 return;
             }
 
-            List<SubtitleCue> before = CaptureCueSnapshot();
+            // Scrubbing a field fires on every pixel, so the undo entry is deferred to the moment
+            // the field loses focus; otherwise one drag would fill the whole history.
+            if (pendingPlacementSnapshot == null)
+            {
+                pendingPlacementSnapshot = CaptureCueSnapshot();
+            }
+
             cue.PositionX = CuePositionXBox.IsEmpty ? null : (double?)CuePositionXBox.Value;
             cue.PositionY = CuePositionYBox.IsEmpty ? null : (double?)CuePositionYBox.Value;
             cue.Scale = CueScaleBox.IsEmpty ? null : (double?)CueScaleBox.Value;
-            PushCueUndoIfChanged("cue placement", before);
             MarkProjectDirty();
             UpdateOverlay(CurrentPosition);
+        }
+
+        private void CuePlacementCommit(object sender, RoutedEventArgs e)
+        {
+            List<SubtitleCue>? before = pendingPlacementSnapshot;
+            pendingPlacementSnapshot = null;
+            if (before == null)
+            {
+                return;
+            }
+
+            PushCueUndoIfChanged("cue placement", before);
         }
 
         private void CuePlacementResetClick(object sender, RoutedEventArgs e)
@@ -5092,6 +5109,8 @@ namespace SubtitleForge
         // ── Cue editing undo ───────────────────────────────────────────────
 
         private List<SubtitleCue>? pendingCueTextSnapshot;
+
+        private List<SubtitleCue>? pendingPlacementSnapshot;
 
         private List<SubtitleCue> CaptureCueSnapshot()
         {

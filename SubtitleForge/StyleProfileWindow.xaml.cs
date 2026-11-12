@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using SubtitleForge.Models;
@@ -271,6 +272,7 @@ namespace SubtitleForge
                 OutlineInsideCheck.IsEnabled = enabled;
                 OutlineFilledCheck.IsEnabled = enabled;
                 OutlineColorPicker.IsEnabled = enabled;
+                UpdateStackButtons();
 
                 if (outline == null)
                 {
@@ -309,6 +311,7 @@ namespace SubtitleForge
                 ShadowOffsetYBox.IsEnabled = enabled;
                 ShadowOpacityBox.IsEnabled = enabled;
                 ShadowColorPicker.IsEnabled = enabled;
+                UpdateStackButtons();
 
                 if (shadow == null)
                 {
@@ -484,6 +487,130 @@ namespace SubtitleForge
             finally
             {
                 suppress = false;
+            }
+        }
+
+        // ── Stack order ────────────────────────────────────────────────────
+
+        /// <summary>Greys out the arrows that would move an entry past either end of the stack.</summary>
+        private void UpdateStackButtons()
+        {
+            OutlineLayer? outline = SelectedOutline;
+            int outlineIndex = outline == null ? -1 : draft.Outlines.IndexOf(outline);
+            OutlineUpButton.IsEnabled = outlineIndex > 0;
+            OutlineDownButton.IsEnabled = outlineIndex >= 0 && outlineIndex < draft.Outlines.Count - 1;
+
+            ShadowLayer? shadow = SelectedShadow;
+            int shadowIndex = shadow == null ? -1 : draft.Shadows.IndexOf(shadow);
+            ShadowUpButton.IsEnabled = shadowIndex > 0;
+            ShadowDownButton.IsEnabled = shadowIndex >= 0 && shadowIndex < draft.Shadows.Count - 1;
+        }
+
+        private void MoveOutlineUpClick(object sender, RoutedEventArgs e)
+        {
+            MoveOutline(-1);
+        }
+
+        private void MoveOutlineDownClick(object sender, RoutedEventArgs e)
+        {
+            MoveOutline(1);
+        }
+
+        private void MoveShadowUpClick(object sender, RoutedEventArgs e)
+        {
+            MoveShadow(-1);
+        }
+
+        private void MoveShadowDownClick(object sender, RoutedEventArgs e)
+        {
+            MoveShadow(1);
+        }
+
+        /// <summary>
+        /// Moves the selected outline one step through the stack. The list order is the paint order,
+        /// so moving an entry earlier puts its ring underneath the ones after it.
+        /// </summary>
+        private void MoveOutline(int offset)
+        {
+            OutlineLayer? outline = SelectedOutline;
+            if (outline == null)
+            {
+                return;
+            }
+
+            int index = draft.Outlines.IndexOf(outline);
+            int target = index + offset;
+            if (index < 0 || target < 0 || target >= draft.Outlines.Count)
+            {
+                return;
+            }
+
+            draft.Outlines.RemoveAt(index);
+            draft.Outlines.Insert(target, outline);
+
+            RefreshOutlineList();
+            OutlineList.SelectedIndex = target;
+            LoadOutlineFields();
+            UpdatePreview();
+        }
+
+        private void MoveShadow(int offset)
+        {
+            ShadowLayer? shadow = SelectedShadow;
+            if (shadow == null)
+            {
+                return;
+            }
+
+            int index = draft.Shadows.IndexOf(shadow);
+            int target = index + offset;
+            if (index < 0 || target < 0 || target >= draft.Shadows.Count)
+            {
+                return;
+            }
+
+            draft.Shadows.RemoveAt(index);
+            draft.Shadows.Insert(target, shadow);
+
+            RefreshShadowList();
+            ShadowList.SelectedIndex = target;
+            LoadShadowFields();
+            UpdatePreview();
+        }
+
+        private void StackPreviewKeyDown(object sender, KeyEventArgs e)
+        {
+            if ((Keyboard.Modifiers & ModifierKeys.Control) == 0)
+            {
+                return;
+            }
+
+            bool outlineList = ReferenceEquals(sender, OutlineList);
+            if (e.Key == Key.Up)
+            {
+                if (outlineList)
+                {
+                    MoveOutline(-1);
+                }
+                else
+                {
+                    MoveShadow(-1);
+                }
+
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Down)
+            {
+                if (outlineList)
+                {
+                    MoveOutline(1);
+                }
+                else
+                {
+                    MoveShadow(1);
+                }
+
+                e.Handled = true;
             }
         }
 

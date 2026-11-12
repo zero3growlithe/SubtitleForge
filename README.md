@@ -123,7 +123,8 @@ Outlines and shadows each carry a **target**: `Font` applies them to the glyphs,
 applies them around the finished font + outlines + shadows stack. An outline can be drawn
 **inside** the glyph (either the `Inside` switch or a negative thickness) and can **fill** the
 glyph with its colour as a base layer, which is how a solid silhouette under a translucent
-gradient is made.
+gradient is made. The list order **is** the paint order, and each stack can be reordered with the
+`▲` / `▼` buttons under it (or `Ctrl+Up` / `Ctrl+Down`).
 
 The default text style profile also drives **burned-in** exports: `As MP4…` with *Burn in
 subtitles* uses its font, size, weight, fill colour and the first font-targeted outline and shadow,

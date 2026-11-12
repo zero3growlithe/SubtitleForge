@@ -123,7 +123,7 @@
                 </StackPanel>
 
                 <!-- Outlines -->
-                <TextBlock Text="Outlines (stacked bottom to top)" FontWeight="SemiBold" Margin="0,16,0,4" />
+                <TextBlock Text="Outlines (painted in list order, bottom to top)" FontWeight="SemiBold" Margin="0,16,0,4" />
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="230" />
@@ -131,12 +131,29 @@
                     </Grid.ColumnDefinitions>
 
                     <StackPanel Grid.Column="0">
-                        <ListBox x:Name="OutlineList" Height="112" SelectionChanged="OutlineSelectionChanged" />
-                        <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                        <ListBox x:Name="OutlineList"
+                                 Height="112"
+                                 SelectionChanged="OutlineSelectionChanged"
+                                 PreviewKeyDown="StackPreviewKeyDown" />
+                        <WrapPanel Margin="0,6,0,0">
                             <Button Content="Add" MinWidth="0" Padding="10,4" Click="AddOutlineClick" />
                             <Button Content="Copy" MinWidth="0" Padding="10,4" Click="CopyOutlineClick" />
                             <Button Content="Remove" MinWidth="0" Padding="10,4" Click="RemoveOutlineClick" />
-                        </StackPanel>
+                            <Button x:Name="OutlineUpButton"
+                                    Content="&#x25B2;"
+                                    MinWidth="0"
+                                    Padding="0"
+                                    Width="26"
+                                    ToolTip="Paint this outline earlier (closer to the glyphs) — Ctrl+Up"
+                                    Click="MoveOutlineUpClick" />
+                            <Button x:Name="OutlineDownButton"
+                                    Content="&#x25BC;"
+                                    MinWidth="0"
+                                    Padding="0"
+                                    Width="26"
+                                    ToolTip="Paint this outline later (further out) — Ctrl+Down"
+                                    Click="MoveOutlineDownClick" />
+                        </WrapPanel>
                     </StackPanel>
 
                     <StackPanel Grid.Column="1" Margin="10,0,0,0">
@@ -195,7 +212,7 @@
                 </Grid>
 
                 <!-- Shadows -->
-                <TextBlock Text="Shadows (stacked bottom to top)" FontWeight="SemiBold" Margin="0,16,0,4" />
+                <TextBlock Text="Shadows (painted in list order, bottom to top)" FontWeight="SemiBold" Margin="0,16,0,4" />
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="230" />
@@ -203,12 +220,29 @@
                     </Grid.ColumnDefinitions>
 
                     <StackPanel Grid.Column="0">
-                        <ListBox x:Name="ShadowList" Height="112" SelectionChanged="ShadowSelectionChanged" />
-                        <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                        <ListBox x:Name="ShadowList"
+                                 Height="112"
+                                 SelectionChanged="ShadowSelectionChanged"
+                                 PreviewKeyDown="StackPreviewKeyDown" />
+                        <WrapPanel Margin="0,6,0,0">
                             <Button Content="Add" MinWidth="0" Padding="10,4" Click="AddShadowClick" />
                             <Button Content="Copy" MinWidth="0" Padding="10,4" Click="CopyShadowClick" />
                             <Button Content="Remove" MinWidth="0" Padding="10,4" Click="RemoveShadowClick" />
-                        </StackPanel>
+                            <Button x:Name="ShadowUpButton"
+                                    Content="&#x25B2;"
+                                    MinWidth="0"
+                                    Padding="0"
+                                    Width="26"
+                                    ToolTip="Paint this shadow earlier (closer to the glyphs) — Ctrl+Up"
+                                    Click="MoveShadowUpClick" />
+                            <Button x:Name="ShadowDownButton"
+                                    Content="&#x25BC;"
+                                    MinWidth="0"
+                                    Padding="0"
+                                    Width="26"
+                                    ToolTip="Paint this shadow later (further out) — Ctrl+Down"
+                                    Click="MoveShadowDownClick" />
+                        </WrapPanel>
                     </StackPanel>
 
                     <StackPanel Grid.Column="1" Margin="10,0,0,0">

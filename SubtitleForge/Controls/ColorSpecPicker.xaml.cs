@@ -7,57 +7,118 @@ using SubtitleForge.Services;
 
 namespace SubtitleForge.Controls
 {
-    /// <summary>Two hex colours plus a gradient direction, with a live swatch.</summary>
+    /// <summary>
+    /// A colour pair plus a gradient direction: two clickable swatches that open the colour
+    /// picker (the hex field lives inside the picker, not here) and a direction drop-down.
+    /// </summary>
     public partial class ColorSpecPicker : UserControl
     {
+        private ColorSpec spec = ColorSpec.Solid("#FFFFFFFF");
         private bool suppress;
 
         public ColorSpecPicker()
         {
             InitializeComponent();
-            UpdateSwatch();
+            UpdateSwatches();
         }
 
         public event EventHandler? ValueChanged;
 
-        public void Load(ColorSpec? spec)
+        public void Load(ColorSpec? value)
         {
             suppress = true;
             try
             {
-                ColorSpec source = spec ?? ColorSpec.Solid("#FFFFFFFF");
-                StartBox.Text = source.StartColor;
-                EndBox.Text = source.EndColor;
-                SelectDirection(source.Direction);
+                spec = value == null ? ColorSpec.Solid("#FFFFFFFF") : value.Clone();
+                SelectDirection(spec.Direction);
             }
             finally
             {
                 suppress = false;
             }
 
-            UpdateSwatch();
+            UpdateSwatches();
         }
 
         public ColorSpec Capture()
         {
-            ColorSpec spec = new ColorSpec();
-            spec.StartColor = string.IsNullOrWhiteSpace(StartBox.Text) ? "#FFFFFFFF" : StartBox.Text.Trim();
-            spec.EndColor = string.IsNullOrWhiteSpace(EndBox.Text) ? spec.StartColor : EndBox.Text.Trim();
-
+            ColorSpec copy = spec.Clone();
             ComboBoxItem? item = DirectionCombo.SelectedItem as ComboBoxItem;
             string? direction = item == null ? null : item.Tag as string;
-            spec.Direction = string.IsNullOrWhiteSpace(direction) ? ColorSpec.DirectionSolid : direction;
+            copy.Direction = string.IsNullOrWhiteSpace(direction) ? ColorSpec.DirectionSolid : direction;
+            if (!copy.IsGradient)
+            {
+                copy.EndColor = copy.StartColor;
+            }
 
-            return spec;
+            return copy;
+        }
+
+        private void StartClick(object sender, RoutedEventArgs e)
+        {
+            Color current = StyleBrushes.ParseColor(spec.StartColor, Colors.White);
+            Color picked;
+            if (!ColorPickerWindow.TryPick(Window.GetWindow(this), current, out picked))
+            {
+                return;
+            }
+
+            spec.StartColor = ToHex(picked);
+            UpdateSwatches();
+            RaiseChanged();
+        }
+
+        private void EndClick(object sender, RoutedEventArgs e)
+        {
+            Color current = StyleBrushes.ParseColor(spec.EndColor, Colors.White);
+            Color picked;
+            if (!ColorPickerWindow.TryPick(Window.GetWindow(this), current, out picked))
+            {
+                return;
+            }
+
+            spec.EndColor = ToHex(picked);
+            UpdateSwatches();
+            RaiseChanged();
+        }
+
+        private void SwapClick(object sender, RoutedEventArgs e)
+        {
+            string first = spec.StartColor;
+            spec.StartColor = spec.EndColor;
+            spec.EndColor = first;
+            UpdateSwatches();
+            RaiseChanged();
+        }
+
+        private void DirectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            UpdateSwatches();
+            if (suppress)
+            {
+                return;
+            }
+
+            RaiseChanged();
+        }
+
+        private void RaiseChanged()
+        {
+            if (suppress)
+            {
+                return;
+            }
+
+            ValueChanged?.Invoke(this, EventArgs.Empty);
         }
 
         private void SelectDirection(string? direction)
         {
-            string value = string.IsNullOrEmpty(direction) ? ColorSpec.DirectionSolid : direction;
+            string wanted = string.IsNullOrEmpty(direction) ? ColorSpec.DirectionSolid : direction;
             for (int index = 0; index < DirectionCombo.Items.Count; index++)
             {
                 ComboBoxItem? item = DirectionCombo.Items[index] as ComboBoxItem;
-                if (item != null && string.Equals(item.Tag as string, value, StringComparison.Ordinal))
+                if (item != null && string.Equals(item.Tag as string, wanted, StringComparison.Ordinal))
                 {
                     DirectionCombo.SelectedIndex = index;
                     return;
@@ -67,34 +128,32 @@ namespace SubtitleForge.Controls
             DirectionCombo.SelectedIndex = 0;
         }
 
-        private void DirectionChanged(object sender, SelectionChangedEventArgs e)
+        private void UpdateSwatches()
         {
-            if (suppress)
-            {
-                return;
-            }
+            string? direction = (DirectionCombo.SelectedItem as ComboBoxItem)?.Tag as string;
+            bool gradient = !string.IsNullOrEmpty(direction)
+                && !string.Equals(direction, ColorSpec.DirectionSolid, StringComparison.Ordinal);
 
-            UpdateSwatch();
-            ValueChanged?.Invoke(this, EventArgs.Empty);
+            StartSwatch.Background = new SolidColorBrush(StyleBrushes.ParseColor(spec.StartColor, Colors.White));
+            EndSwatch.Background = new SolidColorBrush(StyleBrushes.ParseColor(spec.EndColor, Colors.White));
+            EndButton.IsEnabled = gradient;
+            SwapButton.IsEnabled = gradient;
+
+            if (gradient)
+            {
+                Rect bounds = new Rect(0.0, 0.0, 44.0, 16.0);
+                StartSwatch.Background = StyleBrushes.CreateBrush(Capture(), bounds, 1.0) ?? StartSwatch.Background;
+            }
         }
 
-        private void FieldChanged(object sender, RoutedEventArgs e)
+        private static string ToHex(Color color)
         {
-            if (suppress)
+            if (color.A == 255)
             {
-                return;
+                return "#" + color.R.ToString("X2") + color.G.ToString("X2") + color.B.ToString("X2");
             }
 
-            UpdateSwatch();
-            ValueChanged?.Invoke(this, EventArgs.Empty);
-        }
-
-        private void UpdateSwatch()
-        {
-            ColorSpec spec = Capture();
-            Rect bounds = new Rect(0.0, 0.0, Math.Max(40.0, Swatch.ActualWidth), 20.0);
-            Brush? brush = StyleBrushes.CreateBrush(spec, bounds, 1.0);
-            Swatch.Background = brush ?? Brushes.Transparent;
+            return "#" + color.A.ToString("X2") + color.R.ToString("X2") + color.G.ToString("X2") + color.B.ToString("X2");
         }
     }
 }

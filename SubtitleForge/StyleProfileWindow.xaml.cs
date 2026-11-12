@@ -17,6 +17,8 @@ namespace SubtitleForge
         private readonly DispatcherTimer previewTimer;
         private readonly System.Diagnostics.Stopwatch previewClock = System.Diagnostics.Stopwatch.StartNew();
 
+        private const string SampleText = "Sample Text";
+
         private StyleProfile draft = new StyleProfile();
         private bool suppress;
 
@@ -34,7 +36,7 @@ namespace SubtitleForge
             PreviewOverlay.Scale = 1.0;
             PreviewOverlay.CueStartSeconds = 0.0;
             PreviewOverlay.CueEndSeconds = 4.0;
-            PreviewOverlay.CueText = PreviewTextBox.Text;
+            PreviewOverlay.CueText = SampleText;
 
             previewTimer = new DispatcherTimer(DispatcherPriority.Render);
             previewTimer.Interval = TimeSpan.FromMilliseconds(16);
@@ -172,9 +174,9 @@ namespace SubtitleForge
 
                 BoldCheck.IsChecked = draft.Bold;
                 ItalicCheck.IsChecked = draft.Italic;
-                FontSizeBox.Text = draft.FontSize.ToString("0.#", CultureInfo.InvariantCulture);
-                WordsBox.Text = draft.WordsPerDisplay.ToString(CultureInfo.InvariantCulture);
-                OpacityBox.Text = draft.Opacity.ToString("0.##", CultureInfo.InvariantCulture);
+                FontSizeBox.SetValueSilently(draft.FontSize);
+                WordsBox.SetValueSilently(draft.WordsPerDisplay);
+                OpacityBox.SetValueSilently(draft.Opacity);
                 HighlightCheck.IsChecked = draft.HighlightSpokenWord;
 
                 FillPicker.Load(draft.Fill);
@@ -268,9 +270,9 @@ namespace SubtitleForge
                 OutlineNameBox.Text = outline.Name;
                 OutlineEnabledCheck.IsChecked = outline.Enabled;
                 SelectTarget(OutlineTargetCombo, outline.Target);
-                OutlineThicknessBox.Text = outline.Thickness.ToString("0.#", CultureInfo.InvariantCulture);
-                OutlineOffsetXBox.Text = outline.OffsetX.ToString("0.#", CultureInfo.InvariantCulture);
-                OutlineOffsetYBox.Text = outline.OffsetY.ToString("0.#", CultureInfo.InvariantCulture);
+                OutlineThicknessBox.SetValueSilently(outline.Thickness);
+                OutlineOffsetXBox.SetValueSilently(outline.OffsetX);
+                OutlineOffsetYBox.SetValueSilently(outline.OffsetY);
                 OutlineColorPicker.Load(outline.Color);
             }
             finally
@@ -304,10 +306,10 @@ namespace SubtitleForge
                 ShadowNameBox.Text = shadow.Name;
                 ShadowEnabledCheck.IsChecked = shadow.Enabled;
                 SelectTarget(ShadowTargetCombo, shadow.Target);
-                ShadowThicknessBox.Text = shadow.Thickness.ToString("0.#", CultureInfo.InvariantCulture);
-                ShadowOffsetXBox.Text = shadow.OffsetX.ToString("0.#", CultureInfo.InvariantCulture);
-                ShadowOffsetYBox.Text = shadow.OffsetY.ToString("0.#", CultureInfo.InvariantCulture);
-                ShadowOpacityBox.Text = shadow.Opacity.ToString("0.##", CultureInfo.InvariantCulture);
+                ShadowThicknessBox.SetValueSilently(shadow.Thickness);
+                ShadowOffsetXBox.SetValueSilently(shadow.OffsetX);
+                ShadowOffsetYBox.SetValueSilently(shadow.OffsetY);
+                ShadowOpacityBox.SetValueSilently(shadow.Opacity);
                 ShadowColorPicker.Load(shadow.Color);
             }
             finally
@@ -339,7 +341,7 @@ namespace SubtitleForge
             return string.IsNullOrEmpty(tag) ? EffectTarget.Font : tag;
         }
 
-        private void OutlineFieldChanged(object sender, RoutedEventArgs e)
+        private void OutlineFieldChanged(object? sender, EventArgs e)
         {
             if (suppress)
             {
@@ -355,9 +357,9 @@ namespace SubtitleForge
             outline.Name = OutlineNameBox.Text;
             outline.Enabled = OutlineEnabledCheck.IsChecked == true;
             outline.Target = SelectedTarget(OutlineTargetCombo);
-            outline.Thickness = ParseDouble(OutlineThicknessBox.Text, outline.Thickness, 0.0, 40.0);
-            outline.OffsetX = ParseDouble(OutlineOffsetXBox.Text, outline.OffsetX, -200.0, 200.0);
-            outline.OffsetY = ParseDouble(OutlineOffsetYBox.Text, outline.OffsetY, -200.0, 200.0);
+            outline.Thickness = OutlineThicknessBox.Value;
+            outline.OffsetX = OutlineOffsetXBox.Value;
+            outline.OffsetY = OutlineOffsetYBox.Value;
             outline.Color = OutlineColorPicker.Capture();
 
             RefreshOutlineList();
@@ -381,7 +383,7 @@ namespace SubtitleForge
             UpdatePreview();
         }
 
-        private void ShadowFieldChanged(object sender, RoutedEventArgs e)
+        private void ShadowFieldChanged(object? sender, EventArgs e)
         {
             if (suppress)
             {
@@ -397,10 +399,10 @@ namespace SubtitleForge
             shadow.Name = ShadowNameBox.Text;
             shadow.Enabled = ShadowEnabledCheck.IsChecked == true;
             shadow.Target = SelectedTarget(ShadowTargetCombo);
-            shadow.Thickness = ParseDouble(ShadowThicknessBox.Text, shadow.Thickness, 0.0, 60.0);
-            shadow.OffsetX = ParseDouble(ShadowOffsetXBox.Text, shadow.OffsetX, -200.0, 200.0);
-            shadow.OffsetY = ParseDouble(ShadowOffsetYBox.Text, shadow.OffsetY, -200.0, 200.0);
-            shadow.Opacity = ParseDouble(ShadowOpacityBox.Text, shadow.Opacity, 0.0, 1.0);
+            shadow.Thickness = ShadowThicknessBox.Value;
+            shadow.OffsetX = ShadowOffsetXBox.Value;
+            shadow.OffsetY = ShadowOffsetYBox.Value;
+            shadow.Opacity = ShadowOpacityBox.Value;
             shadow.Color = ShadowColorPicker.Capture();
 
             RefreshShadowList();
@@ -557,7 +559,7 @@ namespace SubtitleForge
 
         // ── Basics ────────────────────────────────────────────────────────
 
-        private void BasicsChanged(object sender, RoutedEventArgs e)
+        private void BasicsChanged(object? sender, EventArgs e)
         {
             if (suppress)
             {
@@ -573,9 +575,9 @@ namespace SubtitleForge
 
             draft.Bold = BoldCheck.IsChecked == true;
             draft.Italic = ItalicCheck.IsChecked == true;
-            draft.FontSize = ParseDouble(FontSizeBox.Text, draft.FontSize, 6.0, 400.0);
-            draft.WordsPerDisplay = (int)ParseDouble(WordsBox.Text, draft.WordsPerDisplay, 0.0, 40.0);
-            draft.Opacity = ParseDouble(OpacityBox.Text, draft.Opacity, 0.0, 1.0);
+            draft.FontSize = FontSizeBox.Value;
+            draft.WordsPerDisplay = WordsBox.IntValue;
+            draft.Opacity = OpacityBox.Value;
             draft.HighlightSpokenWord = HighlightCheck.IsChecked == true;
 
             UpdatePreview();
@@ -591,12 +593,6 @@ namespace SubtitleForge
             draft.Fill = FillPicker.Capture();
             draft.HighlightFill = HighlightPicker.Capture();
             UpdatePreview();
-        }
-
-        private void PreviewTextChanged(object sender, TextChangedEventArgs e)
-        {
-            PreviewOverlay.CueText = PreviewTextBox.Text;
-            PreviewOverlay.InvalidateLayout();
         }
 
         private void UpdatePreview()
@@ -705,32 +701,6 @@ namespace SubtitleForge
         {
             DialogResult = false;
             Close();
-        }
-
-        private static double ParseDouble(string? text, double fallback, double minimum, double maximum)
-        {
-            if (string.IsNullOrWhiteSpace(text))
-            {
-                return fallback;
-            }
-
-            double value;
-            if (!double.TryParse(text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out value))
-            {
-                return fallback;
-            }
-
-            if (value < minimum)
-            {
-                value = minimum;
-            }
-
-            if (value > maximum)
-            {
-                value = maximum;
-            }
-
-            return value;
         }
     }
 }

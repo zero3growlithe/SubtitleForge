@@ -154,33 +154,42 @@
                     <Button x:Name="DeleteTrackButton" Content="Delete track" Click="DeleteTrackClick" />
                     <Button x:Name="RenameTrackButton" Content="Rename…" Click="RenameTrackClick" />
                     <Button x:Name="TrackColorButton" Content="Colour…" Click="TrackColorClick" />
-                    <Button x:Name="UndoTrackButton" Content="Undo" MinWidth="0" Padding="10,4" Click="UndoClick" />
+                    <Button x:Name="UndoTrackButton" Content="Undo" MinWidth="0" Padding="10,4" Click="UndoClick" ToolTip="Ctrl+Z" />
+                    <Button x:Name="RedoTrackButton" Content="Redo" MinWidth="0" Padding="10,4" Click="RedoClick" ToolTip="Ctrl+Y" />
                 </WrapPanel>
                 </Grid>
 
                 <!-- ── Drag to trade height between the preview and the tracks ── -->
-                <GridSplitter x:Name="PreviewSplitter"
-                              Grid.Row="1"
-                              HorizontalAlignment="Stretch"
-                              VerticalAlignment="Stretch"
-                              ResizeDirection="Rows"
-                              ResizeBehavior="PreviousAndNext"
-                              Background="{StaticResource PanelBorderBrush}"
-                              ShowsPreview="False"
-                              Cursor="SizeNS" />
                 <Border Grid.Row="1"
-                        HorizontalAlignment="Stretch"
-                        VerticalAlignment="Stretch"
-                        Background="{StaticResource PanelBorderBrush}"
-                        IsHitTestVisible="False">
+                        Width="58"
+                        Height="14"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Background="#FF3A3A42"
+                        BorderBrush="#FF4A4A56"
+                        BorderThickness="1"
+                        CornerRadius="3"
+                        IsHitTestVisible="False"
+                        ToolTip="Drag to trade height between the preview and the tracks">
                     <StackPanel Orientation="Horizontal"
                                 HorizontalAlignment="Center"
                                 VerticalAlignment="Center">
-                        <Ellipse Width="4" Height="4" Margin="4,0" Fill="#FF8A93A3" />
-                        <Ellipse Width="4" Height="4" Margin="4,0" Fill="#FF8A93A3" />
-                        <Ellipse Width="4" Height="4" Margin="4,0" Fill="#FF8A93A3" />
+                        <Ellipse Width="4" Height="4" Margin="3,0" Fill="#FF8A93A3" />
+                        <Ellipse Width="4" Height="4" Margin="3,0" Fill="#FF8A93A3" />
+                        <Ellipse Width="4" Height="4" Margin="3,0" Fill="#FF8A93A3" />
                     </StackPanel>
                 </Border>
+                <GridSplitter x:Name="PreviewSplitter"
+                              Grid.Row="1"
+                              Width="58"
+                              Height="14"
+                              HorizontalAlignment="Center"
+                              VerticalAlignment="Center"
+                              ResizeDirection="Rows"
+                              ResizeBehavior="PreviousAndNext"
+                              Background="Transparent"
+                              ShowsPreview="False"
+                              Cursor="SizeNS" />
 
                 <!-- ── Multitrack timeline (waveforms + video thumbnails) ── -->
                 <Border Grid.Row="2"
@@ -290,11 +299,38 @@
 
                         <WrapPanel Grid.Row="1" Orientation="Horizontal" Margin="0,6,0,0">
                             <TextBlock Text="X" Style="{StaticResource SectionLabelStyle}" />
-                            <TextBox x:Name="CuePositionXBox" Width="52" Margin="0,0,6,0" LostFocus="CuePlacementChanged" />
+                            <controls:NumericDragBox x:Name="CuePositionXBox"
+                                                     Width="56"
+                                                     Margin="0,0,6,0"
+                                                     Minimum="0"
+                                                     Maximum="1"
+                                                     DragStep="0.002"
+                                                     Format="0.###"
+                                                     AllowEmpty="True"
+                                                     ToolTip="Horizontal centre, 0 = left edge, 1 = right edge. Empty follows the global default."
+                                                     ValueChanged="CuePlacementChanged" />
                             <TextBlock Text="Y" Style="{StaticResource SectionLabelStyle}" />
-                            <TextBox x:Name="CuePositionYBox" Width="52" Margin="0,0,6,0" LostFocus="CuePlacementChanged" />
+                            <controls:NumericDragBox x:Name="CuePositionYBox"
+                                                     Width="56"
+                                                     Margin="0,0,6,0"
+                                                     Minimum="0"
+                                                     Maximum="1"
+                                                     DragStep="0.002"
+                                                     Format="0.###"
+                                                     AllowEmpty="True"
+                                                     ToolTip="Vertical centre, 0 = top edge, 1 = bottom edge. Empty follows the global default."
+                                                     ValueChanged="CuePlacementChanged" />
                             <TextBlock Text="Scale" Style="{StaticResource SectionLabelStyle}" />
-                            <TextBox x:Name="CueScaleBox" Width="52" Margin="0,0,6,0" LostFocus="CuePlacementChanged" />
+                            <controls:NumericDragBox x:Name="CueScaleBox"
+                                                     Width="56"
+                                                     Margin="0,0,6,0"
+                                                     Minimum="0.05"
+                                                     Maximum="6"
+                                                     DragStep="0.005"
+                                                     Format="0.###"
+                                                     AllowEmpty="True"
+                                                     ToolTip="Size multiplier. Empty follows the global default."
+                                                     ValueChanged="CuePlacementChanged" />
                             <Button x:Name="CuePlacementResetButton"
                                     Content="Reset placement"
                                     MinWidth="0"

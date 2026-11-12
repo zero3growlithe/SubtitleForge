@@ -32,7 +32,7 @@ namespace SubtitleForge
             PreviewOverlay.PositionY = 0.58;
             PreviewOverlay.CueStartSeconds = 0.0;
             PreviewOverlay.CueEndSeconds = 1000.0;
-            PreviewOverlay.CueText = "Pop-in preview";
+            PreviewOverlay.CueText = "Sample Text";
 
             previewTimer = new DispatcherTimer(DispatcherPriority.Render);
             previewTimer.Interval = TimeSpan.FromMilliseconds(16);
@@ -138,14 +138,17 @@ namespace SubtitleForge
                 SelectTag(DirectionCombo, draft.Direction);
                 DurationBox.Text = draft.DurationSeconds.ToString("0.###", CultureInfo.InvariantCulture);
                 PerCharacterCheck.IsChecked = draft.PerCharacter;
-                CharacterDelayBox.Text = draft.CharacterDelaySeconds.ToString("0.###", CultureInfo.InvariantCulture);
-                DistanceBox.Text = draft.DistanceMultiplier.ToString("0.###", CultureInfo.InvariantCulture);
-                StiffnessBox.Text = draft.SpringStiffness.ToString("0.##", CultureInfo.InvariantCulture);
-                DampingBox.Text = draft.SpringDamping.ToString("0.##", CultureInfo.InvariantCulture);
-                JellyXBox.Text = draft.JellyAmplitudeX.ToString("0.###", CultureInfo.InvariantCulture);
-                JellyYBox.Text = draft.JellyAmplitudeY.ToString("0.###", CultureInfo.InvariantCulture);
-                JellyFrequencyBox.Text = draft.JellyFrequency.ToString("0.##", CultureInfo.InvariantCulture);
-                JellyFalloffBox.Text = draft.JellyFalloff.ToString("0.##", CultureInfo.InvariantCulture);
+                CharacterDelayBox.SetValueSilently(draft.CharacterDelaySeconds);
+                DistanceBox.SetValueSilently(draft.DistanceMultiplier);
+                StiffnessBox.SetValueSilently(draft.SpringStiffness);
+                DampingBox.SetValueSilently(draft.SpringDamping);
+                JellyXBox.SetValueSilently(draft.JellyAmplitudeX);
+                JellyYBox.SetValueSilently(draft.JellyAmplitudeY);
+                JellyFrequencyBox.SetValueSilently(draft.JellyFrequency);
+                JellyFalloffBox.SetValueSilently(draft.JellyFalloff);
+                SelectTag(StaggerGroupingCombo, draft.StaggerGrouping);
+                CharacterDelayBox.IsEnabled = draft.PerCharacter;
+                StaggerGroupingCombo.IsEnabled = draft.PerCharacter;
             }
             finally
             {
@@ -178,7 +181,7 @@ namespace SubtitleForge
             return string.IsNullOrEmpty(tag) ? fallback : tag;
         }
 
-        private void FieldChanged(object sender, RoutedEventArgs e)
+        private void FieldChanged(object? sender, EventArgs e)
         {
             if (suppress)
             {
@@ -188,16 +191,20 @@ namespace SubtitleForge
             draft.Name = NameBox.Text;
             draft.Kind = SelectedTag(KindCombo, PopInKind.FadeIn);
             draft.Direction = SelectedTag(DirectionCombo, PopInDirection.Bottom);
-            draft.DurationSeconds = ParseDouble(DurationBox.Text, draft.DurationSeconds, 0.02, 5.0);
+            draft.DurationSeconds = DurationBox.Value;
             draft.PerCharacter = PerCharacterCheck.IsChecked == true;
-            draft.CharacterDelaySeconds = ParseDouble(CharacterDelayBox.Text, draft.CharacterDelaySeconds, 0.0, 1.0);
-            draft.DistanceMultiplier = ParseDouble(DistanceBox.Text, draft.DistanceMultiplier, -6.0, 6.0);
-            draft.SpringStiffness = ParseDouble(StiffnessBox.Text, draft.SpringStiffness, 0.5, 60.0);
-            draft.SpringDamping = ParseDouble(DampingBox.Text, draft.SpringDamping, 0.05, 3.0);
-            draft.JellyAmplitudeX = ParseDouble(JellyXBox.Text, draft.JellyAmplitudeX, 0.0, 3.0);
-            draft.JellyAmplitudeY = ParseDouble(JellyYBox.Text, draft.JellyAmplitudeY, 0.0, 3.0);
-            draft.JellyFrequency = ParseDouble(JellyFrequencyBox.Text, draft.JellyFrequency, 0.0, 20.0);
-            draft.JellyFalloff = ParseDouble(JellyFalloffBox.Text, draft.JellyFalloff, 0.0, 20.0);
+            draft.StaggerGrouping = SelectedTag(StaggerGroupingCombo, StaggerGroupings.Character);
+            draft.CharacterDelaySeconds = CharacterDelayBox.Value;
+            draft.DistanceMultiplier = DistanceBox.Value;
+            draft.SpringStiffness = StiffnessBox.Value;
+            draft.SpringDamping = DampingBox.Value;
+            draft.JellyAmplitudeX = JellyXBox.Value;
+            draft.JellyAmplitudeY = JellyYBox.Value;
+            draft.JellyFrequency = JellyFrequencyBox.Value;
+            draft.JellyFalloff = JellyFalloffBox.Value;
+
+            CharacterDelayBox.IsEnabled = draft.PerCharacter;
+            StaggerGroupingCombo.IsEnabled = draft.PerCharacter;
 
             UpdatePreview();
         }
@@ -305,32 +312,6 @@ namespace SubtitleForge
         {
             DialogResult = false;
             Close();
-        }
-
-        private static double ParseDouble(string? text, double fallback, double minimum, double maximum)
-        {
-            if (string.IsNullOrWhiteSpace(text))
-            {
-                return fallback;
-            }
-
-            double value;
-            if (!double.TryParse(text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out value))
-            {
-                return fallback;
-            }
-
-            if (value < minimum)
-            {
-                value = minimum;
-            }
-
-            if (value > maximum)
-            {
-                value = maximum;
-            }
-
-            return value;
         }
     }
 }

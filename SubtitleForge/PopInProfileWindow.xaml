@@ -59,23 +59,65 @@
 
                 <WrapPanel Margin="0,10,0,0">
                     <TextBlock Text="Duration (s)" Style="{StaticResource SectionLabelStyle}" />
-                    <TextBox x:Name="DurationBox" Width="58" Margin="0,0,16,0" LostFocus="FieldChanged" />
+                    <controls:NumericDragBox x:Name="DurationBox"
+                                             Width="62"
+                                             Margin="0,0,16,0"
+                                             Minimum="0.02"
+                                             Maximum="5"
+                                             DragStep="0.005"
+                                             Format="0.###"
+                                             ValueChanged="FieldChanged" />
                     <CheckBox x:Name="PerCharacterCheck"
-                              Content="Animate characters one by one"
-                              Margin="0,0,16,0"
+                              Content="Stagger the entrance"
+                              Margin="0,0,10,0"
                               Click="FieldChanged" />
-                    <TextBlock Text="Character delay (s)" Style="{StaticResource SectionLabelStyle}" />
-                    <TextBox x:Name="CharacterDelayBox" Width="58" LostFocus="FieldChanged" />
+                    <TextBlock Text="per" Style="{StaticResource SectionLabelStyle}" />
+                    <ComboBox x:Name="StaggerGroupingCombo"
+                              Width="124"
+                              Height="24"
+                              Margin="0,0,16,0"
+                              SelectionChanged="FieldChanged"
+                              ToolTip="Character = one glyph after another, word = whole words appear in turn, cue = everything at once">
+                        <ComboBoxItem Content="character" Tag="Character" />
+                        <ComboBoxItem Content="word" Tag="Word" />
+                        <ComboBoxItem Content="whole cue" Tag="Cue" />
+                    </ComboBox>
+                    <TextBlock Text="Delay (s)" Style="{StaticResource SectionLabelStyle}" />
+                    <controls:NumericDragBox x:Name="CharacterDelayBox"
+                                             Width="62"
+                                             Minimum="0"
+                                             Maximum="1"
+                                             DragStep="0.002"
+                                             Format="0.###"
+                                             ValueChanged="FieldChanged" />
                 </WrapPanel>
 
                 <TextBlock Text="Slide spring" FontWeight="SemiBold" Margin="0,16,0,4" />
                 <WrapPanel>
                     <TextBlock Text="Distance (× font size)" Style="{StaticResource SectionLabelStyle}" />
-                    <TextBox x:Name="DistanceBox" Width="58" Margin="0,0,16,0" LostFocus="FieldChanged" />
+                    <controls:NumericDragBox x:Name="DistanceBox"
+                                             Width="62"
+Margin="0,0,16,0" ValueChanged="FieldChanged"
+                                             Minimum="-6"
+                                             Maximum="6"
+                                             DragStep="0.01"
+                                             Format="0.###" />
                     <TextBlock Text="Stiffness" Style="{StaticResource SectionLabelStyle}" />
-                    <TextBox x:Name="StiffnessBox" Width="58" Margin="0,0,16,0" LostFocus="FieldChanged" />
+                    <controls:NumericDragBox x:Name="StiffnessBox"
+                                             Width="62"
+Margin="0,0,16,0" ValueChanged="FieldChanged"
+                                             Minimum="0.5"
+                                             Maximum="60"
+                                             DragStep="0.05"
+                                             Format="0.##" />
                     <TextBlock Text="Damping" Style="{StaticResource SectionLabelStyle}" />
-                    <TextBox x:Name="DampingBox" Width="58" LostFocus="FieldChanged" />
+                    <controls:NumericDragBox x:Name="DampingBox"
+                                             Width="62"
+ValueChanged="FieldChanged"
+                                             Minimum="0.05"
+                                             Maximum="3"
+                                             DragStep="0.005"
+                                             Format="0.##" />
                 </WrapPanel>
                 <TextBlock Text="Lower damping bounces more; stiffness decides how fast it snaps into place."
                            FontSize="11"
@@ -86,13 +128,37 @@
                 <TextBlock Text="Scale-in jelly" FontWeight="SemiBold" Margin="0,16,0,4" />
                 <WrapPanel>
                     <TextBlock Text="Amplitude X" Style="{StaticResource SectionLabelStyle}" />
-                    <TextBox x:Name="JellyXBox" Width="58" Margin="0,0,16,0" LostFocus="FieldChanged" />
+                    <controls:NumericDragBox x:Name="JellyXBox"
+                                             Width="62"
+Margin="0,0,16,0" ValueChanged="FieldChanged"
+                                             Minimum="0"
+                                             Maximum="3"
+                                             DragStep="0.005"
+                                             Format="0.###" />
                     <TextBlock Text="Amplitude Y" Style="{StaticResource SectionLabelStyle}" />
-                    <TextBox x:Name="JellyYBox" Width="58" Margin="0,0,16,0" LostFocus="FieldChanged" />
+                    <controls:NumericDragBox x:Name="JellyYBox"
+                                             Width="62"
+Margin="0,0,16,0" ValueChanged="FieldChanged"
+                                             Minimum="0"
+                                             Maximum="3"
+                                             DragStep="0.005"
+                                             Format="0.###" />
                     <TextBlock Text="Frequency" Style="{StaticResource SectionLabelStyle}" />
-                    <TextBox x:Name="JellyFrequencyBox" Width="58" Margin="0,0,16,0" LostFocus="FieldChanged" />
+                    <controls:NumericDragBox x:Name="JellyFrequencyBox"
+                                             Width="62"
+Margin="0,0,16,0" ValueChanged="FieldChanged"
+                                             Minimum="0"
+                                             Maximum="20"
+                                             DragStep="0.02"
+                                             Format="0.##" />
                     <TextBlock Text="Falloff" Style="{StaticResource SectionLabelStyle}" />
-                    <TextBox x:Name="JellyFalloffBox" Width="58" LostFocus="FieldChanged" />
+                    <controls:NumericDragBox x:Name="JellyFalloffBox"
+                                             Width="62"
+ValueChanged="FieldChanged"
+                                             Minimum="0"
+                                             Maximum="20"
+                                             DragStep="0.02"
+                                             Format="0.##" />
                 </WrapPanel>
             </StackPanel>
         </ScrollViewer>

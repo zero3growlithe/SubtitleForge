@@ -1,5 +1,4 @@
 using System;
-using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using SubtitleForge.Models;
@@ -10,9 +9,9 @@ namespace SubtitleForge.Controls
     public sealed class IdleChannelEditor : Grid
     {
         private readonly CheckBox enabledCheck = new CheckBox();
-        private readonly TextBox amplitudeBox = new TextBox();
-        private readonly TextBox frequencyBox = new TextBox();
-        private readonly TextBox phaseBox = new TextBox();
+        private readonly NumericDragBox amplitudeBox = new NumericDragBox();
+        private readonly NumericDragBox frequencyBox = new NumericDragBox();
+        private readonly NumericDragBox phaseBox = new NumericDragBox();
 
         private bool suppress;
 
@@ -36,11 +35,11 @@ namespace SubtitleForge.Controls
             Children.Add(enabledCheck);
 
             AddLabel("Amplitude", 1, amplitudeHint);
-            PrepareBox(amplitudeBox, 2, amplitudeHint);
+            PrepareBox(amplitudeBox, 2, amplitudeHint, 0.0, 100.0, 0.005, "0.###");
             AddLabel("Frequency", 3, "Cycles per second");
-            PrepareBox(frequencyBox, 4, "Cycles per second");
+            PrepareBox(frequencyBox, 4, "Cycles per second", 0.0, 40.0, 0.01, "0.###");
             AddLabel("Phase", 5, "Phase offset in degrees");
-            PrepareBox(phaseBox, 6, "Phase offset in degrees");
+            PrepareBox(phaseBox, 6, "Phase offset in degrees", -720.0, 720.0, 1.0, "0.#");
         }
 
         public event EventHandler? Changed;
@@ -54,9 +53,9 @@ namespace SubtitleForge.Controls
             try
             {
                 enabledCheck.IsChecked = channel.Enabled;
-                amplitudeBox.Text = channel.Amplitude.ToString("0.###", CultureInfo.InvariantCulture);
-                frequencyBox.Text = channel.Frequency.ToString("0.###", CultureInfo.InvariantCulture);
-                phaseBox.Text = channel.Phase.ToString("0.#", CultureInfo.InvariantCulture);
+                amplitudeBox.SetValueSilently(channel.Amplitude);
+                frequencyBox.SetValueSilently(channel.Frequency);
+                phaseBox.SetValueSilently(channel.Phase);
             }
             finally
             {
@@ -80,17 +79,26 @@ namespace SubtitleForge.Controls
             Children.Add(label);
         }
 
-        private void PrepareBox(TextBox box, int column, string tooltip)
+        private void PrepareBox(NumericDragBox box, int column, string tooltip, double minimum, double maximum, double dragStep, string format)
         {
             box.VerticalContentAlignment = VerticalAlignment.Center;
-            box.ToolTip = tooltip;
+            box.ToolTip = tooltip + " — drag left/right to scrub, click to type";
             box.Margin = new Thickness(0.0, 0.0, 4.0, 0.0);
-            box.LostFocus += OnFieldChanged;
+            box.Minimum = minimum;
+            box.Maximum = maximum;
+            box.DragStep = dragStep;
+            box.Format = format;
+            box.ValueChanged += OnEditorChanged;
             SetColumn(box, column);
             Children.Add(box);
         }
 
-        private void OnFieldChanged(object sender, RoutedEventArgs e)
+        private void OnEditorChanged(object? sender, EventArgs e)
+        {
+            OnFieldChanged(sender, EventArgs.Empty);
+        }
+
+        private void OnFieldChanged(object sender, EventArgs e)
         {
             if (suppress || Channel == null)
             {
@@ -98,36 +106,10 @@ namespace SubtitleForge.Controls
             }
 
             Channel.Enabled = enabledCheck.IsChecked == true;
-            Channel.Amplitude = ParseDouble(amplitudeBox.Text, Channel.Amplitude, 0.0, 100.0);
-            Channel.Frequency = ParseDouble(frequencyBox.Text, Channel.Frequency, 0.0, 40.0);
-            Channel.Phase = ParseDouble(phaseBox.Text, Channel.Phase, -720.0, 720.0);
+            Channel.Amplitude = amplitudeBox.Value;
+            Channel.Frequency = frequencyBox.Value;
+            Channel.Phase = phaseBox.Value;
             Changed?.Invoke(this, EventArgs.Empty);
-        }
-
-        private static double ParseDouble(string? text, double fallback, double minimum, double maximum)
-        {
-            if (string.IsNullOrWhiteSpace(text))
-            {
-                return fallback;
-            }
-
-            double value;
-            if (!double.TryParse(text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out value))
-            {
-                return fallback;
-            }
-
-            if (value < minimum)
-            {
-                value = minimum;
-            }
-
-            if (value > maximum)
-            {
-                value = maximum;
-            }
-
-            return value;
         }
     }
 }

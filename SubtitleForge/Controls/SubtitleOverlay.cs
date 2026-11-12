@@ -26,6 +26,7 @@ namespace SubtitleForge.Controls
         private string layoutKey = string.Empty;
         private Rect textBounds = Rect.Empty;
         private int activeWordIndex = -1;
+        private int renderedWordIndex = -1;
         private double layoutFontSize;
 
         private sealed class GlyphBox
@@ -71,6 +72,67 @@ namespace SubtitleForge.Controls
         public void Refresh()
         {
             InvalidateVisual();
+        }
+
+        /// <summary>
+        /// True when something in the current state changes every frame, so the host knows it has
+        /// to keep repainting. A static cue on a static style returns false and costs nothing.
+        /// </summary>
+        public bool IsAnimating
+        {
+            get
+            {
+                if (!HasContent)
+                {
+                    return false;
+                }
+
+                IdleAnimationProfile? idle = Idle;
+                if (idle != null && idle.HasAnyChannel)
+                {
+                    return true;
+                }
+
+                PopInProfile? popIn = PopIn;
+                if (popIn == null || string.Equals(popIn.Kind, PopInKind.None, StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+
+                double elapsed = PlayheadSeconds - CueStartSeconds;
+                double span = Math.Max(0.01, popIn.DurationSeconds);
+                if (popIn.PerCharacter && !string.Equals(popIn.StaggerGrouping, StaggerGroupings.Cue, StringComparison.OrdinalIgnoreCase))
+                {
+                    span += Math.Max(0.0, popIn.CharacterDelaySeconds) * Math.Max(1, (CueText ?? string.Empty).Length);
+                }
+
+                return elapsed < span + 0.1;
+            }
+        }
+
+        /// <summary>Word index the last paint highlighted, used to detect word-boundary changes.</summary>
+        public int RenderedWordIndex
+        {
+            get { return renderedWordIndex; }
+        }
+
+        /// <summary>The word index the playhead is inside right now.</summary>
+        public int CurrentWordIndex
+        {
+            get
+            {
+                StyleProfile? style = TextStyle;
+                if (style == null || !style.HighlightSpokenWord && style.WordsPerDisplay <= 0)
+                {
+                    return -1;
+                }
+
+                List<WordTiming> words = SubtitleTextPlan.BuildWords(
+                    CueText ?? string.Empty,
+                    CueStartSeconds,
+                    Math.Max(0.01, CueEndSeconds - CueStartSeconds));
+                return SubtitleTextPlan.FindWordIndexAt(words, PlayheadSeconds);
+            }
         }
 
         /// <summary>Drops the cached glyph layout (call when the style or the text changes).</summary>
@@ -127,14 +189,15 @@ namespace SubtitleForge.Controls
 
             // Brushes are built once per frame and reused by every glyph; per-glyph fading is
             // applied with PushOpacity so nothing has to be allocated inside the loop.
-            PaintSet paint = BuildPaintSet(style, absoluteBounds);
-
             IdleAnimationProfile? idle = Idle;
             PopInProfile? popIn = PopIn;
             double popDuration = popIn == null ? 0.0 : Math.Max(0.01, popIn.DurationSeconds);
             double transformScale = canvasScale * Math.Max(0.05, Scale);
 
+            PaintSet paint = BuildPaintSet(style, absoluteBounds, transformScale);
+
             drawingContext.PushOpacity(globalOpacity);
+            drawingContext.PushTransform(new TranslateTransform(originX, originY));
 
             for (int index = 0; index < glyphs.Count; index++)
             {
@@ -207,9 +270,18 @@ namespace SubtitleForge.Controls
 
                 if (idle != null && idle.HasAnyChannel)
                 {
-                    double idleTime = IdleSeconds - (idle.PerCharacter
-                        ? glyph.Index * Math.Max(0.0, idle.CharacterStaggerSeconds)
-                        : 0.0);
+                    string idleGrouping = string.IsNullOrEmpty(idle.StaggerGrouping)
+                        ? StaggerGroupings.Character
+                        : idle.StaggerGrouping;
+                    double staggerIndex = 0.0;
+                    if (idle.PerCharacter && !string.Equals(idleGrouping, StaggerGroupings.Cue, StringComparison.OrdinalIgnoreCase))
+                    {
+                        staggerIndex = string.Equals(idleGrouping, StaggerGroupings.Word, StringComparison.OrdinalIgnoreCase)
+                            ? glyph.WordIndex
+                            : glyph.Index;
+                    }
+
+                    double idleTime = IdleSeconds - (staggerIndex * Math.Max(0.0, idle.CharacterStaggerSeconds));
 
                     double tau = Math.PI * 2.0;
 
@@ -274,33 +346,51 @@ namespace SubtitleForge.Controls
                     continue;
                 }
 
-                double centerX = originX + glyph.Bounds.X + (glyph.Bounds.Width * 0.5);
-                double centerY = originY + glyph.Bounds.Y + (glyph.Bounds.Height * 0.5);
+                double centerX = glyph.Bounds.X + (glyph.Bounds.Width * 0.5);
+                double centerY = glyph.Bounds.Y + (glyph.Bounds.Height * 0.5);
 
-                TransformGroup transform = new TransformGroup();
-                transform.Children.Add(new TranslateTransform(originX, originY));
-                if (Math.Abs(scaleX - 1.0) > 0.0001 || Math.Abs(scaleY - 1.0) > 0.0001)
-                {
-                    transform.Children.Add(new ScaleTransform(scaleX, scaleY, centerX, centerY));
-                }
-
-                if (Math.Abs(rotation) > 0.0001)
-                {
-                    transform.Children.Add(new RotateTransform(rotation, centerX, centerY));
-                }
-
-                if (Math.Abs(offsetX) > 0.0001 || Math.Abs(offsetY) > 0.0001)
-                {
-                    transform.Children.Add(new TranslateTransform(offsetX, offsetY));
-                }
+                bool scaled = Math.Abs(scaleX - 1.0) > 0.0001 || Math.Abs(scaleY - 1.0) > 0.0001;
+                bool rotated = Math.Abs(rotation) > 0.0001;
+                bool moved = Math.Abs(offsetX) > 0.0001 || Math.Abs(offsetY) > 0.0001;
 
                 drawingContext.PushOpacity(opacity);
-                drawingContext.PushTransform(transform);
-                DrawGlyph(drawingContext, glyph, style, paint, transformScale);
-                drawingContext.Pop();
+
+                if (scaled)
+                {
+                    drawingContext.PushTransform(new ScaleTransform(scaleX, scaleY, centerX, centerY));
+                }
+
+                if (rotated)
+                {
+                    drawingContext.PushTransform(new RotateTransform(rotation, centerX, centerY));
+                }
+
+                if (moved)
+                {
+                    drawingContext.PushTransform(new TranslateTransform(offsetX, offsetY));
+                }
+
+                DrawGlyph(drawingContext, glyph, style, paint);
+
+                if (moved)
+                {
+                    drawingContext.Pop();
+                }
+
+                if (rotated)
+                {
+                    drawingContext.Pop();
+                }
+
+                if (scaled)
+                {
+                    drawingContext.Pop();
+                }
+
                 drawingContext.Pop();
             }
 
+            drawingContext.Pop();
             drawingContext.Pop();
         }
 
@@ -311,9 +401,28 @@ namespace SubtitleForge.Controls
             public Brush?[] ShadowCore = Array.Empty<Brush?>();
             public Brush?[] ShadowSoft = Array.Empty<Brush?>();
             public Brush?[] Outline = Array.Empty<Brush?>();
+
+            // Pens are built once per frame as well: creating one per glyph per layer dominated the
+            // frame time on long cues.
+            public Pen?[] ShadowPens = Array.Empty<Pen?>();
+            public Pen?[] OutlinePens = Array.Empty<Pen?>();
+            public double[] ShadowOffsetX = Array.Empty<double>();
+            public double[] ShadowOffsetY = Array.Empty<double>();
+            public double[] OutlineOffsetX = Array.Empty<double>();
+            public double[] OutlineOffsetY = Array.Empty<double>();
         }
 
-        private static PaintSet BuildPaintSet(StyleProfile style, Rect bounds)
+        private static Pen CreatePen(Brush brush, double thickness)
+        {
+            Pen pen = new Pen(brush, thickness);
+            pen.LineJoin = PenLineJoin.Round;
+            pen.StartLineCap = PenLineCap.Round;
+            pen.EndLineCap = PenLineCap.Round;
+            pen.Freeze();
+            return pen;
+        }
+
+        private static PaintSet BuildPaintSet(StyleProfile style, Rect bounds, double scaleFactor)
         {
             PaintSet paint = new PaintSet();
             paint.Fill = StyleBrushes.CreateBrush(style.Fill, bounds, 1.0);
@@ -323,9 +432,14 @@ namespace SubtitleForge.Controls
 
             paint.ShadowCore = new Brush?[style.Shadows.Count];
             paint.ShadowSoft = new Brush?[style.Shadows.Count];
+            paint.ShadowPens = new Pen?[style.Shadows.Count];
+            paint.ShadowOffsetX = new double[style.Shadows.Count];
+            paint.ShadowOffsetY = new double[style.Shadows.Count];
             for (int index = 0; index < style.Shadows.Count; index++)
             {
                 ShadowLayer shadow = style.Shadows[index];
+                paint.ShadowOffsetX[index] = shadow.OffsetX * scaleFactor;
+                paint.ShadowOffsetY[index] = shadow.OffsetY * scaleFactor;
                 if (!shadow.Enabled)
                 {
                     continue;
@@ -333,19 +447,38 @@ namespace SubtitleForge.Controls
 
                 double layerOpacity = Math.Max(0.0, Math.Min(1.0, shadow.Opacity));
                 paint.ShadowCore[index] = StyleBrushes.CreateBrush(shadow.Color, bounds, layerOpacity);
-                paint.ShadowSoft[index] = StyleBrushes.CreateBrush(shadow.Color, bounds, layerOpacity * 0.45);
+                Brush? soft = StyleBrushes.CreateBrush(shadow.Color, bounds, layerOpacity * 0.45);
+                paint.ShadowSoft[index] = soft;
+
+                double halo = Math.Max(0.0, shadow.Thickness * scaleFactor) * 2.0;
+                if (halo > 0.6 && soft != null)
+                {
+                    paint.ShadowPens[index] = CreatePen(soft, halo);
+                }
             }
 
             paint.Outline = new Brush?[style.Outlines.Count];
+            paint.OutlinePens = new Pen?[style.Outlines.Count];
+            paint.OutlineOffsetX = new double[style.Outlines.Count];
+            paint.OutlineOffsetY = new double[style.Outlines.Count];
             for (int index = 0; index < style.Outlines.Count; index++)
             {
                 OutlineLayer outline = style.Outlines[index];
+                paint.OutlineOffsetX[index] = outline.OffsetX * scaleFactor;
+                paint.OutlineOffsetY[index] = outline.OffsetY * scaleFactor;
                 if (!outline.Enabled)
                 {
                     continue;
                 }
 
-                paint.Outline[index] = StyleBrushes.CreateBrush(outline.Color, bounds, 1.0);
+                Brush? brush = StyleBrushes.CreateBrush(outline.Color, bounds, 1.0);
+                paint.Outline[index] = brush;
+
+                double width = Math.Max(0.0, outline.Thickness * scaleFactor) * 2.0;
+                if (brush != null && width > 0.2)
+                {
+                    paint.OutlinePens[index] = CreatePen(brush, width);
+                }
             }
 
             return paint;
@@ -355,17 +488,16 @@ namespace SubtitleForge.Controls
             DrawingContext drawingContext,
             GlyphBox glyph,
             StyleProfile style,
-            PaintSet paint,
-            double scaleFactor)
+            PaintSet paint)
         {
             Geometry geometry = glyph.Geometry;
 
             // Layer order: shadows first (font group, then composition group), then outlines,
             // then the fill on top so the glyph edges always stay crisp.
-            DrawShadows(drawingContext, geometry, style, paint, scaleFactor, EffectTarget.Font);
-            DrawShadows(drawingContext, geometry, style, paint, scaleFactor, EffectTarget.Composition);
-            DrawOutlines(drawingContext, geometry, style, paint, scaleFactor, EffectTarget.Font);
-            DrawOutlines(drawingContext, geometry, style, paint, scaleFactor, EffectTarget.Composition);
+            DrawShadows(drawingContext, geometry, style, paint, EffectTarget.Font);
+            DrawShadows(drawingContext, geometry, style, paint, EffectTarget.Composition);
+            DrawOutlines(drawingContext, geometry, style, paint, EffectTarget.Font);
+            DrawOutlines(drawingContext, geometry, style, paint, EffectTarget.Composition);
 
             bool highlighted = style.HighlightSpokenWord && glyph.WordIndex == activeWordIndex;
             Brush? brush = highlighted && paint.Highlight != null ? paint.Highlight : paint.Fill;
@@ -380,7 +512,6 @@ namespace SubtitleForge.Controls
             Geometry geometry,
             StyleProfile style,
             PaintSet paint,
-            double scaleFactor,
             string target)
         {
             List<ShadowLayer> shadows = style.Shadows;
@@ -393,26 +524,24 @@ namespace SubtitleForge.Controls
                 }
 
                 Brush? core = paint.ShadowCore[index];
-                Brush? soft = paint.ShadowSoft[index];
-                if (core == null && soft == null)
+                Pen? halo = paint.ShadowPens[index];
+                if (core == null && halo == null)
                 {
                     continue;
                 }
 
-                double thickness = Math.Max(0.0, shadow.Thickness * scaleFactor);
-                double offsetX = shadow.OffsetX * scaleFactor;
-                double offsetY = shadow.OffsetY * scaleFactor;
+                double offsetX = paint.ShadowOffsetX[index];
+                double offsetY = paint.ShadowOffsetY[index];
+                bool shifted = Math.Abs(offsetX) > 0.001 || Math.Abs(offsetY) > 0.001;
 
-                drawingContext.PushTransform(new TranslateTransform(offsetX, offsetY));
-
-                if (thickness > 0.6 && soft != null)
+                if (shifted)
                 {
-                    Pen pen = new Pen(soft, thickness * 2.0);
-                    pen.LineJoin = PenLineJoin.Round;
-                    pen.StartLineCap = PenLineCap.Round;
-                    pen.EndLineCap = PenLineCap.Round;
-                    pen.Freeze();
-                    drawingContext.DrawGeometry(null, pen, geometry);
+                    drawingContext.PushTransform(new TranslateTransform(offsetX, offsetY));
+                }
+
+                if (halo != null)
+                {
+                    drawingContext.DrawGeometry(null, halo, geometry);
                 }
 
                 if (core != null)
@@ -420,7 +549,10 @@ namespace SubtitleForge.Controls
                     drawingContext.DrawGeometry(core, null, geometry);
                 }
 
-                drawingContext.Pop();
+                if (shifted)
+                {
+                    drawingContext.Pop();
+                }
             }
         }
 
@@ -429,7 +561,6 @@ namespace SubtitleForge.Controls
             Geometry geometry,
             StyleProfile style,
             PaintSet paint,
-            double scaleFactor,
             string target)
         {
             List<OutlineLayer> outlines = style.Outlines;
@@ -441,26 +572,14 @@ namespace SubtitleForge.Controls
                     continue;
                 }
 
-                Brush? brush = paint.Outline[index];
-                if (brush == null)
+                Pen? pen = paint.OutlinePens[index];
+                if (pen == null)
                 {
                     continue;
                 }
 
-                double width = Math.Max(0.0, outline.Thickness * scaleFactor) * 2.0;
-                if (width <= 0.2)
-                {
-                    continue;
-                }
-
-                Pen pen = new Pen(brush, width);
-                pen.LineJoin = PenLineJoin.Round;
-                pen.StartLineCap = PenLineCap.Round;
-                pen.EndLineCap = PenLineCap.Round;
-                pen.Freeze();
-
-                double offsetX = outline.OffsetX * scaleFactor;
-                double offsetY = outline.OffsetY * scaleFactor;
+                double offsetX = paint.OutlineOffsetX[index];
+                double offsetY = paint.OutlineOffsetY[index];
                 bool shifted = Math.Abs(offsetX) > 0.001 || Math.Abs(offsetY) > 0.001;
 
                 if (shifted)
@@ -492,12 +611,21 @@ namespace SubtitleForge.Controls
                 Math.Max(0.01, CueEndSeconds - CueStartSeconds));
 
             activeWordIndex = SubtitleTextPlan.FindWordIndexAt(words, PlayheadSeconds);
+            renderedWordIndex = activeWordIndex;
             List<WordTiming> visible = SubtitleTextPlan.WindowWords(words, activeWordIndex, style.WordsPerDisplay);
             string display = SubtitleTextPlan.JoinWords(visible);
 
             PopInProfile? popIn = PopIn;
-            bool perCharacterEnter = popIn != null && popIn.PerCharacter
+            bool enterAnimation = popIn != null
                 && !string.Equals(popIn.Kind, PopInKind.None, StringComparison.OrdinalIgnoreCase);
+            string enterGrouping = popIn == null
+                ? StaggerGroupings.Cue
+                : (string.IsNullOrEmpty(popIn.StaggerGrouping) ? StaggerGroupings.Character : popIn.StaggerGrouping);
+            bool perCharacterEnter = enterAnimation
+                && popIn!.PerCharacter
+                && !string.Equals(enterGrouping, StaggerGroupings.Cue, StringComparison.OrdinalIgnoreCase);
+            bool perWordEnter = perCharacterEnter
+                && string.Equals(enterGrouping, StaggerGroupings.Word, StringComparison.OrdinalIgnoreCase);
             double characterDelay = popIn == null ? 0.0 : Math.Max(0.0, popIn.CharacterDelaySeconds);
 
             string key = string.Concat(
@@ -510,7 +638,7 @@ namespace SubtitleForge.Controls
                 style.Bold ? "b" : "-",
                 style.Italic ? "i" : "-",
                 "|",
-                perCharacterEnter ? "1" : "0",
+                perCharacterEnter ? (perWordEnter ? "w" : "c") : "0",
                 "|",
                 characterDelay.ToString("0.###", CultureInfo.InvariantCulture),
                 "|",
@@ -595,9 +723,17 @@ namespace SubtitleForge.Controls
                             double appearBase = style.WordsPerDisplay > 0
                                 ? word.StartSeconds
                                 : CueStartSeconds;
-                            box.AppearSeconds = perCharacterEnter
-                                ? appearBase + (wordPosition * characterDelay)
-                                : appearBase;
+                            double enterStagger = 0.0;
+                            if (perWordEnter)
+                            {
+                                enterStagger = wordIndex * characterDelay;
+                            }
+                            else if (perCharacterEnter)
+                            {
+                                enterStagger = wordPosition * characterDelay;
+                            }
+
+                            box.AppearSeconds = appearBase + enterStagger;
                             glyphs.Add(box);
                             union = union.IsEmpty ? bounds : Rect.Union(union, bounds);
                         }

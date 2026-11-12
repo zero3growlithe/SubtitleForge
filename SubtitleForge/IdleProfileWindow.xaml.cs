@@ -35,7 +35,7 @@ namespace SubtitleForge
             PreviewOverlay.PositionY = 0.55;
             PreviewOverlay.CueStartSeconds = 0.0;
             PreviewOverlay.CueEndSeconds = 1000.0;
-            PreviewOverlay.CueText = "Idle animation preview";
+            PreviewOverlay.CueText = "Sample Text";
             PreviewOverlay.PlayheadSeconds = 5.0;
 
             previewTimer = new DispatcherTimer(DispatcherPriority.Render);
@@ -148,7 +148,10 @@ namespace SubtitleForge
             {
                 NameBox.Text = draft.Name;
                 PerCharacterCheck.IsChecked = draft.PerCharacter;
-                StaggerBox.Text = draft.CharacterStaggerSeconds.ToString("0.###", CultureInfo.InvariantCulture);
+                StaggerBox.SetValueSilently(draft.CharacterStaggerSeconds);
+                SelectGrouping(draft.StaggerGrouping);
+                StaggerBox.IsEnabled = draft.PerCharacter;
+                StaggerGroupingCombo.IsEnabled = draft.PerCharacter;
 
                 editors["Shake"].Load(draft.Shake);
                 editors["SineX"].Load(draft.SineX);
@@ -165,7 +168,7 @@ namespace SubtitleForge
             UpdatePreview();
         }
 
-        private void BasicsChanged(object sender, RoutedEventArgs e)
+        private void BasicsChanged(object? sender, EventArgs e)
         {
             if (suppress)
             {
@@ -174,24 +177,35 @@ namespace SubtitleForge
 
             draft.Name = NameBox.Text;
             draft.PerCharacter = PerCharacterCheck.IsChecked == true;
-
-            double stagger;
-            if (double.TryParse(StaggerBox.Text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out stagger))
-            {
-                if (stagger < 0.0)
-                {
-                    stagger = 0.0;
-                }
-
-                if (stagger > 1.0)
-                {
-                    stagger = 1.0;
-                }
-
-                draft.CharacterStaggerSeconds = stagger;
-            }
+            draft.CharacterStaggerSeconds = StaggerBox.Value;
+            draft.StaggerGrouping = SelectedGrouping();
+            StaggerBox.IsEnabled = draft.PerCharacter;
+            StaggerGroupingCombo.IsEnabled = draft.PerCharacter;
 
             UpdatePreview();
+        }
+
+        private void SelectGrouping(string? grouping)
+        {
+            string wanted = string.IsNullOrEmpty(grouping) ? StaggerGroupings.Character : grouping;
+            for (int index = 0; index < StaggerGroupingCombo.Items.Count; index++)
+            {
+                ComboBoxItem? item = StaggerGroupingCombo.Items[index] as ComboBoxItem;
+                if (item != null && string.Equals(item.Tag as string, wanted, StringComparison.OrdinalIgnoreCase))
+                {
+                    StaggerGroupingCombo.SelectedIndex = index;
+                    return;
+                }
+            }
+
+            StaggerGroupingCombo.SelectedIndex = 0;
+        }
+
+        private string SelectedGrouping()
+        {
+            ComboBoxItem? item = StaggerGroupingCombo.SelectedItem as ComboBoxItem;
+            string? tag = item == null ? null : item.Tag as string;
+            return string.IsNullOrEmpty(tag) ? StaggerGroupings.Character : tag;
         }
 
         private void UpdatePreview()

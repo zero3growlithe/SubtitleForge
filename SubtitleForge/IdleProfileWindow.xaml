@@ -40,11 +40,29 @@
             <TextBlock Text="Name" Style="{StaticResource SectionLabelStyle}" />
             <TextBox x:Name="NameBox" Width="180" Margin="0,0,16,0" LostFocus="BasicsChanged" />
             <CheckBox x:Name="PerCharacterCheck"
-                      Content="Animate every character separately"
-                      Margin="0,0,16,0"
+                      Content="Animate separately"
+                      Margin="0,0,10,0"
                       Click="BasicsChanged" />
-            <TextBlock Text="Character stagger (s)" Style="{StaticResource SectionLabelStyle}" />
-            <TextBox x:Name="StaggerBox" Width="64" LostFocus="BasicsChanged" />
+            <TextBlock Text="per" Style="{StaticResource SectionLabelStyle}" />
+            <ComboBox x:Name="StaggerGroupingCombo"
+                      Width="126"
+                      Height="24"
+                      Margin="0,0,16,0"
+                      SelectionChanged="BasicsChanged"
+                      ToolTip="Character = a wave through the letters, word = each word out of phase, cue = the whole line moves together">
+                <ComboBoxItem Content="character" Tag="Character" />
+                <ComboBoxItem Content="word" Tag="Word" />
+                <ComboBoxItem Content="whole cue" Tag="Cue" />
+            </ComboBox>
+            <TextBlock Text="Stagger (s)" Style="{StaticResource SectionLabelStyle}" />
+            <controls:NumericDragBox x:Name="StaggerBox"
+                                     Width="64"
+                                     Minimum="0"
+                                     Maximum="1"
+                                     DragStep="0.005"
+                                     Format="0.###"
+                                     ToolTip="Delay between neighbours; drag to scrub, click to type"
+                                     ValueChanged="BasicsChanged" />
         </WrapPanel>
 
         <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">

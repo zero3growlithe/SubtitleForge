@@ -3,6 +3,19 @@ using System.Collections.Generic;
 
 namespace SubtitleForge.Models
 {
+    /// <summary>What an animation staggers across when it is not applied to the whole cue.</summary>
+    public static class StaggerGroupings
+    {
+        /// <summary>Every character is offset from the previous one.</summary>
+        public const string Character = "Character";
+
+        /// <summary>All characters of a word move together; words are offset from each other.</summary>
+        public const string Word = "Word";
+
+        /// <summary>The whole cue animates as one block.</summary>
+        public const string Cue = "Cue";
+    }
+
     /// <summary>
     /// One animation channel. The meaning of Amplitude depends on the channel:
     /// sine uses a multiple of the font size, shake a multiple of the font size, pulse a
@@ -44,6 +57,13 @@ namespace SubtitleForge.Models
         /// <summary>Stagger between neighbouring characters in seconds (per-character mode).</summary>
         public double CharacterStaggerSeconds { get; set; } = 0.06;
 
+        /// <summary>
+        /// What the stagger walks over: <see cref="StaggerGroupings.Character"/> gives a travelling
+        /// wave, <see cref="StaggerGroupings.Word"/> moves whole words out of phase with each other
+        /// and <see cref="StaggerGroupings.Cue"/> animates the text as one block.
+        /// </summary>
+        public string StaggerGrouping { get; set; } = StaggerGroupings.Character;
+
         public IdleChannel SineX { get; set; } = new IdleChannel();
 
         public IdleChannel SineY { get; set; } = new IdleChannel();
@@ -73,6 +93,7 @@ namespace SubtitleForge.Models
             copy.Name = Name;
             copy.PerCharacter = PerCharacter;
             copy.CharacterStaggerSeconds = CharacterStaggerSeconds;
+            copy.StaggerGrouping = StaggerGrouping;
             copy.SineX = SineX.Clone();
             copy.SineY = SineY.Clone();
             copy.Shake = Shake.Clone();

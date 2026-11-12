@@ -55,6 +55,12 @@ namespace SubtitleForge.Models
         /// <summary>Delay between neighbouring characters in per-character mode.</summary>
         public double CharacterDelaySeconds { get; set; } = 0.045;
 
+        /// <summary>
+        /// What the delay walks over when <see cref="PerCharacter"/> is on: every character, whole words
+        /// out of phase, or a single block for the entire cue.
+        /// </summary>
+        public string StaggerGrouping { get; set; } = StaggerGroupings.Character;
+
         public PopInProfile Clone()
         {
             PopInProfile copy = new PopInProfile();
@@ -72,6 +78,7 @@ namespace SubtitleForge.Models
             copy.DurationSeconds = DurationSeconds;
             copy.PerCharacter = PerCharacter;
             copy.CharacterDelaySeconds = CharacterDelaySeconds;
+            copy.StaggerGrouping = StaggerGrouping;
             return copy;
         }
 

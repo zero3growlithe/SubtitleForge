@@ -3,10 +3,10 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="clr-namespace:SubtitleForge.Controls"
         Title="Text style profile"
-        Height="820"
-        Width="900"
+        Height="840"
+        Width="940"
         MinHeight="620"
-        MinWidth="760"
+        MinWidth="780"
         ShowInTaskbar="False"
         Background="{StaticResource WindowBackgroundBrush}"
         WindowStartupLocation="CenterOwner">
@@ -62,11 +62,33 @@
 
                 <WrapPanel Margin="0,8,0,0">
                     <TextBlock Text="Font size" Style="{StaticResource SectionLabelStyle}" />
-                    <TextBox x:Name="FontSizeBox" Width="62" Margin="0,0,14,0" LostFocus="BasicsChanged" />
+                    <controls:NumericDragBox x:Name="FontSizeBox"
+                                            Width="64"
+                                            Margin="0,0,14,0"
+                                            Minimum="6"
+                                            Maximum="400"
+                                            DragStep="0.25"
+                                            Format="0.#"
+                                            ToolTip="Drag left and right to scrub the size, or click to type it"
+                                            ValueChanged="BasicsChanged" />
                     <TextBlock Text="Words on screen (0 = whole cue)" Style="{StaticResource SectionLabelStyle}" />
-                    <TextBox x:Name="WordsBox" Width="52" Margin="0,0,14,0" LostFocus="BasicsChanged" />
+                    <controls:NumericDragBox x:Name="WordsBox"
+                                            Width="56"
+                                            Margin="0,0,14,0"
+                                            Minimum="0"
+                                            Maximum="40"
+                                            DragStep="1"
+                                            Format="0"
+                                            ToolTip="0 shows the whole cue, 1 shows one word at a time"
+                                            ValueChanged="BasicsChanged" />
                     <TextBlock Text="Opacity" Style="{StaticResource SectionLabelStyle}" />
-                    <TextBox x:Name="OpacityBox" Width="52" LostFocus="BasicsChanged" />
+                    <controls:NumericDragBox x:Name="OpacityBox"
+                                            Width="56"
+                                            Minimum="0"
+                                            Maximum="1"
+                                            DragStep="0.01"
+                                            Format="0.##"
+                                            ValueChanged="BasicsChanged" />
                 </WrapPanel>
 
                 <TextBlock Text="Fill" FontWeight="SemiBold" Margin="0,14,0,4" />
@@ -75,7 +97,7 @@
                 <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
                     <CheckBox x:Name="HighlightCheck" Content="Highlight the word being spoken" Click="BasicsChanged" />
                     <TextBlock Text="Highlight" Style="{StaticResource SectionLabelStyle}" Margin="16,0,6,0" />
-                    <controls:ColorSpecPicker x:Name="HighlightPicker" Width="420" ValueChanged="FillChanged" />
+                    <controls:ColorSpecPicker x:Name="HighlightPicker" ValueChanged="FillChanged" />
                 </StackPanel>
 
                 <!-- Outlines -->
@@ -108,11 +130,31 @@
                         </WrapPanel>
                         <WrapPanel Margin="0,6,0,0">
                             <TextBlock Text="Thickness" Style="{StaticResource SectionLabelStyle}" />
-                            <TextBox x:Name="OutlineThicknessBox" Width="52" Margin="0,0,10,0" LostFocus="OutlineFieldChanged" />
+                            <controls:NumericDragBox x:Name="OutlineThicknessBox"
+                                                     Width="56"
+                                                     Margin="0,0,10,0"
+                                                     Minimum="0"
+                                                     Maximum="40"
+                                                     DragStep="0.1"
+                                                     Format="0.#"
+                                                     ValueChanged="OutlineFieldChanged" />
                             <TextBlock Text="Offset X" Style="{StaticResource SectionLabelStyle}" />
-                            <TextBox x:Name="OutlineOffsetXBox" Width="52" Margin="0,0,10,0" LostFocus="OutlineFieldChanged" />
+                            <controls:NumericDragBox x:Name="OutlineOffsetXBox"
+                                                     Width="56"
+                                                     Margin="0,0,10,0"
+                                                     Minimum="-200"
+                                                     Maximum="200"
+                                                     DragStep="0.5"
+                                                     Format="0.#"
+                                                     ValueChanged="OutlineFieldChanged" />
                             <TextBlock Text="Offset Y" Style="{StaticResource SectionLabelStyle}" />
-                            <TextBox x:Name="OutlineOffsetYBox" Width="52" LostFocus="OutlineFieldChanged" />
+                            <controls:NumericDragBox x:Name="OutlineOffsetYBox"
+                                                     Width="56"
+                                                     Minimum="-200"
+                                                     Maximum="200"
+                                                     DragStep="0.5"
+                                                     Format="0.#"
+                                                     ValueChanged="OutlineFieldChanged" />
                         </WrapPanel>
                         <controls:ColorSpecPicker x:Name="OutlineColorPicker" Margin="0,6,0,0" ValueChanged="OutlineColorChanged" />
                     </StackPanel>
@@ -148,13 +190,40 @@
                         </WrapPanel>
                         <WrapPanel Margin="0,6,0,0">
                             <TextBlock Text="Thickness" Style="{StaticResource SectionLabelStyle}" />
-                            <TextBox x:Name="ShadowThicknessBox" Width="52" Margin="0,0,10,0" LostFocus="ShadowFieldChanged" />
+                            <controls:NumericDragBox x:Name="ShadowThicknessBox"
+                                                     Width="56"
+                                                     Margin="0,0,10,0"
+                                                     Minimum="0"
+                                                     Maximum="60"
+                                                     DragStep="0.1"
+                                                     Format="0.#"
+                                                     ValueChanged="ShadowFieldChanged" />
                             <TextBlock Text="Offset X" Style="{StaticResource SectionLabelStyle}" />
-                            <TextBox x:Name="ShadowOffsetXBox" Width="52" Margin="0,0,10,0" LostFocus="ShadowFieldChanged" />
+                            <controls:NumericDragBox x:Name="ShadowOffsetXBox"
+                                                     Width="56"
+                                                     Margin="0,0,10,0"
+                                                     Minimum="-200"
+                                                     Maximum="200"
+                                                     DragStep="0.5"
+                                                     Format="0.#"
+                                                     ValueChanged="ShadowFieldChanged" />
                             <TextBlock Text="Offset Y" Style="{StaticResource SectionLabelStyle}" />
-                            <TextBox x:Name="ShadowOffsetYBox" Width="52" Margin="0,0,10,0" LostFocus="ShadowFieldChanged" />
+                            <controls:NumericDragBox x:Name="ShadowOffsetYBox"
+                                                     Width="56"
+                                                     Margin="0,0,10,0"
+                                                     Minimum="-200"
+                                                     Maximum="200"
+                                                     DragStep="0.5"
+                                                     Format="0.#"
+                                                     ValueChanged="ShadowFieldChanged" />
                             <TextBlock Text="Opacity" Style="{StaticResource SectionLabelStyle}" />
-                            <TextBox x:Name="ShadowOpacityBox" Width="52" LostFocus="ShadowFieldChanged" />
+                            <controls:NumericDragBox x:Name="ShadowOpacityBox"
+                                                     Width="56"
+                                                     Minimum="0"
+                                                     Maximum="1"
+                                                     DragStep="0.01"
+                                                     Format="0.##"
+                                                     ValueChanged="ShadowFieldChanged" />
                         </WrapPanel>
                         <controls:ColorSpecPicker x:Name="ShadowColorPicker" Margin="0,6,0,0" ValueChanged="ShadowColorChanged" />
                     </StackPanel>
@@ -166,13 +235,12 @@
         <Border Grid.Row="2" Height="150" Margin="0,12,0,0" Background="#FF14141A" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1">
             <Grid>
                 <controls:SubtitleOverlay x:Name="PreviewOverlay" IsHitTestVisible="False" />
-                <TextBox x:Name="PreviewTextBox"
-                         Text="Preview text with animation"
-                         HorizontalAlignment="Left"
-                         VerticalAlignment="Top"
-                         Width="240"
-                         Margin="8"
-                         TextChanged="PreviewTextChanged" />
+                <TextBlock Text="Live preview — Sample Text"
+                           HorizontalAlignment="Left"
+                           VerticalAlignment="Top"
+                           Margin="8"
+                           FontSize="11"
+                           Foreground="{StaticResource SubtleTextBrush}" />
             </Grid>
         </Border>
 

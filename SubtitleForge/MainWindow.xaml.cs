@@ -775,21 +775,38 @@ namespace SubtitleForge
 
                 if (cue == null)
                 {
-                    CuePositionXBox.Text = string.Empty;
-                    CuePositionYBox.Text = string.Empty;
-                    CueScaleBox.Text = string.Empty;
+                    CuePositionXBox.ClearSilently();
+                    CuePositionYBox.ClearSilently();
+                    CueScaleBox.ClearSilently();
                     return;
                 }
 
-                CuePositionXBox.Text = cue.PositionX.HasValue
-                    ? cue.PositionX.Value.ToString("0.###", CultureInfo.InvariantCulture)
-                    : string.Empty;
-                CuePositionYBox.Text = cue.PositionY.HasValue
-                    ? cue.PositionY.Value.ToString("0.###", CultureInfo.InvariantCulture)
-                    : string.Empty;
-                CueScaleBox.Text = cue.Scale.HasValue
-                    ? cue.Scale.Value.ToString("0.###", CultureInfo.InvariantCulture)
-                    : string.Empty;
+                if (cue.PositionX.HasValue)
+                {
+                    CuePositionXBox.SetValueSilently(cue.PositionX.Value);
+                }
+                else
+                {
+                    CuePositionXBox.ClearSilently();
+                }
+
+                if (cue.PositionY.HasValue)
+                {
+                    CuePositionYBox.SetValueSilently(cue.PositionY.Value);
+                }
+                else
+                {
+                    CuePositionYBox.ClearSilently();
+                }
+
+                if (cue.Scale.HasValue)
+                {
+                    CueScaleBox.SetValueSilently(cue.Scale.Value);
+                }
+                else
+                {
+                    CueScaleBox.ClearSilently();
+                }
             }
             finally
             {
@@ -881,7 +898,7 @@ namespace SubtitleForge
             UpdateOverlay(CurrentPosition);
         }
 
-        private void CuePlacementChanged(object sender, RoutedEventArgs e)
+        private void CuePlacementChanged(object? sender, EventArgs e)
         {
             if (suppressCueAppearanceEvents)
             {
@@ -895,9 +912,9 @@ namespace SubtitleForge
             }
 
             List<SubtitleCue> before = CaptureCueSnapshot();
-            cue.PositionX = ParseOptionalFraction(CuePositionXBox.Text);
-            cue.PositionY = ParseOptionalFraction(CuePositionYBox.Text);
-            cue.Scale = ParseOptionalScale(CueScaleBox.Text);
+            cue.PositionX = CuePositionXBox.IsEmpty ? null : (double?)CuePositionXBox.Value;
+            cue.PositionY = CuePositionYBox.IsEmpty ? null : (double?)CuePositionYBox.Value;
+            cue.Scale = CueScaleBox.IsEmpty ? null : (double?)CueScaleBox.Value;
             PushCueUndoIfChanged("cue placement", before);
             MarkProjectDirty();
             UpdateOverlay(CurrentPosition);
@@ -919,58 +936,6 @@ namespace SubtitleForge
             UpdateCueAppearanceFromSelection();
             MarkProjectDirty();
             UpdateOverlay(CurrentPosition);
-        }
-
-        private static double? ParseOptionalFraction(string? text)
-        {
-            if (string.IsNullOrWhiteSpace(text))
-            {
-                return null;
-            }
-
-            double value;
-            if (!double.TryParse(text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out value))
-            {
-                return null;
-            }
-
-            if (value < 0.0)
-            {
-                value = 0.0;
-            }
-
-            if (value > 1.0)
-            {
-                value = 1.0;
-            }
-
-            return value;
-        }
-
-        private static double? ParseOptionalScale(string? text)
-        {
-            if (string.IsNullOrWhiteSpace(text))
-            {
-                return null;
-            }
-
-            double value;
-            if (!double.TryParse(text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out value))
-            {
-                return null;
-            }
-
-            if (value < 0.05)
-            {
-                value = 0.05;
-            }
-
-            if (value > 8.0)
-            {
-                value = 8.0;
-            }
-
-            return value;
         }
 
         // ── Timeline strip ─────────────────────────────────────────────────
@@ -995,6 +960,7 @@ namespace SubtitleForge
 
             Brush subtle = (Brush)FindResource("SubtleTextBrush");
             Brush accent = (Brush)FindResource("AccentBrush");
+            Brush idleCueBrush = (Brush)FindResource("CueMarkIdleBrush");
 
             double markerHeight = Math.Max(4.0, Math.Min(8.0, height - 8.0));
 
@@ -1026,8 +992,9 @@ namespace SubtitleForge
                 Rectangle block = new Rectangle();
                 block.Width = blockWidth;
                 block.Height = markerHeight;
-                block.Fill = accent;
-                block.Opacity = cue == selected ? 1.0 : 0.45;
+                // Fully opaque by request: the bars have to read clearly against the slider.
+                block.Fill = cue == selected ? accent : idleCueBrush;
+                block.Opacity = 1.0;
                 block.RadiusX = 2.0;
                 block.RadiusY = 2.0;
                 Canvas.SetLeft(block, left);
@@ -1323,6 +1290,31 @@ namespace SubtitleForge
         private void NudgeForwardClickCore(object sender, RoutedEventArgs e)
         {
             NudgeSelected(TimeSpan.FromMilliseconds(100));
+        }
+
+        /// <summary>
+        /// Keyboard nudge: moves the selected cue and drags the playhead along with it, so the
+        /// preview keeps showing the cue that is being moved.
+        /// </summary>
+        private void NudgeSelectedAndPlayhead(TimeSpan delta)
+        {
+            SubtitleCue? cue = SelectedCue;
+            if (cue == null)
+            {
+                SetStatus("Select a cue to nudge it.");
+                return;
+            }
+
+            List<SubtitleCue> before = CaptureCueSnapshot();
+            NudgeSelected(delta);
+            PushCueUndoIfChanged("nudge cue", before);
+            SeekToSeconds(CurrentPosition.TotalSeconds + delta.TotalSeconds);
+
+            string sign = delta.TotalMilliseconds >= 0.0 ? "+" : "-";
+            SetStatus("Cue and playhead moved by "
+                + sign
+                + Math.Abs(delta.TotalMilliseconds).ToString("0", CultureInfo.InvariantCulture)
+                + " ms.");
         }
 
         private void NudgeSelected(TimeSpan delta)
@@ -2313,6 +2305,13 @@ namespace SubtitleForge
                     SegmentSnapshot segmentSnapshot = new SegmentSnapshot();
                     segmentSnapshot.Segment = segment;
                     segmentSnapshot.StartSeconds = segment.StartSeconds;
+                    segmentSnapshot.DurationSeconds = segment.DurationSeconds;
+                    segmentSnapshot.SourceOffsetSeconds = segment.SourceOffsetSeconds;
+                    segmentSnapshot.Samples = segment.Samples;
+                    segmentSnapshot.Peaks = segment.Peaks;
+                    segmentSnapshot.SharesSamples = segment.SharesSamples;
+                    segmentSnapshot.HasRecordedAudio = segment.HasRecordedAudio;
+                    segmentSnapshot.ClipFile = segment.ClipFile;
                     segmentSnapshot.WasSelected = segment.IsSelected;
                     trackSnapshot.Segments.Add(segmentSnapshot);
                 }
@@ -2331,9 +2330,18 @@ namespace SubtitleForge
                 trackSnapshot.Track.Segments.Clear();
                 foreach (SegmentSnapshot segmentSnapshot in trackSnapshot.Segments)
                 {
-                    segmentSnapshot.Segment.StartSeconds = segmentSnapshot.StartSeconds;
-                    segmentSnapshot.Segment.IsSelected = segmentSnapshot.WasSelected;
-                    trackSnapshot.Track.Segments.Add(segmentSnapshot.Segment);
+                    TimelineSegment segment = segmentSnapshot.Segment;
+                    segment.StartSeconds = segmentSnapshot.StartSeconds;
+                    segment.DurationSeconds = segmentSnapshot.DurationSeconds;
+                    segment.SourceOffsetSeconds = segmentSnapshot.SourceOffsetSeconds;
+                    segment.Samples = segmentSnapshot.Samples;
+                    segment.Peaks = segmentSnapshot.Peaks;
+                    segment.SharesSamples = segmentSnapshot.SharesSamples;
+                    segment.HasRecordedAudio = segmentSnapshot.HasRecordedAudio;
+                    segment.ClipFile = segmentSnapshot.ClipFile;
+                    segment.IsSelected = segmentSnapshot.WasSelected;
+                    InvalidateAudioPlayer(segment);
+                    trackSnapshot.Track.Segments.Add(segment);
                 }
 
                 trackSnapshot.Track.IsSelected = trackSnapshot.WasSelected;
@@ -2454,10 +2462,7 @@ namespace SubtitleForge
             tracks.RemoveAt(from);
             tracks.Insert(target, moved);
 
-            UndoStackPush("reorder tracks", delegate
-            {
-                RestoreTimeline(before);
-            });
+            UndoStackPushTimeline("reorder tracks", before);
 
             AfterTimelineStructureChanged();
             SetStatus("Moved " + moved.Name + " to position " + (target + 1).ToString(CultureInfo.InvariantCulture) + ".");
@@ -2509,10 +2514,7 @@ namespace SubtitleForge
             targetTrack.PushAside(segment);
 
             string label = createdTrack ? "move clip to new track " + createdName : "move clip";
-            UndoStackPush(label, delegate
-            {
-                RestoreTimeline(before);
-            });
+            UndoStackPushTimeline(label, before);
 
             AfterTimelineStructureChanged();
 
@@ -2618,10 +2620,7 @@ namespace SubtitleForge
             tracks.Add(track);
             SelectTrackRow(track, false);
 
-            UndoStackPush("add " + name, delegate
-            {
-                RestoreTimeline(before);
-            });
+            UndoStackPushTimeline("add " + name, before);
 
             AfterTimelineStructureChanged();
             SetStatus("Added " + name + " — press Record to fill it.");
@@ -2657,11 +2656,18 @@ namespace SubtitleForge
             string previous = track.Name;
             track.Name = updated;
 
-            UndoStackPush("rename track", delegate
-            {
-                track.Name = previous;
-                TrackTimelineView.Refresh();
-            });
+            UndoStackPush(
+                "rename track",
+                delegate
+                {
+                    track.Name = previous;
+                    TrackTimelineView.Refresh();
+                },
+                delegate
+                {
+                    track.Name = updated;
+                    TrackTimelineView.Refresh();
+                });
 
             SetStatus("Renamed to " + updated + ".");
         }
@@ -2692,11 +2698,18 @@ namespace SubtitleForge
 
             track.BackgroundColor = color;
 
-            UndoStackPush("track colour", delegate
-            {
-                track.BackgroundColor = previous;
-                TrackTimelineView.Refresh();
-            });
+            UndoStackPush(
+                "track colour",
+                delegate
+                {
+                    track.BackgroundColor = previous;
+                    TrackTimelineView.Refresh();
+                },
+                delegate
+                {
+                    track.BackgroundColor = color;
+                    TrackTimelineView.Refresh();
+                });
 
             TrackTimelineView.Refresh();
             SetStatus("Colour changed for " + track.Name + " (the waveform colour follows automatically).");
@@ -2758,10 +2771,7 @@ namespace SubtitleForge
                 return;
             }
 
-            UndoStackPush("split clip", delegate
-            {
-                RestoreTimeline(before);
-            });
+            UndoStackPushTimeline("split clip", before);
 
             AfterTimelineStructureChanged();
             SetStatus("Split " + splitCount.ToString(CultureInfo.InvariantCulture) + " clip(s) at "
@@ -2820,10 +2830,7 @@ namespace SubtitleForge
                 }
             }
 
-            UndoStackPush("delete", delegate
-            {
-                RestoreTimeline(before);
-            });
+            UndoStackPushTimeline("delete", before);
 
             AfterTimelineStructureChanged();
 
@@ -2931,15 +2938,30 @@ namespace SubtitleForge
                 short[] samplesSnapshot = undoSamples;
                 float[] peaksSnapshot = undoPeaks;
 
-                UndoStackPush("record", delegate
-                {
-                    target.Samples = samplesSnapshot;
-                    target.Peaks = peaksSnapshot;
-                    target.SharesSamples = false;
-                    target.DurationSeconds = undoDuration;
-                    InvalidateAudioPlayer(target);
-                    AfterTimelineStructureChanged();
-                });
+                short[]? newSamples = target.Samples;
+                float[]? newPeaks = target.Peaks;
+                double newDuration = target.DurationSeconds;
+
+                UndoStackPush(
+                    "record",
+                    delegate
+                    {
+                        target.Samples = samplesSnapshot;
+                        target.Peaks = peaksSnapshot;
+                        target.SharesSamples = false;
+                        target.DurationSeconds = undoDuration;
+                        InvalidateAudioPlayer(target);
+                        AfterTimelineStructureChanged();
+                    },
+                    delegate
+                    {
+                        target.Samples = newSamples;
+                        target.Peaks = newPeaks;
+                        target.SharesSamples = false;
+                        target.DurationSeconds = newDuration;
+                        InvalidateAudioPlayer(target);
+                        AfterTimelineStructureChanged();
+                    });
             }
 
             UpdateTimelineDuration();
@@ -2989,6 +3011,26 @@ namespace SubtitleForge
             UndoLastAction();
         }
 
+        private void RedoClick(object sender, RoutedEventArgs e)
+        {
+            RedoLastAction();
+        }
+
+        private void RedoLastAction()
+        {
+            string description;
+            if (!undoStack.TryRedo(out description))
+            {
+                SetStatus("Nothing to redo.");
+                return;
+            }
+
+            TrackTimelineView.Refresh();
+            UpdateTimelineDuration();
+            UpdateCommandStates();
+            SetStatus("Redid: " + description + ".");
+        }
+
         private void UndoLastAction()
         {
             string description;
@@ -3004,14 +3046,38 @@ namespace SubtitleForge
             SetStatus("Undid: " + description + ".");
         }
 
-        private void UndoStackPush(string description, Action undo)
+        /// <summary>
+        /// Pushes a timeline snapshot edit. The "after" state is captured the moment the edit is
+        /// undone, so redo can put the timeline back exactly the way the user left it.
+        /// </summary>
+        private void UndoStackPushTimeline(string description, TimelineSnapshot before)
         {
-            undoStack.Push(new DelegateUndoAction(description, undo));
+            TimelineSnapshot? after = null;
+            undoStack.Push(new DelegateUndoAction(
+                description,
+                delegate
+                {
+                    after = CaptureTimeline();
+                    RestoreTimeline(before);
+                },
+                delegate
+                {
+                    if (after != null)
+                    {
+                        RestoreTimeline(after);
+                    }
+                }));
+        }
+
+        private void UndoStackPush(string description, Action undo, Action? redo = null)
+        {
+            undoStack.Push(new DelegateUndoAction(description, undo, redo));
         }
 
         private void OnUndoStackChanged(object? sender, EventArgs e)
         {
             UndoTrackButton.IsEnabled = undoStack.CanUndo;
+            RedoTrackButton.IsEnabled = undoStack.CanRedo;
         }
 
         // ── Project files ──────────────────────────────────────────────────
@@ -4286,10 +4352,7 @@ namespace SubtitleForge
             }
 
             string label = added == 1 ? "add dropped file" : "add " + added.ToString(CultureInfo.InvariantCulture) + " dropped files";
-            UndoStackPush(label, delegate
-            {
-                RestoreTimeline(before);
-            });
+            UndoStackPushTimeline(label, before);
 
             AfterTimelineStructureChanged();
 
@@ -4392,16 +4455,11 @@ namespace SubtitleForge
 
             SubtitleOverlayView.IdleSeconds = idleSeconds;
 
-            // Without an idle animation the picture only changes on a seek or a cue change.
-            IdleAnimationProfile? idle = SubtitleOverlayView.Idle;
-            bool animated = idle != null && idle.HasAnyChannel;
-            PopInProfile? popIn = SubtitleOverlayView.PopIn;
-            bool entering = popIn != null
-                && !string.Equals(popIn.Kind, PopInKind.None, StringComparison.OrdinalIgnoreCase)
-                && SubtitleOverlayView.PlayheadSeconds
-                    < SubtitleOverlayView.CueStartSeconds + (popIn.DurationSeconds * 2.0);
-
-            if (animated || entering)
+            // Repaint only when something can actually change: an idle channel, a running entrance
+            // or a new word (the highlight and the words-per-display window both follow the word
+            // index). A static cue on a static style costs nothing.
+            bool wordChanged = SubtitleOverlayView.CurrentWordIndex != SubtitleOverlayView.RenderedWordIndex;
+            if (SubtitleOverlayView.IsAnimating || wordChanged)
             {
                 SubtitleOverlayView.Refresh();
             }
@@ -4926,10 +4984,7 @@ namespace SubtitleForge
                 return;
             }
 
-            UndoStackPush("join clips", delegate
-            {
-                RestoreTimeline(before);
-            });
+            UndoStackPushTimeline("join clips", before);
 
             AfterTimelineStructureChanged();
             SetStatus(joinCount == 1
@@ -5095,10 +5150,21 @@ namespace SubtitleForge
                 return;
             }
 
-            UndoStackPush(description, delegate
-            {
-                RestoreCueSnapshot(before);
-            });
+            List<SubtitleCue>? after = null;
+            UndoStackPush(
+                description,
+                delegate
+                {
+                    after = CaptureCueSnapshot();
+                    RestoreCueSnapshot(before);
+                },
+                delegate
+                {
+                    if (after != null)
+                    {
+                        RestoreCueSnapshot(after);
+                    }
+                });
         }
 
         private void SplitCueClick(object sender, RoutedEventArgs e)
@@ -5260,6 +5326,48 @@ namespace SubtitleForge
                 return;
             }
 
+            if (control && (e.Key == Key.Y || (shift && e.Key == Key.Z)))
+            {
+                RedoLastAction();
+                e.Handled = true;
+                return;
+            }
+
+            if (control && e.Key == Key.Q)
+            {
+                AddCueClick(this, new RoutedEventArgs());
+                e.Handled = true;
+                return;
+            }
+
+            if (control && e.Key == Key.OemOpenBrackets)
+            {
+                SetStartClick(this, new RoutedEventArgs());
+                e.Handled = true;
+                return;
+            }
+
+            if (control && e.Key == Key.OemCloseBrackets)
+            {
+                SetEndClick(this, new RoutedEventArgs());
+                e.Handled = true;
+                return;
+            }
+
+            if (control && (e.Key == Key.OemMinus || e.Key == Key.Subtract))
+            {
+                NudgeSelectedAndPlayhead(TimeSpan.FromMilliseconds(-100));
+                e.Handled = true;
+                return;
+            }
+
+            if (control && (e.Key == Key.OemPlus || e.Key == Key.Add))
+            {
+                NudgeSelectedAndPlayhead(TimeSpan.FromMilliseconds(100));
+                e.Handled = true;
+                return;
+            }
+
             if (control)
             {
                 return;
@@ -5305,6 +5413,20 @@ namespace SubtitleForge
             public TimelineSegment Segment = null!;
 
             public double StartSeconds;
+
+            public double DurationSeconds;
+
+            public double SourceOffsetSeconds;
+
+            public short[] Samples = Array.Empty<short>();
+
+            public float[] Peaks = Array.Empty<float>();
+
+            public bool SharesSamples;
+
+            public bool HasRecordedAudio;
+
+            public string? ClipFile;
 
             public bool WasSelected;
         }
@@ -5525,6 +5647,7 @@ namespace SubtitleForge
             RenameTrackButton.IsEnabled = !isBusy && hasRowSelection;
             TrackColorButton.IsEnabled = !isBusy && hasRowSelection;
             UndoTrackButton.IsEnabled = !isBusy && undoStack.CanUndo;
+            RedoTrackButton.IsEnabled = !isBusy && undoStack.CanRedo;
             SaveProjectButton.IsEnabled = !isBusy;
             SaveProjectAsButton.IsEnabled = !isBusy;
             OpenProjectButton.IsEnabled = !isBusy;

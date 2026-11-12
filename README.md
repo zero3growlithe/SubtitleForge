@@ -124,6 +124,15 @@ The default text style profile also drives **burned-in** exports: `As MP4…` wi
 subtitles* uses its font, size, weight, fill colour and the first font-targeted outline and shadow,
 so the exported video matches the preview (animations are not baked in).
 
+Colours are picked with a real colour picker — a saturation/value square, hue and alpha ramps,
+preset swatches and an optional hex field (`#RRGGBB` or `#AARRGGBB`) — so the swatches in the
+editor are the only thing you click. Every numeric field is scrubbable Unity-style: drag left or
+right to change the value (`Shift` = fine, `Ctrl` = coarse) or click once to type it.
+
+Both animation creators have a **per character / word / whole cue** switch next to the
+per-character toggle, so a sine wave can travel through the letters, move whole words out of
+phase, or animate the entire line as one block.
+
 Three buttons in the toolbar open one creator per kind — **Text style…**, **Idle anim…** and
 **Pop-in…**. Each one lists the saved profiles of that kind with `New`, `Delete` and
 `Set as default`, edits every field with numeric inputs and colour/gradient pickers, and shows a
@@ -157,6 +166,10 @@ stays a few kilobytes.
 - `Ctrl+Shift+J` — join the selected neighbouring clips (also in a track's right-click menu)
 - `Ctrl+Z` — undo the last edit (move, add, delete, split, join, reorder, rename, recolour,
   record, and every cue edit: add, delete, split, merge, nudge, timing and text changes)
+- `Ctrl+Y` (or `Ctrl+Shift+Z`) — redo whatever was undone last; the toolbar has a `Redo` button too
+- `Ctrl+Q` — add a cue at the playhead
+- `Ctrl+[` / `Ctrl+]` — set the selected cue's start / end to the playhead
+- `Ctrl+-` / `Ctrl++` — move the selected cue by 100 ms and drag the playhead along with it
 - `Ctrl+S` — save the project; `Ctrl+Shift+S` — save as…
 - double-click a track header — rename it; right-click a track — colour / split / delete
 

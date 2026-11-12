@@ -17,7 +17,9 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
@@ -82,14 +84,45 @@
                      ToolTip="Any ffmpeg colour, e.g. 0x00FF00" />
         </Grid>
 
+
+        <Grid Grid.Row="4" Margin="24,8,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <TextBlock Grid.Column="0" Text="Video resolution" VerticalAlignment="Center" Margin="0,0,10,0" />
+            <ComboBox x:Name="ResolutionCombo" Grid.Column="1" SelectedIndex="0" Margin="0,0,16,0"
+                      SelectionChanged="QualityChanged">
+                <ComboBoxItem Content="Same as source" Tag="0" />
+                <ComboBoxItem Content="2160p (4K)" Tag="2160" />
+                <ComboBoxItem Content="1440p" Tag="1440" />
+                <ComboBoxItem Content="1080p" Tag="1080" />
+                <ComboBoxItem Content="720p" Tag="720" />
+                <ComboBoxItem Content="480p" Tag="480" />
+            </ComboBox>
+
+            <TextBlock Grid.Column="2" Text="Audio quality" VerticalAlignment="Center" Margin="0,0,10,0" />
+            <ComboBox x:Name="AudioQualityCombo" Grid.Column="3" SelectedIndex="0"
+                      SelectionChanged="QualityChanged">
+                <ComboBoxItem Content="Highest — 320 kbps" Tag="320k" />
+                <ComboBoxItem Content="256 kbps" Tag="256k" />
+                <ComboBoxItem Content="192 kbps" Tag="192k" />
+                <ComboBoxItem Content="128 kbps" Tag="128k" />
+                <ComboBoxItem Content="Same as source (no re-encode)" Tag="copy" />
+            </ComboBox>
+        </Grid>
+
         <TextBlock x:Name="HintText"
-                   Grid.Row="4"
+                   Grid.Row="5"
                    Margin="0,14,0,0"
                    TextWrapping="Wrap"
                    FontSize="11"
                    Foreground="{StaticResource SubtleTextBrush}" />
 
-        <Border Grid.Row="6" Margin="0,12,0,0">
+        <Border Grid.Row="7" Margin="0,12,0,0">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                 <Button Content="Cancel" MinWidth="90" IsCancel="True" Click="CancelClick" />
                 <Button x:Name="ExportButton" Content="Export" MinWidth="90" IsDefault="True" Style="{StaticResource AccentButtonStyle}" Click="ExportClick" />

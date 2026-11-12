@@ -71,7 +71,9 @@ namespace SubtitleForge.Services
                     "-sn",
                     "-dn",
                     "-c:a", "aac",
-                    "-b:a", "192k",
+                    // Playback uses this copy, so it is encoded close to transparent rather than
+                    // merely small — 192k was audible on dense music.
+                    "-b:a", "320k",
                     "-ac", "2",
                     "-ar", "48000",
                     "-movflags", "+faststart",
@@ -108,7 +110,9 @@ namespace SubtitleForge.Services
         private static string BuildKey(string sourcePath)
         {
             FileInfo info = new FileInfo(sourcePath);
-            string seed = sourcePath.ToLowerInvariant()
+            // The "aac320" salt is the cache version: bumping it retires files encoded at the
+            // older, more lossy bitrate instead of playing them back forever.
+            string seed = "aac320|" + sourcePath.ToLowerInvariant()
                 + "|" + info.Length.ToString(CultureInfo.InvariantCulture)
                 + "|" + info.LastWriteTimeUtc.Ticks.ToString(CultureInfo.InvariantCulture);
 

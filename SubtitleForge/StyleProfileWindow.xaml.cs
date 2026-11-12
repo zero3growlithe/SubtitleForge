@@ -6,6 +6,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
+using SubtitleForge.Controls;
 using SubtitleForge.Models;
 using SubtitleForge.Services;
 
@@ -682,12 +683,107 @@ namespace SubtitleForge
                 return;
             }
 
+            // Picking another profile is also a commit: whatever is on screen belongs to the
+            // profile that was selected until now.
+            CommitDraftToStore();
             LoadDraftFromStore();
+            UpdateDefaultButton();
+        }
+
+        /// <summary>
+        /// Copies every field into <see cref="draft"/> and writes it back to the store, so an edit
+        /// is never lost by switching profiles, adding a new one or duplicating.
+        /// </summary>
+        private void CommitDraftToStore()
+        {
+            draft.Name = NameBox.Text;
+            string? family = FontCombo.SelectedItem as string;
+            if (!string.IsNullOrWhiteSpace(family))
+            {
+                draft.FontFamily = family;
+            }
+
+            draft.Bold = BoldCheck.IsChecked == true;
+            draft.Italic = ItalicCheck.IsChecked == true;
+            draft.FontSize = FontSizeBox.Value;
+            draft.CharacterSpacing = CharacterSpacingBox.Value;
+            draft.WordSpacing = WordSpacingBox.Value;
+            draft.WordsPerDisplay = WordsBox.IntValue;
+            draft.Opacity = OpacityBox.Value;
+            draft.HighlightSpokenWord = HighlightCheck.IsChecked == true;
+            draft.Fill = FillPicker.Capture();
+            draft.HighlightFill = HighlightPicker.Capture();
+            if (string.IsNullOrWhiteSpace(draft.Name))
+            {
+                draft.Name = "Style";
+            }
+
+            // An effect that was being edited in the detail panel is already in the draft, but the
+            // last keystroke in a name box may not have been committed yet.
+            EffectLayer? effect = SelectedEffect;
+            if (effect != null)
+            {
+                effect.Name = EffectNameBox.Text;
+            }
+
+            store.UpsertStyle(draft.Clone());
+            store.Save();
+            RefreshProfileItemName();
+        }
+
+        /// <summary>
+        /// Updates the name shown in the profile combo. It looks the entry up by id, never by the
+        /// current selection: when switching profiles the selection already points at the next
+        /// profile while <see cref="draft"/> still belongs to the one being left.
+        /// </summary>
+        private void RefreshProfileItemName()
+        {
+            for (int index = 0; index < ProfileCombo.Items.Count; index++)
+            {
+                ProfileListItem? item = ProfileCombo.Items[index] as ProfileListItem;
+                if (item == null || !string.Equals(item.Id, draft.Id, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (string.Equals(item.Name, draft.Name, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                suppress = true;
+                try
+                {
+                    int selected = ProfileCombo.SelectedIndex;
+                    ProfileCombo.Items[index] = new ProfileListItem(item.Id, draft.Name);
+                    ProfileCombo.SelectedIndex = selected;
+                }
+                finally
+                {
+                    suppress = false;
+                }
+
+                return;
+            }
+        }
+
+        private void DuplicateProfileClick(object sender, RoutedEventArgs e)
+        {
+            CommitDraftToStore();
+
+            StyleProfile copy = draft.Clone();
+            copy.Id = Guid.NewGuid().ToString("N");
+            copy.Name = draft.Name + " copy";
+            store.UpsertStyle(copy);
+            store.Save();
+            ReloadProfileList(copy.Id);
             UpdateDefaultButton();
         }
 
         private void NewProfileClick(object sender, RoutedEventArgs e)
         {
+            CommitDraftToStore();
+
             StyleProfile created = ProfileStore.CreateDefaultStyle();
             created.Id = Guid.NewGuid().ToString("N");
             created.Name = "Style " + (store.Styles.Count + 1).ToString(CultureInfo.InvariantCulture);
@@ -699,6 +795,8 @@ namespace SubtitleForge
 
         private void DeleteProfileClick(object sender, RoutedEventArgs e)
         {
+            CommitDraftToStore();
+
             ProfileListItem? item = ProfileCombo.SelectedItem as ProfileListItem;
             if (item == null || store.Styles.Count <= 1)
             {
@@ -754,19 +852,39 @@ namespace SubtitleForge
 
         private void SaveClick(object sender, RoutedEventArgs e)
         {
-            BasicsChanged(sender, e);
-            FillChanged(sender, e);
-            draft.Fill = FillPicker.Capture();
-            draft.HighlightFill = HighlightPicker.Capture();
-            if (string.IsNullOrWhiteSpace(draft.Name))
-            {
-                draft.Name = "Style";
-            }
-
-            store.UpsertStyle(draft.Clone());
-            store.Save();
+            CommitDraftToStore();
             DialogResult = true;
             Close();
+        }
+
+
+        // ── Field entry ────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Enter while a field is being edited submits that field: the value is validated, written
+        /// to the draft and the field gives up focus so the rest of the window reacts. Without this
+        /// Enter fell through to the window's default Save button and saved the whole profile.
+        /// </summary>
+        private void FieldPreviewKeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key != Key.Enter && e.Key != Key.Return)
+            {
+                return;
+            }
+
+            if (Keyboard.FocusedElement is not TextBox box)
+            {
+                return;
+            }
+
+            NumericDragBox? numeric = box as NumericDragBox;
+            if (numeric != null)
+            {
+                numeric.Commit();
+            }
+
+            box.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
+            e.Handled = true;
         }
 
         private void CancelClick(object sender, RoutedEventArgs e)

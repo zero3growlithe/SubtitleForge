@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Threading;
 using SubtitleForge.Controls;
 using SubtitleForge.Models;
@@ -238,12 +239,88 @@ namespace SubtitleForge
                 return;
             }
 
+            // Picking another profile commits the edits made to the one that was showing.
+            CommitDraftToStore();
             LoadDraftFromStore();
+            UpdateDefaultButton();
+        }
+
+        /// <summary>Writes every field back to the store so switching profiles never loses an edit.</summary>
+        private void CommitDraftToStore()
+        {
+            draft.Name = NameBox.Text;
+            draft.PerCharacter = PerCharacterCheck.IsChecked == true;
+            draft.CharacterStaggerSeconds = StaggerBox.Value;
+            draft.StaggerGrouping = SelectedGrouping();
+            draft.Shake = editors["Shake"].Channel ?? draft.Shake;
+            draft.SineX = editors["SineX"].Channel ?? draft.SineX;
+            draft.SineY = editors["SineY"].Channel ?? draft.SineY;
+            draft.Pulse = editors["Pulse"].Channel ?? draft.Pulse;
+            draft.Wiggle = editors["Wiggle"].Channel ?? draft.Wiggle;
+            draft.Spin = editors["Spin"].Channel ?? draft.Spin;
+            if (string.IsNullOrWhiteSpace(draft.Name))
+            {
+                draft.Name = "Idle";
+            }
+
+            store.UpsertIdle(draft.Clone());
+            store.Save();
+            RefreshProfileItemName();
+        }
+
+        /// <summary>
+        /// Updates the name shown in the profile combo. It looks the entry up by id, never by the
+        /// current selection: when switching profiles the selection already points at the next
+        /// profile while <see cref="draft"/> still belongs to the one being left.
+        /// </summary>
+        private void RefreshProfileItemName()
+        {
+            for (int index = 0; index < ProfileCombo.Items.Count; index++)
+            {
+                ProfileListItem? item = ProfileCombo.Items[index] as ProfileListItem;
+                if (item == null || !string.Equals(item.Id, draft.Id, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (string.Equals(item.Name, draft.Name, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                suppress = true;
+                try
+                {
+                    int selected = ProfileCombo.SelectedIndex;
+                    ProfileCombo.Items[index] = new ProfileListItem(item.Id, draft.Name);
+                    ProfileCombo.SelectedIndex = selected;
+                }
+                finally
+                {
+                    suppress = false;
+                }
+
+                return;
+            }
+        }
+
+        private void DuplicateProfileClick(object sender, RoutedEventArgs e)
+        {
+            CommitDraftToStore();
+
+            IdleAnimationProfile copy = draft.Clone();
+            copy.Id = Guid.NewGuid().ToString("N");
+            copy.Name = draft.Name + " copy";
+            store.UpsertIdle(copy);
+            store.Save();
+            ReloadProfileList(copy.Id);
             UpdateDefaultButton();
         }
 
         private void NewProfileClick(object sender, RoutedEventArgs e)
         {
+            CommitDraftToStore();
+
             IdleAnimationProfile created = IdleAnimationProfile.CreateStill();
             created.Id = Guid.NewGuid().ToString("N");
             created.Name = "Idle " + (store.Idle.Count + 1).ToString(CultureInfo.InvariantCulture);
@@ -255,6 +332,8 @@ namespace SubtitleForge
 
         private void DeleteProfileClick(object sender, RoutedEventArgs e)
         {
+            CommitDraftToStore();
+
             ProfileListItem? item = ProfileCombo.SelectedItem as ProfileListItem;
             if (item == null || store.Idle.Count <= 1)
             {
@@ -310,16 +389,37 @@ namespace SubtitleForge
 
         private void SaveClick(object sender, RoutedEventArgs e)
         {
-            BasicsChanged(sender, e);
-            if (string.IsNullOrWhiteSpace(draft.Name))
-            {
-                draft.Name = "Idle";
-            }
-
-            store.UpsertIdle(draft.Clone());
-            store.Save();
+            CommitDraftToStore();
             DialogResult = true;
             Close();
+        }
+
+
+        /// <summary>
+        /// Enter while a field is being edited submits that field: the value is validated, written
+        /// to the draft and the field gives up focus. Without this Enter fell through to the window's
+        /// default Save button and saved the whole profile.
+        /// </summary>
+        private void FieldPreviewKeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key != Key.Enter && e.Key != Key.Return)
+            {
+                return;
+            }
+
+            if (Keyboard.FocusedElement is not TextBox box)
+            {
+                return;
+            }
+
+            NumericDragBox? numeric = box as NumericDragBox;
+            if (numeric != null)
+            {
+                numeric.Commit();
+            }
+
+            box.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
+            e.Handled = true;
         }
 
         private void CancelClick(object sender, RoutedEventArgs e)

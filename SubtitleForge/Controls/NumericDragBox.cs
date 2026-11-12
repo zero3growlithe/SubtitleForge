@@ -20,6 +20,7 @@ namespace SubtitleForge.Controls
         private bool dragging;
         private bool updatingText;
         private bool mixed;
+        private double lastValidValue;
 
         public NumericDragBox()
         {
@@ -99,7 +100,8 @@ namespace SubtitleForge.Controls
             try
             {
                 mixed = false;
-                Text = Clamp(value).ToString(Format, CultureInfo.InvariantCulture);
+                lastValidValue = Clamp(value);
+                Text = lastValidValue.ToString(Format, CultureInfo.InvariantCulture);
             }
             finally
             {
@@ -150,7 +152,71 @@ namespace SubtitleForge.Controls
             }
 
             mixed = false;
+            double typed;
+            if (double.TryParse((Text ?? string.Empty).Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out typed))
+            {
+                lastValidValue = Clamp(typed);
+            }
+
             ValueChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        /// <summary>
+        /// Accepts whatever is typed, or puts the last good number back when the text is not a
+        /// number at all. Returns true when the field now holds a usable value.
+        /// </summary>
+        public bool Commit()
+        {
+            if (mixed && AllowEmpty)
+            {
+                return false;
+            }
+
+            string raw = (Text ?? string.Empty).Trim();
+            if (raw.Length == 0 && AllowEmpty)
+            {
+                return false;
+            }
+
+            double parsed;
+            if (!double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out parsed))
+            {
+                // Reject the input: leave the field showing the value it had before the user typed.
+                SetValueSilently(lastValidValue);
+                return false;
+            }
+
+            double clamped = Clamp(parsed);
+            bool changed = Math.Abs(clamped - lastValidValue) > 1e-9;
+            SetValueSilently(clamped);
+            if (changed)
+            {
+                ValueChanged?.Invoke(this, EventArgs.Empty);
+            }
+
+            return true;
+        }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            if (e.Key == Key.Enter || e.Key == Key.Return)
+            {
+                Commit();
+                // Hand focus back so every LostFocus handler (the "field changed" plumbing) runs.
+                MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
+                e.Handled = true;
+                return;
+            }
+
+            if (e.Key == Key.Escape)
+            {
+                SetValueSilently(lastValidValue);
+                MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
+                e.Handled = true;
+                return;
+            }
+
+            base.OnKeyDown(e);
         }
 
         protected override void OnPreviewMouseLeftButtonDown(MouseButtonEventArgs e)

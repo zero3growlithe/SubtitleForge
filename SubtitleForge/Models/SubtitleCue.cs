@@ -117,6 +117,7 @@ namespace SubtitleForge.Models
                 {
                     styleProfileId = value;
                     OnPropertyChanged();
+                    OnPropertyChanged(nameof(HasCustomLook));
                 }
             }
         }
@@ -131,6 +132,7 @@ namespace SubtitleForge.Models
                 {
                     idleProfileId = value;
                     OnPropertyChanged();
+                    OnPropertyChanged(nameof(HasCustomLook));
                 }
             }
         }
@@ -145,6 +147,7 @@ namespace SubtitleForge.Models
                 {
                     popInProfileId = value;
                     OnPropertyChanged();
+                    OnPropertyChanged(nameof(HasCustomLook));
                 }
             }
         }
@@ -188,6 +191,20 @@ namespace SubtitleForge.Models
                     scale = value;
                     OnPropertyChanged();
                 }
+            }
+        }
+
+        /// <summary>
+        /// True when the cue does not simply use the defaults: it carries its own style, idle or
+        /// pop-in profile. The cue list colours these rows so overridden cues stand out.
+        /// </summary>
+        public bool HasCustomLook
+        {
+            get
+            {
+                return !string.IsNullOrEmpty(styleProfileId)
+                    || !string.IsNullOrEmpty(idleProfileId)
+                    || !string.IsNullOrEmpty(popInProfileId);
             }
         }
 

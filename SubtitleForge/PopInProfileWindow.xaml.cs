@@ -2,7 +2,9 @@ using System;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Threading;
+using SubtitleForge.Controls;
 using SubtitleForge.Models;
 using SubtitleForge.Services;
 
@@ -239,12 +241,92 @@ namespace SubtitleForge
                 return;
             }
 
+            // Picking another profile commits the edits made to the one that was showing.
+            CommitDraftToStore();
             LoadDraftFromStore();
+            UpdateDefaultButton();
+        }
+
+        /// <summary>Writes every field back to the store so switching profiles never loses an edit.</summary>
+        private void CommitDraftToStore()
+        {
+            draft.Name = NameBox.Text;
+            draft.Kind = SelectedTag(KindCombo, PopInKind.FadeIn);
+            draft.Direction = SelectedTag(DirectionCombo, PopInDirection.Bottom);
+            draft.DurationSeconds = DurationBox.Value;
+            draft.PerCharacter = PerCharacterCheck.IsChecked == true;
+            draft.StaggerGrouping = SelectedTag(StaggerGroupingCombo, StaggerGroupings.Character);
+            draft.CharacterDelaySeconds = CharacterDelayBox.Value;
+            draft.DistanceMultiplier = DistanceBox.Value;
+            draft.SpringStiffness = StiffnessBox.Value;
+            draft.SpringDamping = DampingBox.Value;
+            draft.JellyAmplitudeX = JellyXBox.Value;
+            draft.JellyAmplitudeY = JellyYBox.Value;
+            draft.JellyFrequency = JellyFrequencyBox.Value;
+            draft.JellyFalloff = JellyFalloffBox.Value;
+            if (string.IsNullOrWhiteSpace(draft.Name))
+            {
+                draft.Name = "Pop-in";
+            }
+
+            store.UpsertPopIn(draft.Clone());
+            store.Save();
+            RefreshProfileItemName();
+        }
+
+        /// <summary>
+        /// Updates the name shown in the profile combo. It looks the entry up by id, never by the
+        /// current selection: when switching profiles the selection already points at the next
+        /// profile while <see cref="draft"/> still belongs to the one being left.
+        /// </summary>
+        private void RefreshProfileItemName()
+        {
+            for (int index = 0; index < ProfileCombo.Items.Count; index++)
+            {
+                ProfileListItem? item = ProfileCombo.Items[index] as ProfileListItem;
+                if (item == null || !string.Equals(item.Id, draft.Id, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (string.Equals(item.Name, draft.Name, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                suppress = true;
+                try
+                {
+                    int selected = ProfileCombo.SelectedIndex;
+                    ProfileCombo.Items[index] = new ProfileListItem(item.Id, draft.Name);
+                    ProfileCombo.SelectedIndex = selected;
+                }
+                finally
+                {
+                    suppress = false;
+                }
+
+                return;
+            }
+        }
+
+        private void DuplicateProfileClick(object sender, RoutedEventArgs e)
+        {
+            CommitDraftToStore();
+
+            PopInProfile copy = draft.Clone();
+            copy.Id = Guid.NewGuid().ToString("N");
+            copy.Name = draft.Name + " copy";
+            store.UpsertPopIn(copy);
+            store.Save();
+            ReloadProfileList(copy.Id);
             UpdateDefaultButton();
         }
 
         private void NewProfileClick(object sender, RoutedEventArgs e)
         {
+            CommitDraftToStore();
+
             PopInProfile created = PopInProfile.CreateSoftFade();
             created.Id = Guid.NewGuid().ToString("N");
             created.Name = "Pop-in " + (store.PopIns.Count + 1).ToString(CultureInfo.InvariantCulture);
@@ -256,6 +338,8 @@ namespace SubtitleForge
 
         private void DeleteProfileClick(object sender, RoutedEventArgs e)
         {
+            CommitDraftToStore();
+
             ProfileListItem? item = ProfileCombo.SelectedItem as ProfileListItem;
             if (item == null || store.PopIns.Count <= 1)
             {
@@ -311,17 +395,38 @@ namespace SubtitleForge
 
         private void SaveClick(object sender, RoutedEventArgs e)
         {
-            FieldChanged(sender, e);
-            if (string.IsNullOrWhiteSpace(draft.Name))
-            {
-                draft.Name = "Pop-in";
-            }
-
-            store.UpsertPopIn(draft.Clone());
-            store.Save();
+            CommitDraftToStore();
             DialogResult = true;
             Close();
         }
+
+        /// <summary>
+        /// Enter while a field is being edited submits that field: the value is validated, written
+        /// to the draft and the field gives up focus. Without this Enter fell through to the window's
+        /// default Save button and saved the whole profile.
+        /// </summary>
+        private void FieldPreviewKeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key != Key.Enter && e.Key != Key.Return)
+            {
+                return;
+            }
+
+            if (Keyboard.FocusedElement is not TextBox box)
+            {
+                return;
+            }
+
+            NumericDragBox? numeric = box as NumericDragBox;
+            if (numeric != null)
+            {
+                numeric.Commit();
+            }
+
+            box.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
+            e.Handled = true;
+        }
+
 
         private void CancelClick(object sender, RoutedEventArgs e)
         {

@@ -106,6 +106,8 @@ namespace SubtitleForge
         {
             InitializeComponent();
 
+            PreviewMouseDown += MainWindowPreviewMouseDown;
+
             CueList.ItemsSource = cues;
             cues.CollectionChanged += OnCuesCollectionChanged;
 
@@ -4801,6 +4803,49 @@ namespace SubtitleForge
 
         // ── Export ─────────────────────────────────────────────────────────
 
+        /// <summary>
+        /// Clicking anywhere that is not a text field drops keyboard focus, so the transport and
+        /// editing shortcuts work again without having to focus another field first.
+        /// </summary>
+        private void MainWindowPreviewMouseDown(object sender, MouseButtonEventArgs e)
+        {
+            if (Keyboard.FocusedElement is not TextBox)
+            {
+                return;
+            }
+
+            if (e.OriginalSource is DependencyObject source && IsInsideTextInput(source))
+            {
+                return;
+            }
+
+            Keyboard.ClearFocus();
+        }
+
+        private static bool IsInsideTextInput(DependencyObject source)
+        {
+            DependencyObject? current = source;
+            while (current != null)
+            {
+                if (current is TextBox)
+                {
+                    return true;
+                }
+
+                // A click on the scrollbar or the border of a field is still a click on that field.
+                if (current is Visual)
+                {
+                    current = VisualTreeHelper.GetParent(current);
+                }
+                else
+                {
+                    current = LogicalTreeHelper.GetParent(current);
+                }
+            }
+
+            return false;
+        }
+
         private void ExportClick(object sender, RoutedEventArgs e)
         {
             if (isBusy)
@@ -4898,6 +4943,39 @@ namespace SubtitleForge
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
             }
+        }
+
+        /// <summary>
+        /// Resolves every cue to the profiles and placement it will be drawn with, so the burn-in
+        /// renderer can reproduce the preview exactly without touching the profile store.
+        /// </summary>
+        private List<BurnInCue> BuildBurnInCues()
+        {
+            List<BurnInCue> list = new List<BurnInCue>();
+            ProfileStore store = App.Profiles;
+
+            foreach (SubtitleCue cue in cues)
+            {
+                if (cue.End <= cue.Start)
+                {
+                    continue;
+                }
+
+                list.Add(new BurnInCue
+                {
+                    Text = cue.Text ?? string.Empty,
+                    StartSeconds = cue.Start.TotalSeconds,
+                    EndSeconds = cue.End.TotalSeconds,
+                    Style = store.ResolveStyle(cue.StyleProfileId ?? App.Settings.DefaultStyleProfileId),
+                    Idle = store.ResolveIdle(cue.IdleProfileId ?? App.Settings.DefaultIdleProfileId),
+                    PopIn = store.ResolvePopIn(cue.PopInProfileId ?? App.Settings.DefaultPopInProfileId),
+                    PositionX = cue.PositionX ?? App.Settings.OverlayPositionX,
+                    PositionY = cue.PositionY ?? App.Settings.OverlayPositionY,
+                    Scale = cue.Scale ?? App.Settings.OverlayScale
+                });
+            }
+
+            return list;
         }
 
         private void WriteSubtitleFile(string outputPath, string format)
@@ -5057,8 +5135,7 @@ namespace SubtitleForge
                     .ExportAsync(
                         ffmpeg,
                         options,
-                        cues,
-                        BuildAssStyle(),
+                        BuildBurnInCues(),
                         options.SourcePath,
                         mediaPath,
                         progress,

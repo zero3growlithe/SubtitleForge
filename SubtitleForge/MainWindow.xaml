@@ -229,6 +229,17 @@
                           SelectionMode="Extended"
                           SelectionChanged="CueListSelectionChanged"
                           MouseDoubleClick="CueListMouseDoubleClick">
+                    <ListView.ItemContainerStyle>
+                        <Style TargetType="ListViewItem" BasedOn="{StaticResource {x:Type ListViewItem}}">
+                            <Style.Triggers>
+                                <!-- Cues that carry their own style/idle/pop-in are tinted so they are
+                                     easy to tell apart from the ones running on the defaults. -->
+                                <DataTrigger Binding="{Binding HasCustomLook}" Value="True">
+                                    <Setter Property="Foreground" Value="{StaticResource AccentTextBrush}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </ListView.ItemContainerStyle>
                     <ListView.View>
                         <GridView AllowsColumnReorder="False">
                             <GridViewColumn Header="#" Width="34" DisplayMemberBinding="{Binding Number}" />

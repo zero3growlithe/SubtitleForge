@@ -34,13 +34,18 @@ namespace SubtitleForge
             UpdateOptionState();
         }
 
+        private void QualityChanged(object sender, SelectionChangedEventArgs e)
+        {
+            UpdateOptionState();
+        }
+
         private void UpdateOptionState()
         {
             // The combo boxes raise SelectionChanged while the XAML is still being parsed.
             if (IncludeVideoCheck == null || IncludeAudioCheck == null || ExportButton == null
                 || SubtitleFormatCombo == null || BackgroundColorCombo == null
                 || CustomColorBox == null || HintText == null || BurnSubtitlesCheck == null
-                || IncludeSubtitlesCheck == null)
+                || IncludeSubtitlesCheck == null || ResolutionCombo == null || AudioQualityCombo == null)
             {
                 return;
             }
@@ -51,11 +56,21 @@ namespace SubtitleForge
             bool burnSubtitles = BurnSubtitlesCheck.IsChecked == true;
 
             SubtitleFormatCombo.IsEnabled = includeSubtitles;
+
+            // Resolution only means something when there is a picture to scale, and audio quality
+            // (or a straight copy) only when audio is kept.
+            ResolutionCombo.IsEnabled = includeVideo || burnSubtitles;
+            AudioQualityCombo.IsEnabled = includeAudio;
             BackgroundColorCombo.IsEnabled = burnSubtitles && !includeVideo;
             CustomColorBox.IsEnabled = BackgroundColorCombo.IsEnabled && IsCustomColor();
 
             bool wantsMedia = includeVideo || includeAudio || burnSubtitles;
             ExportButton.IsEnabled = wantsMedia || includeSubtitles;
+
+            bool resizes = ResolutionCombo.IsEnabled && SelectedResolutionHeight() > 0;
+            bool reEncodesAudio = includeAudio
+                && !string.Equals(SelectedAudioBitrate(), "copy", StringComparison.OrdinalIgnoreCase);
+            bool reEncodes = burnSubtitles || resizes || reEncodesAudio;
 
             if (burnSubtitles && !includeVideo)
             {
@@ -69,14 +84,41 @@ namespace SubtitleForge
                 HintText.Text = "The subtitles are burned into the video picture (re-encoded). "
                     + "The original file is never modified.";
             }
-            else if (wantsMedia)
+            else if (wantsMedia && !reEncodes)
             {
                 HintText.Text = "Video and audio are copied without re-encoding, so this is quick.";
+            }
+            else if (wantsMedia)
+            {
+                HintText.Text = "Re-encoded to match the chosen quality. "
+                    + "Pick \"Same as source\" for the audio (and for the resolution) to keep it "
+                    + "byte-for-byte instead. The original file is never modified.";
             }
             else
             {
                 HintText.Text = "Only the subtitle file is written.";
             }
+        }
+
+        /// <summary>0 keeps the source size; anything else is the height to scale to.</summary>
+        private int SelectedResolutionHeight()
+        {
+            ComboBoxItem? item = ResolutionCombo.SelectedItem as ComboBoxItem;
+            string? tag = item == null ? null : item.Tag as string;
+            int height;
+            if (!string.IsNullOrEmpty(tag) && int.TryParse(tag, out height))
+            {
+                return height;
+            }
+
+            return 0;
+        }
+
+        private string SelectedAudioBitrate()
+        {
+            ComboBoxItem? item = AudioQualityCombo.SelectedItem as ComboBoxItem;
+            string? tag = item == null ? null : item.Tag as string;
+            return string.IsNullOrWhiteSpace(tag) ? "320k" : tag;
         }
 
         private bool IsCustomColor()
@@ -158,6 +200,9 @@ namespace SubtitleForge
             {
                 options.BackgroundColor = SelectedColor();
             }
+
+            options.OutputHeight = SelectedResolutionHeight();
+            options.AudioBitrate = SelectedAudioBitrate();
 
             ComboBoxItem? formatItem = SubtitleFormatCombo.SelectedItem as ComboBoxItem;
             string? format = formatItem == null ? null : formatItem.Tag as string;

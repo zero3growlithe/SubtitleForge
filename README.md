@@ -24,9 +24,11 @@ Everything runs on your machine. No cloud, no API keys, no uploads.
   overlaps are removed, non-speech markers (`[Music]`, `(applause)`) are dropped.
 - **One `Export…` button.** Its menu offers the subtitle formats (`.srt` / `.vtt` / `.ass`)
   and `As MP4…`, which opens a small dialog with the toggles **Include video**,
-  **Include audio**, **Include subtitles (as a file)** and **Burn in subtitles**. Without
-  video the burn-in renders onto a **solid colour backdrop** (chroma green by default) so the
-  result keys out cleanly in another program; audio and the sidecar can be combined freely.
+  **Include audio**, **Include subtitles (as a file)** and **Burn in subtitles**, plus a
+  **video resolution** (same as source, 4K, 1440p, 1080p, 720p, 480p) and an **audio quality**
+  (320 / 256 / 192 / 128 kbps, or a straight copy of the source stream). Without video the
+  burn-in renders onto a **solid colour backdrop** (chroma green by default) so the result keys
+  out cleanly in another program; audio and the sidecar can be combined freely.
 - **Open existing** `.srt` / `.vtt` to edit them with the same tools.
 - **Models…** dialog: shows every model, its size on disk and whether it is downloaded,
   with per-model `Delete`, `Delete all`, and a shortcut to the models folder.
@@ -136,14 +138,31 @@ An outline can be drawn **inside** the glyph (either the `Inside` switch or a ne
 and can **fill** the glyph with its colour as a base layer, which is how a solid silhouette under a
 translucent gradient is made.
 
-The default text style profile also drives **burned-in** exports: `As MP4…` with *Burn in
-subtitles* uses its font, size, weight, fill colour and the first font-targeted outline and shadow,
-so the exported video matches the preview (animations are not baked in).
+**Burned-in exports are rendered, not typeset.** `As MP4…` with *Burn in subtitles* draws every
+frame with the very same control the preview uses and pipes the raw frames into ffmpeg as an alpha
+overlay, so the export matches the preview exactly: the profile's font, gradient fills, the whole
+effect stack (including `Composition` targets) and the idle / pop-in animations. The frames are
+drawn on a separate STA thread so a long export never freezes the window, frames without a cue are
+skipped without drawing, and the picture is scaled to the resolution picked in the export dialog with
+the subtitles rendered at that same resolution.
 
 Colours are picked with a real colour picker — a saturation/value square, hue and alpha ramps,
 preset swatches and an optional hex field (`#RRGGBB` or `#AARRGGBB`) — so the swatches in the
 editor are the only thing you click. Every numeric field is scrubbable Unity-style: drag left or
 right to change the value (`Shift` = fine, `Ctrl` = coarse) or click once to type it.
+
+Every creator has a **Duplicate** button next to `New` / `Delete`, and switching profiles inside a
+creator saves the edits of the profile you were just in, so the picker doubles as a commit. `Enter`
+in any field submits it — the value is validated and the field gives up focus instead of triggering
+the window's Save button — and `Esc` puts the previous value back.
+
+Cues that carry their own style, idle or pop-in profile are **tinted in the cue list**, so the ones
+running on the defaults stand out. Hovering a row draws an outline instead of a background, which
+used to paint over the selection colour and make selected rows look unselected.
+
+The preview audio cache is encoded at **320 kbps** rather than 192 kbps, and in the main window a
+click outside a text field drops keyboard focus, so the transport and editing shortcuts work again
+without having to focus another field first.
 
 Both animation creators have a **per character / word / whole cue** switch next to the
 per-character toggle, so a sine wave can travel through the letters, move whole words out of

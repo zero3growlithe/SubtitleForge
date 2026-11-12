@@ -13,6 +13,7 @@
         <SolidColorBrush x:Key="TextBrush" Color="#FFE8E8EC" />
         <SolidColorBrush x:Key="SubtleTextBrush" Color="#FF9A9AA6" />
         <SolidColorBrush x:Key="AccentBrush" Color="#FF2F81F7" />
+        <SolidColorBrush x:Key="AccentTextBrush" Color="#FF4AA3FF" />
         <SolidColorBrush x:Key="AccentHoverBrush" Color="#FF4A93F8" />
         <SolidColorBrush x:Key="SelectionBrush" Color="#FF2B4F80" />
         <SolidColorBrush x:Key="CueMarkIdleBrush" Color="#FF27568F" />
@@ -218,7 +219,12 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ListViewItem">
-                        <Border x:Name="Chrome" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                        <!-- The border is always there so the hover outline does not shift the row by a pixel. -->
+                        <Border x:Name="Chrome"
+                                Background="{TemplateBinding Background}"
+                                BorderThickness="1"
+                                BorderBrush="Transparent"
+                                Padding="{TemplateBinding Padding}">
                             <GridViewRowPresenter Content="{TemplateBinding Content}"
                                                   Columns="{TemplateBinding GridView.ColumnCollection}"
                                                   VerticalAlignment="Center" />
@@ -228,8 +234,18 @@
                                 <Setter TargetName="Chrome" Property="Background" Value="{StaticResource SelectionBrush}" />
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Chrome" Property="Background" Value="#FF2A2A33" />
+                                <!-- Hover is an outline only: a background here used to paint over the
+                                     selection colour and a selected row looked unselected while hovered. -->
+                                <Setter TargetName="Chrome" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
                             </Trigger>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions>
+                                    <Condition Property="IsSelected" Value="True" />
+                                    <Condition Property="IsMouseOver" Value="True" />
+                                </MultiTrigger.Conditions>
+                                <Setter TargetName="Chrome" Property="Background" Value="{StaticResource SelectionBrush}" />
+                                <Setter TargetName="Chrome" Property="BorderBrush" Value="{StaticResource AccentTextBrush}" />
+                            </MultiTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -514,17 +530,27 @@
                     <ControlTemplate TargetType="ListBoxItem">
                         <Border x:Name="Chrome"
                                 Background="{TemplateBinding Background}"
+                                BorderThickness="1"
+                                BorderBrush="Transparent"
                                 Padding="{TemplateBinding Padding}"
                                 SnapsToDevicePixels="True">
                             <ContentPresenter TextBlock.Foreground="{TemplateBinding Foreground}" />
                         </Border>
                         <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Chrome" Property="Background" Value="#FF33333D" />
-                            </Trigger>
                             <Trigger Property="IsSelected" Value="True">
                                 <Setter TargetName="Chrome" Property="Background" Value="{StaticResource SelectionBrush}" />
                             </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Chrome" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                            </Trigger>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions>
+                                    <Condition Property="IsSelected" Value="True" />
+                                    <Condition Property="IsMouseOver" Value="True" />
+                                </MultiTrigger.Conditions>
+                                <Setter TargetName="Chrome" Property="Background" Value="{StaticResource SelectionBrush}" />
+                                <Setter TargetName="Chrome" Property="BorderBrush" Value="{StaticResource AccentTextBrush}" />
+                            </MultiTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>

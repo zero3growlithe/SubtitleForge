@@ -104,10 +104,9 @@ The subtitle overlay is rendered as per-character geometry, so every glyph can b
 its own. Three kinds of named profile drive it:
 
 - **Style** — font family, bold/italic, size (pixels on a 1080-tall canvas), fill colour
-  (solid or a two-stop gradient with a direction), any number of **outlines** and **shadows**
-  (each with its own colour/gradient, thickness, offset and opacity), how many words to show at
-  a time (`0` = the whole cue, `1` = one word at a time), and an optional highlight colour for
-  the word currently being spoken.
+  (solid or a two-stop gradient with a direction), how many words to show at a time (`0` = the
+  whole cue, `1` = one word at a time), and an optional highlight colour for the word currently
+  being spoken.
 - **Style, spacing** — character spacing and word spacing (in design pixels, negative values
   tighten the text), so a title can be tracked out without touching the font.
 - **Idle animation** — shake, sine drift on X and Y (amplitude as a multiple of the font size,
@@ -119,12 +118,23 @@ its own. Three kinds of named profile drive it:
   wobble (separate X/Y amplitude, frequency and falloff), or fade in. Either the whole text
   enters at once or the characters enter one by one with an adjustable delay.
 
-Outlines and shadows each carry a **target**: `Font` applies them to the glyphs, `Composition`
-applies them around the finished font + outlines + shadows stack. An outline can be drawn
-**inside** the glyph (either the `Inside` switch or a negative thickness) and can **fill** the
-glyph with its colour as a base layer, which is how a solid silhouette under a translucent
-gradient is made. The list order **is** the paint order, and each stack can be reordered with the
-`▲` / `▼` buttons under it (or `Ctrl+Up` / `Ctrl+Down`).
+Outlines and shadows share **one effect stack**: a single list, a single `Add effect` button, and
+a **Type** dropdown (`Outline` / `Shadow`) in the properties that shows only the fields that matter
+for that type — thickness, offsets, colour and gradient for both, plus `Opacity` for shadows and
+`Inside the glyph` / `Fill the glyph` for outlines. The list order **is** the paint order (first
+entry sits closest to the fill), and entries can be reordered with the `▲` / `▼` buttons under the
+list or with `Ctrl+Up` / `Ctrl+Down`.
+
+Every effect carries a **target**:
+
+- `Font` paints the effect per glyph, underneath that glyph's fill.
+- `Composition` combines all glyphs into **one silhouette** first and paints the effect around
+  that, so a ring wraps the whole line instead of every letter, and a composition shadow or fill
+  covers the block as a single shape instead of per-character copies.
+
+An outline can be drawn **inside** the glyph (either the `Inside` switch or a negative thickness)
+and can **fill** the glyph with its colour as a base layer, which is how a solid silhouette under a
+translucent gradient is made.
 
 The default text style profile also drives **burned-in** exports: `As MP4…` with *Burn in
 subtitles* uses its font, size, weight, fill colour and the first font-targeted outline and shadow,
@@ -143,8 +153,10 @@ Three buttons in the toolbar open one creator per kind — **Text style…**, **
 **Pop-in…**. Each one lists the saved profiles of that kind with `New`, `Delete` and
 `Set as default`, edits every field with numeric inputs and colour/gradient pickers, and shows a
 live preview that loops the animation so you can judge it before saving. The preview has its own
-**preview size** field: the profile's font size is authored for a 1080-tall canvas and would be
-far too large in a small preview, so the preview ignores it and uses the size you set there.
+**preview size** field, and it is a *scale*, not a font-size override: the overlay multiplies the
+font size and every effect width/offset/gap by it, so the preview keeps exactly the proportions of
+the finished video and an outline that looks right in the editor looks right on the video. While
+you have not touched the field it follows the profile's own font size.
 
 A **multi-selection** in the cue list can be edited as one: every field in the cue editor — text,
 start, end, style, idle, pop-in, X, Y and scale — shows a dash `—` while the selected cues
@@ -153,7 +165,9 @@ several cues are selected keeps each cue's own length. While the video plays, th
 the spoken cue so the editor always shows the line that is on screen.
 
 Profiles live in `%AppData%\SubtitleForge\profiles` (`styles.json`, `idle.json`,
-`popin.json`) and are plain JSON, so they can be shared or hand-edited. Every cue uses the
+`popin.json`) and are plain JSON, so they can be shared or hand-edited. A `styles.json` written
+before the effect stacks were merged still loads: its `Outlines` and `Shadows` arrays are folded
+into the single `Effects` list on read, shadows first so the old look is preserved. Every cue uses the
 default profile of its kind unless it overrides one in the Cues view, where each cue has its own
 **Style / Idle / Pop-in** pickers (default entries marked `(default …)`) plus **X / Y / Scale**
 boxes and `Reset placement` — X and Y are fractions of the frame (`0.5, 0.86` places the cue at

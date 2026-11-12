@@ -1998,34 +1998,39 @@ namespace SubtitleForge
                 style.Italic = profile.Italic;
                 style.PrimaryColour = StyleBrushes.ToAssColor(profile.Fill, profile.Opacity);
 
-                OutlineLayer? outline = null;
-                foreach (OutlineLayer candidate in profile.Outlines)
+                // ASS has a single outline and a single shadow, so the first enabled entry of each
+                // kind that targets the glyphs stands in for the whole stack.
+                EffectLayer? outline = null;
+                EffectLayer? shadow = null;
+                foreach (EffectLayer candidate in profile.Effects)
                 {
-                    if (candidate.Enabled && string.Equals(candidate.Target, EffectTarget.Font, StringComparison.OrdinalIgnoreCase))
+                    if (!candidate.Enabled
+                        || !string.Equals(candidate.Target, EffectTarget.Font, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    if (candidate.IsShadow)
+                    {
+                        if (shadow == null)
+                        {
+                            shadow = candidate;
+                        }
+                    }
+                    else if (outline == null)
                     {
                         outline = candidate;
-                        break;
                     }
                 }
 
                 if (outline != null)
                 {
-                    style.OutlineThickness = (int)Math.Max(1.0, Math.Round(outline.Thickness * factor));
+                    style.OutlineThickness = (int)Math.Max(1.0, Math.Round(Math.Abs(outline.Thickness) * factor));
                     style.OutlineColour = StyleBrushes.ToAssColor(outline.Color, 1.0);
                 }
                 else
                 {
                     style.OutlineThickness = 0;
-                }
-
-                ShadowLayer? shadow = null;
-                foreach (ShadowLayer candidate in profile.Shadows)
-                {
-                    if (candidate.Enabled && string.Equals(candidate.Target, EffectTarget.Font, StringComparison.OrdinalIgnoreCase))
-                    {
-                        shadow = candidate;
-                        break;
-                    }
                 }
 
                 if (shadow != null)

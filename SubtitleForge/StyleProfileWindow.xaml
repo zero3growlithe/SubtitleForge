@@ -122,8 +122,11 @@
                     <controls:ColorSpecPicker x:Name="HighlightPicker" ValueChanged="FillChanged" />
                 </StackPanel>
 
-                <!-- Outlines -->
-                <TextBlock Text="Outlines (painted in list order, bottom to top)" FontWeight="SemiBold" Margin="0,16,0,4" />
+                <!-- Effects -->
+                <TextBlock Text="Effects (painted in list order, bottom to top)"
+                           FontWeight="SemiBold"
+                           Margin="0,16,0,4"
+                           ToolTip="Outlines and shadows share one stack. The first entry sits closest to the glyphs, the last one furthest out. Ctrl+Up / Ctrl+Down reorder." />
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="230" />
@@ -131,169 +134,112 @@
                     </Grid.ColumnDefinitions>
 
                     <StackPanel Grid.Column="0">
-                        <ListBox x:Name="OutlineList"
-                                 Height="112"
-                                 SelectionChanged="OutlineSelectionChanged"
-                                 PreviewKeyDown="StackPreviewKeyDown" />
+                        <ListBox x:Name="EffectList"
+                                 Height="150"
+                                 SelectionChanged="EffectSelectionChanged"
+                                 PreviewKeyDown="EffectListPreviewKeyDown" />
                         <WrapPanel Margin="0,6,0,0">
-                            <Button Content="Add" MinWidth="0" Padding="10,4" Click="AddOutlineClick" />
-                            <Button Content="Copy" MinWidth="0" Padding="10,4" Click="CopyOutlineClick" />
-                            <Button Content="Remove" MinWidth="0" Padding="10,4" Click="RemoveOutlineClick" />
-                            <Button x:Name="OutlineUpButton"
+                            <Button Content="Add effect" MinWidth="0" Padding="10,4" Click="AddEffectClick" />
+                            <Button Content="Copy" MinWidth="0" Padding="10,4" Click="CopyEffectClick" />
+                            <Button Content="Remove" MinWidth="0" Padding="10,4" Click="RemoveEffectClick" />
+                            <Button x:Name="EffectUpButton"
                                     Content="&#x25B2;"
                                     MinWidth="0"
                                     Padding="0"
                                     Width="26"
-                                    ToolTip="Paint this outline earlier (closer to the glyphs) — Ctrl+Up"
-                                    Click="MoveOutlineUpClick" />
-                            <Button x:Name="OutlineDownButton"
+                                    ToolTip="Paint this effect earlier (closer to the glyphs) — Ctrl+Up"
+                                    Click="MoveEffectUpClick" />
+                            <Button x:Name="EffectDownButton"
                                     Content="&#x25BC;"
                                     MinWidth="0"
                                     Padding="0"
                                     Width="26"
-                                    ToolTip="Paint this outline later (further out) — Ctrl+Down"
-                                    Click="MoveOutlineDownClick" />
+                                    ToolTip="Paint this effect later (further out) — Ctrl+Down"
+                                    Click="MoveEffectDownClick" />
                         </WrapPanel>
                     </StackPanel>
 
                     <StackPanel Grid.Column="1" Margin="10,0,0,0">
                         <WrapPanel>
                             <TextBlock Text="Name" Style="{StaticResource SectionLabelStyle}" />
-                            <TextBox x:Name="OutlineNameBox" Width="112" Margin="0,0,10,0" LostFocus="OutlineFieldChanged" />
-                            <CheckBox x:Name="OutlineEnabledCheck" Content="On" Margin="0,0,10,0" Click="OutlineFieldChanged" />
-                            <TextBlock Text="Applies to" Style="{StaticResource SectionLabelStyle}" />
-                            <ComboBox x:Name="OutlineTargetCombo" Width="118" SelectionChanged="OutlineFieldChanged">
-                                <ComboBoxItem Content="Font" Tag="Font" />
-                                <ComboBoxItem Content="Composition" Tag="Composition" />
-                            </ComboBox>
+                            <TextBox x:Name="EffectNameBox" Width="112" Margin="0,0,10,0" LostFocus="EffectFieldChanged" />
+                            <CheckBox x:Name="EffectEnabledCheck" Content="On" Margin="0,0,10,0" Click="EffectFieldChanged" />
                         </WrapPanel>
                         <WrapPanel Margin="0,6,0,0">
-                            <TextBlock Text="Thickness" Style="{StaticResource SectionLabelStyle}" />
-                            <controls:NumericDragBox x:Name="OutlineThicknessBox"
-                                                     Width="56"
-                                                     Margin="0,0,10,0"
-                                                     Minimum="-40"
-                                                     Maximum="40"
-                                                     DragStep="0.1"
-                                                     Format="0.#"
-                                                     ToolTip="Negative values render the outline to the inside"
-                                                     ValueChanged="OutlineFieldChanged" />
-                            <TextBlock Text="Offset X" Style="{StaticResource SectionLabelStyle}" />
-                            <controls:NumericDragBox x:Name="OutlineOffsetXBox"
-                                                     Width="56"
-                                                     Margin="0,0,10,0"
-                                                     Minimum="-200"
-                                                     Maximum="200"
-                                                     DragStep="0.5"
-                                                     Format="0.#"
-                                                     ValueChanged="OutlineFieldChanged" />
-                            <TextBlock Text="Offset Y" Style="{StaticResource SectionLabelStyle}" />
-                            <controls:NumericDragBox x:Name="OutlineOffsetYBox"
-                                                     Width="56"
-                                                     Minimum="-200"
-                                                     Maximum="200"
-                                                     DragStep="0.5"
-                                                     Format="0.#"
-                                                     ValueChanged="OutlineFieldChanged" />
-                        </WrapPanel>
-                        <WrapPanel Margin="0,6,0,0">
-                            <CheckBox x:Name="OutlineInsideCheck"
-                                      Content="Inside the glyph"
+                            <TextBlock Text="Type" Style="{StaticResource SectionLabelStyle}" />
+                            <ComboBox x:Name="EffectTypeCombo"
+                                      Width="104"
                                       Margin="0,0,14,0"
-                                      ToolTip="Draws the outline on the inside edge instead of around the outside (a negative thickness does the same)"
-                                      Click="OutlineFieldChanged" />
-                            <CheckBox x:Name="OutlineFilledCheck"
-                                      Content="Fill the glyph"
-                                      ToolTip="Also fills the glyph with the outline colour, as a base layer under the fill"
-                                      Click="OutlineFieldChanged" />
-                        </WrapPanel>
-                        <controls:ColorSpecPicker x:Name="OutlineColorPicker" Margin="0,6,0,0" ValueChanged="OutlineColorChanged" />
-                    </StackPanel>
-                </Grid>
-
-                <!-- Shadows -->
-                <TextBlock Text="Shadows (painted in list order, bottom to top)" FontWeight="SemiBold" Margin="0,16,0,4" />
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="230" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-
-                    <StackPanel Grid.Column="0">
-                        <ListBox x:Name="ShadowList"
-                                 Height="112"
-                                 SelectionChanged="ShadowSelectionChanged"
-                                 PreviewKeyDown="StackPreviewKeyDown" />
-                        <WrapPanel Margin="0,6,0,0">
-                            <Button Content="Add" MinWidth="0" Padding="10,4" Click="AddShadowClick" />
-                            <Button Content="Copy" MinWidth="0" Padding="10,4" Click="CopyShadowClick" />
-                            <Button Content="Remove" MinWidth="0" Padding="10,4" Click="RemoveShadowClick" />
-                            <Button x:Name="ShadowUpButton"
-                                    Content="&#x25B2;"
-                                    MinWidth="0"
-                                    Padding="0"
-                                    Width="26"
-                                    ToolTip="Paint this shadow earlier (closer to the glyphs) — Ctrl+Up"
-                                    Click="MoveShadowUpClick" />
-                            <Button x:Name="ShadowDownButton"
-                                    Content="&#x25BC;"
-                                    MinWidth="0"
-                                    Padding="0"
-                                    Width="26"
-                                    ToolTip="Paint this shadow later (further out) — Ctrl+Down"
-                                    Click="MoveShadowDownClick" />
-                        </WrapPanel>
-                    </StackPanel>
-
-                    <StackPanel Grid.Column="1" Margin="10,0,0,0">
-                        <WrapPanel>
-                            <TextBlock Text="Name" Style="{StaticResource SectionLabelStyle}" />
-                            <TextBox x:Name="ShadowNameBox" Width="112" Margin="0,0,10,0" LostFocus="ShadowFieldChanged" />
-                            <CheckBox x:Name="ShadowEnabledCheck" Content="On" Margin="0,0,10,0" Click="ShadowFieldChanged" />
+                                      SelectionChanged="EffectTypeChanged"
+                                      ToolTip="Shadows and outlines live in the same stack; only the fields that apply to the chosen type are shown">
+                                <ComboBoxItem Content="Outline" Tag="Outline" />
+                                <ComboBoxItem Content="Shadow" Tag="Shadow" />
+                            </ComboBox>
                             <TextBlock Text="Applies to" Style="{StaticResource SectionLabelStyle}" />
-                            <ComboBox x:Name="ShadowTargetCombo" Width="118" SelectionChanged="ShadowFieldChanged">
+                            <ComboBox x:Name="EffectTargetCombo"
+                                      Width="118"
+                                      SelectionChanged="EffectFieldChanged"
+                                      ToolTip="Font wraps every glyph on its own; Composition wraps the finished line as one shape">
                                 <ComboBoxItem Content="Font" Tag="Font" />
                                 <ComboBoxItem Content="Composition" Tag="Composition" />
                             </ComboBox>
                         </WrapPanel>
                         <WrapPanel Margin="0,6,0,0">
-                            <TextBlock Text="Thickness" Style="{StaticResource SectionLabelStyle}" />
-                            <controls:NumericDragBox x:Name="ShadowThicknessBox"
+                            <TextBlock x:Name="EffectThicknessLabel" Text="Thickness" Style="{StaticResource SectionLabelStyle}" />
+                            <controls:NumericDragBox x:Name="EffectThicknessBox"
                                                      Width="56"
                                                      Margin="0,0,10,0"
-                                                     Minimum="0"
+                                                     Minimum="-60"
                                                      Maximum="60"
                                                      DragStep="0.1"
                                                      Format="0.#"
-                                                     ValueChanged="ShadowFieldChanged" />
+                                                     ToolTip="Outline: stroke width. Shadow: how far it is spread. A negative outline width draws it inside the glyph."
+                                                     ValueChanged="EffectFieldChanged" />
                             <TextBlock Text="Offset X" Style="{StaticResource SectionLabelStyle}" />
-                            <controls:NumericDragBox x:Name="ShadowOffsetXBox"
+                            <controls:NumericDragBox x:Name="EffectOffsetXBox"
                                                      Width="56"
                                                      Margin="0,0,10,0"
                                                      Minimum="-200"
                                                      Maximum="200"
                                                      DragStep="0.5"
                                                      Format="0.#"
-                                                     ValueChanged="ShadowFieldChanged" />
+                                                     ValueChanged="EffectFieldChanged" />
                             <TextBlock Text="Offset Y" Style="{StaticResource SectionLabelStyle}" />
-                            <controls:NumericDragBox x:Name="ShadowOffsetYBox"
+                            <controls:NumericDragBox x:Name="EffectOffsetYBox"
                                                      Width="56"
-                                                     Margin="0,0,10,0"
                                                      Minimum="-200"
                                                      Maximum="200"
                                                      DragStep="0.5"
                                                      Format="0.#"
-                                                     ValueChanged="ShadowFieldChanged" />
+                                                     ValueChanged="EffectFieldChanged" />
+                        </WrapPanel>
+                        <WrapPanel x:Name="EffectShadowRow" Margin="0,6,0,0">
                             <TextBlock Text="Opacity" Style="{StaticResource SectionLabelStyle}" />
-                            <controls:NumericDragBox x:Name="ShadowOpacityBox"
+                            <controls:NumericDragBox x:Name="EffectOpacityBox"
                                                      Width="56"
+                                                     Margin="0,0,10,0"
                                                      Minimum="0"
                                                      Maximum="1"
                                                      DragStep="0.01"
                                                      Format="0.##"
-                                                     ValueChanged="ShadowFieldChanged" />
+                                                     ValueChanged="EffectFieldChanged" />
+                            <TextBlock Text="Thickness sets how far the shadow is spread."
+                                       FontSize="11"
+                                       VerticalAlignment="Center"
+                                       Foreground="{StaticResource SubtleTextBrush}" />
                         </WrapPanel>
-                        <controls:ColorSpecPicker x:Name="ShadowColorPicker" Margin="0,6,0,0" ValueChanged="ShadowColorChanged" />
+                        <WrapPanel x:Name="EffectOutlineRow" Margin="0,6,0,0">
+                            <CheckBox x:Name="EffectInsideCheck"
+                                      Content="Inside the glyph"
+                                      Margin="0,0,14,0"
+                                      ToolTip="Draws the outline on the inside edge instead of around the outside (a negative thickness does the same)"
+                                      Click="EffectFieldChanged" />
+                            <CheckBox x:Name="EffectFilledCheck"
+                                      Content="Fill the glyph"
+                                      ToolTip="Also fills the glyph with the outline colour, as a base layer under the fill"
+                                      Click="EffectFieldChanged" />
+                        </WrapPanel>
+                        <controls:ColorSpecPicker x:Name="EffectColorPicker" Margin="0,6,0,0" ValueChanged="EffectColorChanged" />
                     </StackPanel>
                 </Grid>
             </StackPanel>

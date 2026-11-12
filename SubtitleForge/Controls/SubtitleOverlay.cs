@@ -40,6 +40,14 @@ namespace SubtitleForge.Controls
             /// <summary>Glyph index inside the cue, spaces excluded.</summary>
             public int Index;
             public double AppearSeconds;
+
+            /// <summary>Transform worked out in the measuring pass, reused by the draw pass.</summary>
+            public Matrix DrawMatrix = Matrix.Identity;
+
+            public double DrawOpacity = 1.0;
+
+            /// <summary>False when the glyph is hidden or not due yet.</summary>
+            public bool Drawn;
         }
 
         public StyleProfile? TextStyle { get; set; }
@@ -199,9 +207,20 @@ namespace SubtitleForge.Controls
             drawingContext.PushOpacity(globalOpacity);
             drawingContext.PushTransform(new TranslateTransform(originX, originY));
 
+            // Two passes: the effects that wrap the whole block are painted first, around one
+            // silhouette of every glyph, then each glyph gets its own effects and fill. The first
+            // pass therefore only works out the transforms.
+            GeometryGroup? composition = null;
+            if (paint.HasCompositionEffect)
+            {
+                composition = new GeometryGroup();
+                composition.FillRule = FillRule.Nonzero;
+            }
+
             for (int index = 0; index < glyphs.Count; index++)
             {
                 GlyphBox glyph = glyphs[index];
+                glyph.Drawn = false;
                 if (glyph.Geometry.IsEmpty())
                 {
                     continue;
@@ -353,36 +372,71 @@ namespace SubtitleForge.Controls
                 bool rotated = Math.Abs(rotation) > 0.0001;
                 bool moved = Math.Abs(offsetX) > 0.0001 || Math.Abs(offsetY) > 0.0001;
 
-                drawingContext.PushOpacity(opacity);
-
-                if (scaled)
+                // A TransformGroup gives exactly the matrix the three nested pushes used to produce,
+                // and the same matrix can be baked into the composition silhouette.
+                Matrix matrix = Matrix.Identity;
+                if (scaled || rotated || moved)
                 {
-                    drawingContext.PushTransform(new ScaleTransform(scaleX, scaleY, centerX, centerY));
+                    TransformGroup group = new TransformGroup();
+                    if (scaled)
+                    {
+                        group.Children.Add(new ScaleTransform(scaleX, scaleY, centerX, centerY));
+                    }
+
+                    if (rotated)
+                    {
+                        group.Children.Add(new RotateTransform(rotation, centerX, centerY));
+                    }
+
+                    if (moved)
+                    {
+                        group.Children.Add(new TranslateTransform(offsetX, offsetY));
+                    }
+
+                    matrix = group.Value;
                 }
 
-                if (rotated)
+                glyph.DrawMatrix = matrix;
+                glyph.DrawOpacity = opacity;
+                glyph.Drawn = true;
+
+                if (composition != null)
                 {
-                    drawingContext.PushTransform(new RotateTransform(rotation, centerX, centerY));
+                    composition.Children.Add(matrix.IsIdentity
+                        ? glyph.Geometry
+                        : glyph.Geometry.GetTransformedCopy(matrix));
+                }
+            }
+
+            if (composition != null && composition.Children.Count > 0)
+            {
+                DrawEffects(drawingContext, composition, style, paint, EffectTarget.Composition);
+            }
+
+            for (int index = 0; index < glyphs.Count; index++)
+            {
+                GlyphBox glyph = glyphs[index];
+                if (!glyph.Drawn)
+                {
+                    continue;
                 }
 
-                if (moved)
+                drawingContext.PushOpacity(glyph.DrawOpacity);
+                if (!glyph.DrawMatrix.IsIdentity)
                 {
-                    drawingContext.PushTransform(new TranslateTransform(offsetX, offsetY));
+                    drawingContext.PushTransform(new MatrixTransform(glyph.DrawMatrix));
                 }
 
-                DrawGlyph(drawingContext, glyph, style, paint);
+                DrawEffects(drawingContext, glyph.Geometry, style, paint, EffectTarget.Font);
 
-                if (moved)
+                bool highlighted = style.HighlightSpokenWord && glyph.WordIndex == highlightWordIndex;
+                Brush? brush = highlighted && paint.Highlight != null ? paint.Highlight : paint.Fill;
+                if (brush != null)
                 {
-                    drawingContext.Pop();
+                    drawingContext.DrawGeometry(brush, null, glyph.Geometry);
                 }
 
-                if (rotated)
-                {
-                    drawingContext.Pop();
-                }
-
-                if (scaled)
+                if (!glyph.DrawMatrix.IsIdentity)
                 {
                     drawingContext.Pop();
                 }
@@ -398,20 +452,21 @@ namespace SubtitleForge.Controls
         {
             public Brush? Fill;
             public Brush? Highlight;
-            public Brush?[] ShadowCore = Array.Empty<Brush?>();
-            public Brush?[] ShadowSoft = Array.Empty<Brush?>();
-            public Brush?[] Outline = Array.Empty<Brush?>();
 
-            // Pens are built once per frame as well: creating one per glyph per layer dominated the
-            // frame time on long cues.
-            public Pen?[] ShadowPens = Array.Empty<Pen?>();
-            public Pen?[] OutlinePens = Array.Empty<Pen?>();
-            public double[] ShadowOffsetX = Array.Empty<double>();
-            public double[] ShadowOffsetY = Array.Empty<double>();
-            public double[] OutlineOffsetX = Array.Empty<double>();
-            public double[] OutlineOffsetY = Array.Empty<double>();
-            public bool[] OutlineInside = Array.Empty<bool>();
-            public bool[] OutlineFilled = Array.Empty<bool>();
+            // One slot per effect layer. Brushes and pens are built once per frame: creating them per
+            // glyph per layer dominated the frame time on long cues.
+            public Brush?[] EffectBrush = Array.Empty<Brush?>();
+            public Pen?[] EffectPen = Array.Empty<Pen?>();
+            public Pen?[] EffectHaloPen = Array.Empty<Pen?>();
+            public double[] EffectOffsetX = Array.Empty<double>();
+            public double[] EffectOffsetY = Array.Empty<double>();
+            public bool[] EffectIsShadow = Array.Empty<bool>();
+            public bool[] EffectInside = Array.Empty<bool>();
+            public bool[] EffectFilled = Array.Empty<bool>();
+            public string[] EffectTarget = Array.Empty<string>();
+
+            /// <summary>True when any enabled effect wraps the whole composition instead of each glyph.</summary>
+            public bool HasCompositionEffect;
         }
 
         private static Pen CreatePen(Brush brush, double thickness)
@@ -432,116 +487,100 @@ namespace SubtitleForge.Controls
                 ? StyleBrushes.CreateBrush(style.HighlightFill, bounds, 1.0)
                 : null;
 
-            paint.ShadowCore = new Brush?[style.Shadows.Count];
-            paint.ShadowSoft = new Brush?[style.Shadows.Count];
-            paint.ShadowPens = new Pen?[style.Shadows.Count];
-            paint.ShadowOffsetX = new double[style.Shadows.Count];
-            paint.ShadowOffsetY = new double[style.Shadows.Count];
-            for (int index = 0; index < style.Shadows.Count; index++)
+            int count = style.Effects.Count;
+            paint.EffectBrush = new Brush?[count];
+            paint.EffectPen = new Pen?[count];
+            paint.EffectHaloPen = new Pen?[count];
+            paint.EffectOffsetX = new double[count];
+            paint.EffectOffsetY = new double[count];
+            paint.EffectIsShadow = new bool[count];
+            paint.EffectInside = new bool[count];
+            paint.EffectFilled = new bool[count];
+            paint.EffectTarget = new string[count];
+
+            for (int index = 0; index < count; index++)
             {
-                ShadowLayer shadow = style.Shadows[index];
-                paint.ShadowOffsetX[index] = shadow.OffsetX * scaleFactor;
-                paint.ShadowOffsetY[index] = shadow.OffsetY * scaleFactor;
-                if (!shadow.Enabled)
+                EffectLayer effect = style.Effects[index];
+                paint.EffectTarget[index] = effect.Target;
+                paint.EffectIsShadow[index] = effect.IsShadow;
+                paint.EffectOffsetX[index] = effect.OffsetX * scaleFactor;
+                paint.EffectOffsetY[index] = effect.OffsetY * scaleFactor;
+
+                if (!effect.Enabled)
                 {
                     continue;
                 }
 
-                double layerOpacity = Math.Max(0.0, Math.Min(1.0, shadow.Opacity));
-                paint.ShadowCore[index] = StyleBrushes.CreateBrush(shadow.Color, bounds, layerOpacity);
-                Brush? soft = StyleBrushes.CreateBrush(shadow.Color, bounds, layerOpacity * 0.45);
-                paint.ShadowSoft[index] = soft;
-
-                double halo = Math.Max(0.0, shadow.Thickness * scaleFactor) * 2.0;
-                if (halo > 0.6 && soft != null)
+                if (string.Equals(effect.Target, EffectTarget.Composition, StringComparison.OrdinalIgnoreCase))
                 {
-                    paint.ShadowPens[index] = CreatePen(soft, halo);
-                }
-            }
-
-            paint.Outline = new Brush?[style.Outlines.Count];
-            paint.OutlinePens = new Pen?[style.Outlines.Count];
-            paint.OutlineOffsetX = new double[style.Outlines.Count];
-            paint.OutlineOffsetY = new double[style.Outlines.Count];
-            paint.OutlineInside = new bool[style.Outlines.Count];
-            paint.OutlineFilled = new bool[style.Outlines.Count];
-            for (int index = 0; index < style.Outlines.Count; index++)
-            {
-                OutlineLayer outline = style.Outlines[index];
-                paint.OutlineOffsetX[index] = outline.OffsetX * scaleFactor;
-                paint.OutlineOffsetY[index] = outline.OffsetY * scaleFactor;
-                if (!outline.Enabled)
-                {
-                    continue;
+                    paint.HasCompositionEffect = true;
                 }
 
-                Brush? brush = StyleBrushes.CreateBrush(outline.Color, bounds, 1.0);
-                paint.Outline[index] = brush;
-                paint.OutlineFilled[index] = outline.Filled;
-
-                // A negative thickness is the shorthand for an inside outline; the pen keeps its
-                // full width and the glyph is clipped to its own geometry, which leaves half of the
-                // stroke visible on the inside.
-                paint.OutlineInside[index] = outline.Inside || outline.Thickness < 0.0;
-
-                double width = Math.Abs(outline.Thickness) * scaleFactor * 2.0;
-                if (brush != null && width > 0.2)
+                if (effect.IsShadow)
                 {
-                    paint.OutlinePens[index] = CreatePen(brush, width);
+                    double layerOpacity = Math.Max(0.0, Math.Min(1.0, effect.Opacity));
+                    Brush? core = StyleBrushes.CreateBrush(effect.Color, bounds, layerOpacity);
+                    paint.EffectBrush[index] = core;
+
+                    Brush? soft = StyleBrushes.CreateBrush(effect.Color, bounds, layerOpacity * 0.45);
+                    double halo = Math.Abs(effect.Thickness) * scaleFactor * 2.0;
+                    if (soft != null && halo > 0.6)
+                    {
+                        paint.EffectHaloPen[index] = CreatePen(soft, halo);
+                    }
+                }
+                else
+                {
+                    Brush? brush = StyleBrushes.CreateBrush(effect.Color, bounds, 1.0);
+                    paint.EffectBrush[index] = brush;
+                    paint.EffectFilled[index] = effect.Filled;
+
+                    // A negative thickness is the shorthand for an inside outline; the pen keeps its
+                    // full width and the glyph is clipped to its own geometry, which leaves half of
+                    // the stroke visible on the inside.
+                    paint.EffectInside[index] = effect.Inside || effect.Thickness < 0.0;
+
+                    double width = Math.Abs(effect.Thickness) * scaleFactor * 2.0;
+                    if (brush != null && width > 0.2)
+                    {
+                        paint.EffectPen[index] = CreatePen(brush, width);
+                    }
                 }
             }
 
             return paint;
         }
 
-        private void DrawGlyph(
-            DrawingContext drawingContext,
-            GlyphBox glyph,
-            StyleProfile style,
-            PaintSet paint)
-        {
-            Geometry geometry = glyph.Geometry;
-
-            // Layer order: shadows first (font group, then composition group), then outlines,
-            // then the fill on top so the glyph edges always stay crisp.
-            DrawShadows(drawingContext, geometry, style, paint, EffectTarget.Font);
-            DrawShadows(drawingContext, geometry, style, paint, EffectTarget.Composition);
-            DrawOutlines(drawingContext, geometry, style, paint, EffectTarget.Font);
-            DrawOutlines(drawingContext, geometry, style, paint, EffectTarget.Composition);
-
-            bool highlighted = style.HighlightSpokenWord && glyph.WordIndex == highlightWordIndex;
-            Brush? brush = highlighted && paint.Highlight != null ? paint.Highlight : paint.Fill;
-            if (brush != null)
-            {
-                drawingContext.DrawGeometry(brush, null, geometry);
-            }
-        }
-
-        private static void DrawShadows(
+        /// <summary>
+        /// Paints the effect stack in list order, skipping entries that belong to the other target
+        /// group. Shadows paint their soft halo first so the core sits on top of it.
+        /// </summary>
+        private void DrawEffects(
             DrawingContext drawingContext,
             Geometry geometry,
             StyleProfile style,
             PaintSet paint,
             string target)
         {
-            List<ShadowLayer> shadows = style.Shadows;
-            for (int index = 0; index < shadows.Count; index++)
+            int count = Math.Min(paint.EffectBrush.Length, style.Effects.Count);
+            for (int index = 0; index < count; index++)
             {
-                ShadowLayer shadow = shadows[index];
-                if (!shadow.Enabled || !MatchesTarget(shadow.Target, target))
+                EffectLayer effect = style.Effects[index];
+                if (!effect.Enabled || !MatchesTarget(paint.EffectTarget[index], target))
                 {
                     continue;
                 }
 
-                Brush? core = paint.ShadowCore[index];
-                Pen? halo = paint.ShadowPens[index];
-                if (core == null && halo == null)
+                Brush? brush = paint.EffectBrush[index];
+                Pen? pen = paint.EffectPen[index];
+                Pen? halo = paint.EffectHaloPen[index];
+                if (brush == null && pen == null && halo == null)
                 {
                     continue;
                 }
 
-                double offsetX = paint.ShadowOffsetX[index];
-                double offsetY = paint.ShadowOffsetY[index];
+                double offsetX = paint.EffectOffsetX[index];
+                double offsetY = paint.EffectOffsetY[index];
                 bool shifted = Math.Abs(offsetX) > 0.001 || Math.Abs(offsetY) > 0.001;
 
                 if (shifted)
@@ -549,66 +588,34 @@ namespace SubtitleForge.Controls
                     drawingContext.PushTransform(new TranslateTransform(offsetX, offsetY));
                 }
 
-                if (halo != null)
+                if (paint.EffectIsShadow[index])
                 {
-                    drawingContext.DrawGeometry(null, halo, geometry);
+                    if (halo != null)
+                    {
+                        drawingContext.DrawGeometry(null, halo, geometry);
+                    }
+
+                    if (brush != null)
+                    {
+                        drawingContext.DrawGeometry(brush, null, geometry);
+                    }
                 }
-
-                if (core != null)
+                else
                 {
-                    drawingContext.DrawGeometry(core, null, geometry);
-                }
+                    bool inside = paint.EffectInside[index];
+                    Brush? fill = paint.EffectFilled[index] ? brush : null;
 
-                if (shifted)
-                {
-                    drawingContext.Pop();
-                }
-            }
-        }
+                    if (inside)
+                    {
+                        drawingContext.PushClip(geometry);
+                    }
 
-        private static void DrawOutlines(
-            DrawingContext drawingContext,
-            Geometry geometry,
-            StyleProfile style,
-            PaintSet paint,
-            string target)
-        {
-            List<OutlineLayer> outlines = style.Outlines;
-            for (int index = 0; index < outlines.Count; index++)
-            {
-                OutlineLayer outline = outlines[index];
-                if (!outline.Enabled || !MatchesTarget(outline.Target, target))
-                {
-                    continue;
-                }
+                    drawingContext.DrawGeometry(fill, pen, geometry);
 
-                Pen? pen = paint.OutlinePens[index];
-                Brush? fill = paint.OutlineFilled[index] ? paint.Outline[index] : null;
-                if (pen == null && fill == null)
-                {
-                    continue;
-                }
-
-                double offsetX = paint.OutlineOffsetX[index];
-                double offsetY = paint.OutlineOffsetY[index];
-                bool shifted = Math.Abs(offsetX) > 0.001 || Math.Abs(offsetY) > 0.001;
-                bool inside = paint.OutlineInside[index];
-
-                if (shifted)
-                {
-                    drawingContext.PushTransform(new TranslateTransform(offsetX, offsetY));
-                }
-
-                if (inside)
-                {
-                    drawingContext.PushClip(geometry);
-                }
-
-                drawingContext.DrawGeometry(fill, pen, geometry);
-
-                if (inside)
-                {
-                    drawingContext.Pop();
+                    if (inside)
+                    {
+                        drawingContext.Pop();
+                    }
                 }
 
                 if (shifted)

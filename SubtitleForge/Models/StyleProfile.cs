@@ -27,9 +27,14 @@ namespace SubtitleForge.Models
 
         public ColorSpec Fill { get; set; } = ColorSpec.Solid("#FFFFFFFF");
 
-        public List<OutlineLayer> Outlines { get; set; } = OutlineLayer.CreateDefaults();
+        /// <summary>Outlines and shadows, painted in list order (first entry sits closest to the fill).</summary>
+        public List<EffectLayer> Effects { get; set; } = EffectLayer.CreateDefaults();
 
-        public List<ShadowLayer> Shadows { get; set; } = ShadowLayer.CreateDefaults();
+        /// <summary>Legacy outline stack, only read from profile files written before the merge.</summary>
+        public List<OutlineLayer>? Outlines { get; set; }
+
+        /// <summary>Legacy shadow stack, only read from profile files written before the merge.</summary>
+        public List<ShadowLayer>? Shadows { get; set; }
 
         /// <summary>0 shows the whole cue at once; N shows N words at a time.</summary>
         public int WordsPerDisplay { get; set; }
@@ -40,6 +45,45 @@ namespace SubtitleForge.Models
 
         /// <summary>Opacity of the text block, 0-1.</summary>
         public double Opacity { get; set; } = 1.0;
+
+        /// <summary>
+        /// Folds a legacy two-stack profile into the single effect list and makes sure the list is
+        /// never null. Call after deserialising and after cloning a profile from an older file.
+        /// </summary>
+        public void Normalize()
+        {
+            if (Outlines != null || Shadows != null)
+            {
+                List<EffectLayer> converted = new List<EffectLayer>();
+
+                // Shadows used to be painted before outlines, so keeping that order preserves the
+                // look of an existing profile.
+                if (Shadows != null)
+                {
+                    foreach (ShadowLayer shadow in Shadows)
+                    {
+                        converted.Add(EffectLayer.FromLegacyShadow(shadow));
+                    }
+                }
+
+                if (Outlines != null)
+                {
+                    foreach (OutlineLayer outline in Outlines)
+                    {
+                        converted.Add(EffectLayer.FromLegacyOutline(outline));
+                    }
+                }
+
+                Effects = converted;
+                Outlines = null;
+                Shadows = null;
+            }
+
+            if (Effects == null)
+            {
+                Effects = EffectLayer.CreateDefaults();
+            }
+        }
 
         public StyleProfile Clone()
         {
@@ -53,16 +97,10 @@ namespace SubtitleForge.Models
             copy.CharacterSpacing = CharacterSpacing;
             copy.WordSpacing = WordSpacing;
             copy.Fill = Fill.Clone();
-            copy.Outlines = new List<OutlineLayer>();
-            foreach (OutlineLayer outline in Outlines)
+            copy.Effects = new List<EffectLayer>();
+            foreach (EffectLayer effect in Effects)
             {
-                copy.Outlines.Add(outline.Clone());
-            }
-
-            copy.Shadows = new List<ShadowLayer>();
-            foreach (ShadowLayer shadow in Shadows)
-            {
-                copy.Shadows.Add(shadow.Clone());
+                copy.Effects.Add(effect.Clone());
             }
 
             copy.WordsPerDisplay = WordsPerDisplay;

@@ -58,6 +58,15 @@ namespace SubtitleForge.Services
             store.Styles = LoadList<StyleProfile>(StylesPath);
             store.Idle = LoadList<IdleAnimationProfile>(IdlePath);
             store.PopIns = LoadList<PopInProfile>(PopInsPath);
+
+            // A styles.json written before outlines and shadows became one stack still has the two
+            // old arrays; fold them into the single list so the rest of the program only ever sees
+            // Effects.
+            foreach (StyleProfile style in store.Styles)
+            {
+                style.Normalize();
+            }
+
             store.EnsureDefaults();
             return store;
         }
@@ -108,8 +117,7 @@ namespace SubtitleForge.Services
             style.Bold = true;
             style.FontSize = 64.0;
             style.Fill = ColorSpec.Solid("#FFFFFFFF");
-            style.Outlines = OutlineLayer.CreateDefaults();
-            style.Shadows = ShadowLayer.CreateDefaults();
+            style.Effects = EffectLayer.CreateDefaults();
             style.WordsPerDisplay = 0;
             style.HighlightSpokenWord = false;
             style.HighlightFill = ColorSpec.Solid("#FFFFD54A");

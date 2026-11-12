@@ -23,6 +23,9 @@ namespace SubtitleForge
         private StyleProfile draft = new StyleProfile();
         private bool suppress;
 
+        /// <summary>True once the user scrubbed the preview size, which stops the profile size from overriding it.</summary>
+        private bool previewSizePinned;
+
         /// <summary>
         /// Font size used by the preview only. The profile keeps its own size, which is authored for
         /// a 1080-tall canvas and would render far too large in a 250 px preview.
@@ -192,26 +195,17 @@ namespace SubtitleForge
                 FillPicker.Load(draft.Fill);
                 HighlightPicker.Load(draft.HighlightFill);
 
-                OutlineList.Items.Clear();
-                foreach (OutlineLayer outline in draft.Outlines)
+                draft.Normalize();
+
+                EffectList.Items.Clear();
+                foreach (EffectLayer effect in draft.Effects)
                 {
-                    OutlineList.Items.Add(outline);
+                    EffectList.Items.Add(effect);
                 }
 
-                if (OutlineList.Items.Count > 0)
+                if (EffectList.Items.Count > 0)
                 {
-                    OutlineList.SelectedIndex = 0;
-                }
-
-                ShadowList.Items.Clear();
-                foreach (ShadowLayer shadow in draft.Shadows)
-                {
-                    ShadowList.Items.Add(shadow);
-                }
-
-                if (ShadowList.Items.Count > 0)
-                {
-                    ShadowList.SelectedIndex = 0;
+                    EffectList.SelectedIndex = 0;
                 }
             }
             finally
@@ -219,76 +213,69 @@ namespace SubtitleForge
                 suppress = false;
             }
 
-            LoadOutlineFields();
-            LoadShadowFields();
+            LoadEffectFields();
             UpdatePreview();
         }
 
-        // ── Outline layer editing ──────────────────────────────────────────
+        // ── Effect stack editing ───────────────────────────────────────────
 
-        private OutlineLayer? SelectedOutline
+        private EffectLayer? SelectedEffect
         {
-            get { return OutlineList.SelectedItem as OutlineLayer; }
+            get { return EffectList.SelectedItem as EffectLayer; }
         }
 
-        private ShadowLayer? SelectedShadow
-        {
-            get { return ShadowList.SelectedItem as ShadowLayer; }
-        }
-
-        private void OutlineSelectionChanged(object sender, SelectionChangedEventArgs e)
+        private void EffectSelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (suppress)
             {
                 return;
             }
 
-            LoadOutlineFields();
+            LoadEffectFields();
         }
 
-        private void ShadowSelectionChanged(object sender, SelectionChangedEventArgs e)
+        private void LoadEffectFields()
         {
-            if (suppress)
-            {
-                return;
-            }
-
-            LoadShadowFields();
-        }
-
-        private void LoadOutlineFields()
-        {
-            OutlineLayer? outline = SelectedOutline;
+            EffectLayer? effect = SelectedEffect;
             suppress = true;
             try
             {
-                bool enabled = outline != null;
-                OutlineNameBox.IsEnabled = enabled;
-                OutlineEnabledCheck.IsEnabled = enabled;
-                OutlineTargetCombo.IsEnabled = enabled;
-                OutlineThicknessBox.IsEnabled = enabled;
-                OutlineOffsetXBox.IsEnabled = enabled;
-                OutlineOffsetYBox.IsEnabled = enabled;
-                OutlineInsideCheck.IsEnabled = enabled;
-                OutlineFilledCheck.IsEnabled = enabled;
-                OutlineColorPicker.IsEnabled = enabled;
+                bool enabled = effect != null;
+                EffectNameBox.IsEnabled = enabled;
+                EffectEnabledCheck.IsEnabled = enabled;
+                EffectTypeCombo.IsEnabled = enabled;
+                EffectTargetCombo.IsEnabled = enabled;
+                EffectThicknessBox.IsEnabled = enabled;
+                EffectOffsetXBox.IsEnabled = enabled;
+                EffectOffsetYBox.IsEnabled = enabled;
+                EffectOpacityBox.IsEnabled = enabled;
+                EffectInsideCheck.IsEnabled = enabled;
+                EffectFilledCheck.IsEnabled = enabled;
+                EffectColorPicker.IsEnabled = enabled;
                 UpdateStackButtons();
 
-                if (outline == null)
+                if (effect == null)
                 {
-                    OutlineNameBox.Text = string.Empty;
+                    EffectNameBox.Text = string.Empty;
+                    EffectTypeCombo.SelectedIndex = -1;
+                    EffectTargetCombo.SelectedIndex = -1;
+                    EffectShadowRow.Visibility = Visibility.Collapsed;
+                    EffectOutlineRow.Visibility = Visibility.Collapsed;
                     return;
                 }
 
-                OutlineNameBox.Text = outline.Name;
-                OutlineEnabledCheck.IsChecked = outline.Enabled;
-                SelectTarget(OutlineTargetCombo, outline.Target);
-                OutlineThicknessBox.SetValueSilently(outline.Thickness);
-                OutlineOffsetXBox.SetValueSilently(outline.OffsetX);
-                OutlineOffsetYBox.SetValueSilently(outline.OffsetY);
-                OutlineInsideCheck.IsChecked = outline.Inside;
-                OutlineFilledCheck.IsChecked = outline.Filled;
-                OutlineColorPicker.Load(outline.Color);
+                EffectNameBox.Text = effect.Name;
+                EffectEnabledCheck.IsChecked = effect.Enabled;
+                SelectType(effect.Kind);
+                SelectTarget(EffectTargetCombo, effect.Target);
+                EffectThicknessBox.SetValueSilently(effect.Thickness);
+                EffectOffsetXBox.SetValueSilently(effect.OffsetX);
+                EffectOffsetYBox.SetValueSilently(effect.OffsetY);
+                EffectOpacityBox.SetValueSilently(effect.Opacity);
+                EffectInsideCheck.IsChecked = effect.Inside;
+                EffectFilledCheck.IsChecked = effect.Filled;
+                EffectColorPicker.Load(effect.Color);
+                UpdateTypeVisibility(effect.IsShadow);
             }
             finally
             {
@@ -296,410 +283,285 @@ namespace SubtitleForge
             }
         }
 
-        private void LoadShadowFields()
+        private void SelectType(string? kind)
         {
-            ShadowLayer? shadow = SelectedShadow;
-            suppress = true;
-            try
-            {
-                bool enabled = shadow != null;
-                ShadowNameBox.IsEnabled = enabled;
-                ShadowEnabledCheck.IsEnabled = enabled;
-                ShadowTargetCombo.IsEnabled = enabled;
-                ShadowThicknessBox.IsEnabled = enabled;
-                ShadowOffsetXBox.IsEnabled = enabled;
-                ShadowOffsetYBox.IsEnabled = enabled;
-                ShadowOpacityBox.IsEnabled = enabled;
-                ShadowColorPicker.IsEnabled = enabled;
-                UpdateStackButtons();
+            string value = string.Equals(kind, EffectKinds.Shadow, StringComparison.OrdinalIgnoreCase)
+                ? EffectKinds.Shadow
+                : EffectKinds.Outline;
 
-                if (shadow == null)
-                {
-                    ShadowNameBox.Text = string.Empty;
-                    return;
-                }
-
-                ShadowNameBox.Text = shadow.Name;
-                ShadowEnabledCheck.IsChecked = shadow.Enabled;
-                SelectTarget(ShadowTargetCombo, shadow.Target);
-                ShadowThicknessBox.SetValueSilently(shadow.Thickness);
-                ShadowOffsetXBox.SetValueSilently(shadow.OffsetX);
-                ShadowOffsetYBox.SetValueSilently(shadow.OffsetY);
-                ShadowOpacityBox.SetValueSilently(shadow.Opacity);
-                ShadowColorPicker.Load(shadow.Color);
-            }
-            finally
+            for (int index = 0; index < EffectTypeCombo.Items.Count; index++)
             {
-                suppress = false;
-            }
-        }
-
-        private static void SelectTarget(ComboBox combo, string? target)
-        {
-            string value = string.IsNullOrEmpty(target) ? EffectTarget.Font : target;
-            for (int index = 0; index < combo.Items.Count; index++)
-            {
-                ComboBoxItem? item = combo.Items[index] as ComboBoxItem;
+                ComboBoxItem? item = EffectTypeCombo.Items[index] as ComboBoxItem;
                 if (item != null && string.Equals(item.Tag as string, value, StringComparison.OrdinalIgnoreCase))
                 {
-                    combo.SelectedIndex = index;
+                    EffectTypeCombo.SelectedIndex = index;
                     return;
                 }
             }
 
-            combo.SelectedIndex = 0;
+            EffectTypeCombo.SelectedIndex = 0;
         }
 
-        private static string SelectedTarget(ComboBox combo)
+        /// <summary>Shows only the fields that mean something for the chosen effect type.</summary>
+        private void UpdateTypeVisibility(bool shadow)
         {
-            ComboBoxItem? item = combo.SelectedItem as ComboBoxItem;
+            EffectShadowRow.Visibility = shadow ? Visibility.Visible : Visibility.Collapsed;
+            EffectOutlineRow.Visibility = shadow ? Visibility.Collapsed : Visibility.Visible;
+            EffectThicknessLabel.Text = shadow ? "Spread" : "Thickness";
+            EffectThicknessBox.ToolTip = shadow
+                ? "How far the shadow is spread and softened"
+                : "Stroke width. Negative values render the outline to the inside.";
+        }
+
+        private void EffectTypeChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (suppress)
+            {
+                return;
+            }
+
+            EffectLayer? effect = SelectedEffect;
+            if (effect == null)
+            {
+                return;
+            }
+
+            ComboBoxItem? item = EffectTypeCombo.SelectedItem as ComboBoxItem;
             string? tag = item == null ? null : item.Tag as string;
-            return string.IsNullOrEmpty(tag) ? EffectTarget.Font : tag;
-        }
+            string kind = string.Equals(tag, EffectKinds.Shadow, StringComparison.OrdinalIgnoreCase)
+                ? EffectKinds.Shadow
+                : EffectKinds.Outline;
 
-        private void OutlineFieldChanged(object? sender, EventArgs e)
-        {
-            if (suppress)
+            if (string.Equals(effect.Kind, kind, StringComparison.Ordinal))
             {
                 return;
             }
 
-            OutlineLayer? outline = SelectedOutline;
-            if (outline == null)
+            bool wasDefaultName = string.Equals(effect.Name, "Outline", StringComparison.Ordinal)
+                || string.Equals(effect.Name, "Shadow", StringComparison.Ordinal)
+                || string.Equals(effect.Name, "Outline 1", StringComparison.Ordinal)
+                || string.Equals(effect.Name, "Shadow 1", StringComparison.Ordinal);
+
+            effect.Kind = kind;
+            if (wasDefaultName)
             {
-                return;
+                effect.Name = string.Equals(kind, EffectKinds.Shadow, StringComparison.Ordinal)
+                    ? "Shadow"
+                    : "Outline";
             }
 
-            outline.Name = OutlineNameBox.Text;
-            outline.Enabled = OutlineEnabledCheck.IsChecked == true;
-            outline.Target = SelectedTarget(OutlineTargetCombo);
-            outline.Thickness = OutlineThicknessBox.Value;
-            outline.OffsetX = OutlineOffsetXBox.Value;
-            outline.OffsetY = OutlineOffsetYBox.Value;
-            outline.Inside = OutlineInsideCheck.IsChecked == true;
-            outline.Filled = OutlineFilledCheck.IsChecked == true;
-            outline.Color = OutlineColorPicker.Capture();
-
-            RefreshOutlineList();
-            UpdatePreview();
-        }
-
-        private void OutlineColorChanged(object? sender, EventArgs e)
-        {
-            if (suppress)
-            {
-                return;
-            }
-
-            OutlineLayer? outline = SelectedOutline;
-            if (outline == null)
-            {
-                return;
-            }
-
-            outline.Color = OutlineColorPicker.Capture();
-            UpdatePreview();
-        }
-
-        private void ShadowFieldChanged(object? sender, EventArgs e)
-        {
-            if (suppress)
-            {
-                return;
-            }
-
-            ShadowLayer? shadow = SelectedShadow;
-            if (shadow == null)
-            {
-                return;
-            }
-
-            shadow.Name = ShadowNameBox.Text;
-            shadow.Enabled = ShadowEnabledCheck.IsChecked == true;
-            shadow.Target = SelectedTarget(ShadowTargetCombo);
-            shadow.Thickness = ShadowThicknessBox.Value;
-            shadow.OffsetX = ShadowOffsetXBox.Value;
-            shadow.OffsetY = ShadowOffsetYBox.Value;
-            shadow.Opacity = ShadowOpacityBox.Value;
-            shadow.Color = ShadowColorPicker.Capture();
-
-            RefreshShadowList();
-            UpdatePreview();
-        }
-
-        private void ShadowColorChanged(object? sender, EventArgs e)
-        {
-            if (suppress)
-            {
-                return;
-            }
-
-            ShadowLayer? shadow = SelectedShadow;
-            if (shadow == null)
-            {
-                return;
-            }
-
-            shadow.Color = ShadowColorPicker.Capture();
-            UpdatePreview();
-        }
-
-        private void RefreshOutlineList()
-        {
-            int index = OutlineList.SelectedIndex;
             suppress = true;
             try
             {
-                OutlineList.Items.Clear();
-                foreach (OutlineLayer outline in draft.Outlines)
+                EffectNameBox.Text = effect.Name;
+            }
+            finally
+            {
+                suppress = false;
+            }
+
+            UpdateTypeVisibility(effect.IsShadow);
+            RefreshEffectList();
+            UpdatePreview();
+        }
+
+        private void EffectFieldChanged(object? sender, EventArgs e)
+        {
+            if (suppress)
+            {
+                return;
+            }
+
+            EffectLayer? effect = SelectedEffect;
+            if (effect == null)
+            {
+                return;
+            }
+
+            string previousName = effect.Name;
+
+            effect.Name = EffectNameBox.Text;
+            effect.Enabled = EffectEnabledCheck.IsChecked == true;
+            effect.Target = SelectedTarget(EffectTargetCombo);
+            effect.Thickness = EffectThicknessBox.Value;
+            effect.OffsetX = EffectOffsetXBox.Value;
+            effect.OffsetY = EffectOffsetYBox.Value;
+            effect.Opacity = EffectOpacityBox.Value;
+            effect.Inside = EffectInsideCheck.IsChecked == true;
+            effect.Filled = EffectFilledCheck.IsChecked == true;
+
+            // The list only shows the name, so rebuilding it on every scrub tick is wasted work.
+            if (!string.Equals(previousName, effect.Name, StringComparison.Ordinal))
+            {
+                RefreshEffectList();
+            }
+
+            UpdatePreview();
+        }
+
+        private void EffectColorChanged(object? sender, EventArgs e)
+        {
+            if (suppress)
+            {
+                return;
+            }
+
+            EffectLayer? effect = SelectedEffect;
+            if (effect == null)
+            {
+                return;
+            }
+
+            effect.Color = EffectColorPicker.Capture();
+            RefreshEffectList();
+            UpdatePreview();
+        }
+
+        private void RefreshEffectList()
+        {
+            int index = EffectList.SelectedIndex;
+            suppress = true;
+            try
+            {
+                EffectList.Items.Clear();
+                foreach (EffectLayer effect in draft.Effects)
                 {
-                    OutlineList.Items.Add(outline);
+                    EffectList.Items.Add(effect);
                 }
 
-                if (OutlineList.Items.Count > 0)
+                if (EffectList.Items.Count > 0)
                 {
-                    OutlineList.SelectedIndex = index >= 0 && index < OutlineList.Items.Count ? index : 0;
+                    EffectList.SelectedIndex = index >= 0 && index < EffectList.Items.Count ? index : 0;
                 }
             }
             finally
             {
                 suppress = false;
             }
+
+            UpdateStackButtons();
         }
-
-        private void RefreshShadowList()
-        {
-            int index = ShadowList.SelectedIndex;
-            suppress = true;
-            try
-            {
-                ShadowList.Items.Clear();
-                foreach (ShadowLayer shadow in draft.Shadows)
-                {
-                    ShadowList.Items.Add(shadow);
-                }
-
-                if (ShadowList.Items.Count > 0)
-                {
-                    ShadowList.SelectedIndex = index >= 0 && index < ShadowList.Items.Count ? index : 0;
-                }
-            }
-            finally
-            {
-                suppress = false;
-            }
-        }
-
-        // ── Stack order ────────────────────────────────────────────────────
 
         /// <summary>Greys out the arrows that would move an entry past either end of the stack.</summary>
         private void UpdateStackButtons()
         {
-            OutlineLayer? outline = SelectedOutline;
-            int outlineIndex = outline == null ? -1 : draft.Outlines.IndexOf(outline);
-            OutlineUpButton.IsEnabled = outlineIndex > 0;
-            OutlineDownButton.IsEnabled = outlineIndex >= 0 && outlineIndex < draft.Outlines.Count - 1;
-
-            ShadowLayer? shadow = SelectedShadow;
-            int shadowIndex = shadow == null ? -1 : draft.Shadows.IndexOf(shadow);
-            ShadowUpButton.IsEnabled = shadowIndex > 0;
-            ShadowDownButton.IsEnabled = shadowIndex >= 0 && shadowIndex < draft.Shadows.Count - 1;
+            EffectLayer? effect = SelectedEffect;
+            int index = effect == null ? -1 : draft.Effects.IndexOf(effect);
+            EffectUpButton.IsEnabled = index > 0;
+            EffectDownButton.IsEnabled = index >= 0 && index < draft.Effects.Count - 1;
         }
 
-        private void MoveOutlineUpClick(object sender, RoutedEventArgs e)
+        private void MoveEffectUpClick(object sender, RoutedEventArgs e)
         {
-            MoveOutline(-1);
+            MoveEffect(-1);
         }
 
-        private void MoveOutlineDownClick(object sender, RoutedEventArgs e)
+        private void MoveEffectDownClick(object sender, RoutedEventArgs e)
         {
-            MoveOutline(1);
+            MoveEffect(1);
         }
 
-        private void MoveShadowUpClick(object sender, RoutedEventArgs e)
-        {
-            MoveShadow(-1);
-        }
-
-        private void MoveShadowDownClick(object sender, RoutedEventArgs e)
-        {
-            MoveShadow(1);
-        }
-
-        /// <summary>
-        /// Moves the selected outline one step through the stack. The list order is the paint order,
-        /// so moving an entry earlier puts its ring underneath the ones after it.
-        /// </summary>
-        private void MoveOutline(int offset)
-        {
-            OutlineLayer? outline = SelectedOutline;
-            if (outline == null)
-            {
-                return;
-            }
-
-            int index = draft.Outlines.IndexOf(outline);
-            int target = index + offset;
-            if (index < 0 || target < 0 || target >= draft.Outlines.Count)
-            {
-                return;
-            }
-
-            draft.Outlines.RemoveAt(index);
-            draft.Outlines.Insert(target, outline);
-
-            RefreshOutlineList();
-            OutlineList.SelectedIndex = target;
-            LoadOutlineFields();
-            UpdatePreview();
-        }
-
-        private void MoveShadow(int offset)
-        {
-            ShadowLayer? shadow = SelectedShadow;
-            if (shadow == null)
-            {
-                return;
-            }
-
-            int index = draft.Shadows.IndexOf(shadow);
-            int target = index + offset;
-            if (index < 0 || target < 0 || target >= draft.Shadows.Count)
-            {
-                return;
-            }
-
-            draft.Shadows.RemoveAt(index);
-            draft.Shadows.Insert(target, shadow);
-
-            RefreshShadowList();
-            ShadowList.SelectedIndex = target;
-            LoadShadowFields();
-            UpdatePreview();
-        }
-
-        private void StackPreviewKeyDown(object sender, KeyEventArgs e)
+        private void EffectListPreviewKeyDown(object sender, KeyEventArgs e)
         {
             if ((Keyboard.Modifiers & ModifierKeys.Control) == 0)
             {
                 return;
             }
 
-            bool outlineList = ReferenceEquals(sender, OutlineList);
             if (e.Key == Key.Up)
             {
-                if (outlineList)
-                {
-                    MoveOutline(-1);
-                }
-                else
-                {
-                    MoveShadow(-1);
-                }
-
+                MoveEffect(-1);
                 e.Handled = true;
             }
             else if (e.Key == Key.Down)
             {
-                if (outlineList)
-                {
-                    MoveOutline(1);
-                }
-                else
-                {
-                    MoveShadow(1);
-                }
-
+                MoveEffect(1);
                 e.Handled = true;
             }
         }
 
-        private void AddOutlineClick(object sender, RoutedEventArgs e)
+        /// <summary>
+        /// Moves the selected effect one step through the stack. The list order is the paint order,
+        /// so moving an entry earlier puts it underneath the ones after it.
+        /// </summary>
+        private void MoveEffect(int offset)
         {
-            OutlineLayer outline = new OutlineLayer();
-            outline.Name = "Outline " + (draft.Outlines.Count + 1).ToString(CultureInfo.InvariantCulture);
-            outline.Color = ColorSpec.Solid("#FF000000");
-            draft.Outlines.Add(outline);
-            RefreshOutlineList();
-            OutlineList.SelectedIndex = OutlineList.Items.Count - 1;
-            LoadOutlineFields();
+            EffectLayer? effect = SelectedEffect;
+            if (effect == null)
+            {
+                return;
+            }
+
+            int index = draft.Effects.IndexOf(effect);
+            int target = index + offset;
+            if (index < 0 || target < 0 || target >= draft.Effects.Count)
+            {
+                return;
+            }
+
+            draft.Effects.RemoveAt(index);
+            draft.Effects.Insert(target, effect);
+
+            RefreshEffectList();
+            EffectList.SelectedIndex = target;
+            LoadEffectFields();
             UpdatePreview();
         }
 
-        private void CopyOutlineClick(object sender, RoutedEventArgs e)
+        private void AddEffectClick(object sender, RoutedEventArgs e)
         {
-            OutlineLayer? source = SelectedOutline;
+            // A new entry starts as the same kind as the one being edited, so adding a second
+            // shadow does not mean switching the type afterwards.
+            EffectLayer? current = SelectedEffect;
+            bool shadow = current != null && current.IsShadow;
+
+            EffectLayer effect = shadow ? EffectLayer.CreateShadow() : EffectLayer.CreateOutline();
+            if (shadow)
+            {
+                effect.Name = "Shadow " + (draft.Effects.Count + 1).ToString(CultureInfo.InvariantCulture);
+            }
+            else
+            {
+                effect.Name = "Outline " + (draft.Effects.Count + 1).ToString(CultureInfo.InvariantCulture);
+            }
+
+            draft.Effects.Add(effect);
+            RefreshEffectList();
+            EffectList.SelectedIndex = EffectList.Items.Count - 1;
+            LoadEffectFields();
+            UpdatePreview();
+        }
+
+        private void CopyEffectClick(object sender, RoutedEventArgs e)
+        {
+            EffectLayer? source = SelectedEffect;
             if (source == null)
             {
                 return;
             }
 
-            OutlineLayer copy = source.Clone();
+            EffectLayer copy = source.Clone();
             copy.Name = source.Name + " copy";
-            draft.Outlines.Add(copy);
-            RefreshOutlineList();
-            OutlineList.SelectedIndex = OutlineList.Items.Count - 1;
-            LoadOutlineFields();
+            draft.Effects.Add(copy);
+            RefreshEffectList();
+            EffectList.SelectedIndex = EffectList.Items.Count - 1;
+            LoadEffectFields();
             UpdatePreview();
         }
 
-        private void RemoveOutlineClick(object sender, RoutedEventArgs e)
+        private void RemoveEffectClick(object sender, RoutedEventArgs e)
         {
-            OutlineLayer? outline = SelectedOutline;
-            if (outline == null)
+            EffectLayer? effect = SelectedEffect;
+            if (effect == null)
             {
                 return;
             }
 
-            draft.Outlines.Remove(outline);
-            RefreshOutlineList();
-            LoadOutlineFields();
+            draft.Effects.Remove(effect);
+            RefreshEffectList();
+            LoadEffectFields();
             UpdatePreview();
         }
-
-        private void AddShadowClick(object sender, RoutedEventArgs e)
-        {
-            ShadowLayer shadow = new ShadowLayer();
-            shadow.Name = "Shadow " + (draft.Shadows.Count + 1).ToString(CultureInfo.InvariantCulture);
-            draft.Shadows.Add(shadow);
-            RefreshShadowList();
-            ShadowList.SelectedIndex = ShadowList.Items.Count - 1;
-            LoadShadowFields();
-            UpdatePreview();
-        }
-
-        private void CopyShadowClick(object sender, RoutedEventArgs e)
-        {
-            ShadowLayer? source = SelectedShadow;
-            if (source == null)
-            {
-                return;
-            }
-
-            ShadowLayer copy = source.Clone();
-            copy.Name = source.Name + " copy";
-            draft.Shadows.Add(copy);
-            RefreshShadowList();
-            ShadowList.SelectedIndex = ShadowList.Items.Count - 1;
-            LoadShadowFields();
-            UpdatePreview();
-        }
-
-        private void RemoveShadowClick(object sender, RoutedEventArgs e)
-        {
-            ShadowLayer? shadow = SelectedShadow;
-            if (shadow == null)
-            {
-                return;
-            }
-
-            draft.Shadows.Remove(shadow);
-            RefreshShadowList();
-            LoadShadowFields();
-            UpdatePreview();
-        }
-
-        // ── Basics ────────────────────────────────────────────────────────
 
         private void BasicsChanged(object? sender, EventArgs e)
         {
@@ -718,6 +580,7 @@ namespace SubtitleForge
             draft.Bold = BoldCheck.IsChecked == true;
             draft.Italic = ItalicCheck.IsChecked == true;
             draft.FontSize = FontSizeBox.Value;
+            SyncPreviewSizeToProfile();
             draft.CharacterSpacing = CharacterSpacingBox.Value;
             draft.WordSpacing = WordSpacingBox.Value;
             draft.WordsPerDisplay = WordsBox.IntValue;
@@ -742,14 +605,48 @@ namespace SubtitleForge
         private void PreviewSizeChanged(object? sender, EventArgs e)
         {
             previewFontSize = PreviewSizeBox.Value;
+            previewSizePinned = true;
             UpdatePreview();
+        }
+
+        /// <summary>
+        /// Keeps the preview at a comfortable size when the profile's own font size changes: the
+        /// field shows the equivalent design size, which is the same thing the Scale works out to.
+        /// </summary>
+        private void SyncPreviewSizeToProfile()
+        {
+            if (previewSizePinned)
+            {
+                return;
+            }
+
+            previewFontSize = draft.FontSize > 0.5 ? draft.FontSize : 64.0;
+            suppress = true;
+            try
+            {
+                PreviewSizeBox.SetValueSilently(previewFontSize);
+            }
+            finally
+            {
+                suppress = false;
+            }
         }
 
         private void UpdatePreview()
         {
-            StyleProfile preview = draft.Clone();
-            preview.FontSize = previewFontSize;
-            PreviewOverlay.TextStyle = preview;
+            // The preview is a scaled-down copy of the real thing: the overlay's Scale multiplies the
+            // font size *and* every effect width/offset, so what the preview shows is exactly what
+            // the video shows at the same relative size. Overriding FontSize instead would leave the
+            // outline thickness at the old ratio and the preview would lie.
+            double reference = draft.FontSize > 0.5 ? draft.FontSize : 64.0;
+            double scale = previewFontSize / reference;
+            if (scale < 0.05)
+            {
+                scale = 0.05;
+            }
+
+            PreviewOverlay.Scale = scale;
+            PreviewOverlay.TextStyle = draft;
             PreviewOverlay.Idle = PreviewIdle;
             PreviewOverlay.PopIn = PreviewPopIn;
             PreviewOverlay.InvalidateLayout();

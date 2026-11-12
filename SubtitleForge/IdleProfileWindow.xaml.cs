@@ -220,8 +220,11 @@ namespace SubtitleForge
 
         private void UpdatePreview()
         {
-            StyleProfile preview = (PreviewStyle ?? ProfileStore.CreateDefaultStyle()).Clone();
-            preview.FontSize = previewFontSize;
+            // Scale rather than replace the font size: the overlay multiplies the font *and* every
+            // effect width by it, so the preview keeps the exact proportions of the finished video.
+            StyleProfile preview = PreviewStyle ?? ProfileStore.CreateDefaultStyle();
+            double reference = preview.FontSize > 0.5 ? preview.FontSize : 64.0;
+            PreviewOverlay.Scale = previewFontSize / reference;
             PreviewOverlay.TextStyle = preview;
             PreviewOverlay.Idle = draft;
             PreviewOverlay.PopIn = null;

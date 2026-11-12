@@ -351,7 +351,7 @@ namespace SubtitleForge.Controls
             return paint;
         }
 
-        private static void DrawGlyph(
+        private void DrawGlyph(
             DrawingContext drawingContext,
             GlyphBox glyph,
             StyleProfile style,

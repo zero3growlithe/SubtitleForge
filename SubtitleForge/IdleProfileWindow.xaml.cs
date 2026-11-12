@@ -196,7 +196,7 @@ namespace SubtitleForge
 
         private void UpdatePreview()
         {
-            PreviewOverlay.TextStyle = PreviewStyle;
+            PreviewOverlay.TextStyle = PreviewStyle ?? ProfileStore.CreateDefaultStyle();
             PreviewOverlay.Idle = draft;
             PreviewOverlay.PopIn = null;
             PreviewOverlay.InvalidateLayout();

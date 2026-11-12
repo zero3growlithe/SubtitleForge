@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Threading;
 
 namespace SubtitleForge.Models
 {
@@ -47,6 +48,41 @@ namespace SubtitleForge.Models
                 detail = value;
                 Raise(nameof(Detail));
             }
+        }
+
+        /// <summary>
+        /// The token source of a job that can be stopped, or null when it runs to completion. The
+        /// popup shows a Cancel button for as long as this is not yet cancelled.
+        /// </summary>
+        public CancellationTokenSource? Cancellation { get; set; }
+
+        public bool CanCancel
+        {
+            get
+            {
+                CancellationTokenSource? source = Cancellation;
+                return source != null && !source.IsCancellationRequested;
+            }
+        }
+
+        /// <summary>Asks the job to stop. Safe to call from the popup button.</summary>
+        public void RequestCancel()
+        {
+            CancellationTokenSource? source = Cancellation;
+            if (source == null || source.IsCancellationRequested)
+            {
+                return;
+            }
+
+            source.Cancel();
+            Raise(nameof(CanCancel));
+        }
+
+        /// <summary>Drops the token source once the job is over, so the button disappears.</summary>
+        public void ClearCancellation()
+        {
+            Cancellation = null;
+            Raise(nameof(CanCancel));
         }
 
         /// <summary>True while the job cannot report a percentage yet.</summary>

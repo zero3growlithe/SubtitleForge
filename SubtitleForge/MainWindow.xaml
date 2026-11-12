@@ -256,7 +256,7 @@
                             <GridViewColumn Header="#" Width="34">
                                 <GridViewColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="{Binding Number}" Foreground="{Binding LabelBrush}" />
+                                        <TextBlock Text="{Binding NumberDisplay}" Foreground="{Binding LabelBrush}" />
                                     </DataTemplate>
                                 </GridViewColumn.CellTemplate>
                             </GridViewColumn>
@@ -435,7 +435,29 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <StackPanel Margin="0,0,0,8">
-                                    <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" />
+                                    <DockPanel LastChildFill="True">
+                                        <!-- Only jobs that know how to stop show a Cancel button. -->
+                                        <Button DockPanel.Dock="Right"
+                                                Content="Cancel"
+                                                Tag="{Binding}"
+                                                MinWidth="0"
+                                                Padding="8,2"
+                                                Margin="8,0,0,0"
+                                                Click="CancelBackgroundTaskClick">
+                                            <Button.Style>
+                                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding CanCancel}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Button.Style>
+                                        </Button>
+                                        <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis"
+                                                   VerticalAlignment="Center" />
+                                    </DockPanel>
                                     <ProgressBar Value="{Binding Percent}"
                                                  IsIndeterminate="{Binding IsIndeterminate}"
                                                  Maximum="100"

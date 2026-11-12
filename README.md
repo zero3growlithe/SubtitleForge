@@ -167,8 +167,10 @@ creator saves the edits of the profile you were just in, so the picker doubles a
 in any field submits it — the value is validated and the field gives up focus instead of triggering
 the window's Save button — and `Esc` puts the previous value back.
 
-Cues that carry their own style, idle or pop-in profile are **tinted pale yellow in the cue list**,
-so the ones running on the defaults stand out. Hovering a row draws an outline instead of a
+**Overlapping cues are tinted red in the cue list.** Times are checked as a whole, so a cue nested
+inside a longer one flags both, which is what a doubled-up subtitle looks like on screen. Cues that
+carry their own style, idle or pop-in profile keep the default colour but get a `*` after their
+number in the `#` column. Hovering a row draws an outline instead of a
 background, which used to paint over the selection colour and make selected rows look unselected.
 
 **Cue placement is edited as an offset.** The `X` / `Y` fields under the cue editor show how far the
@@ -331,6 +333,9 @@ same package as a `PackageReference`.
   CPU/GPU-bound and much slower than exporting a sidecar `.srt`. The subtitle frames are drawn
   with the preview's own painter into a `DrawingVisual` rather than a laid-out control, because a
   detached WPF visual has no `RenderSize` and silently drew nothing.
+- Long exports are cancellable from either the toolbar `Cancel` or the button next to the export in
+  the background-task list; a partial file is deleted. The finished export plays the system
+  notification sound and opens the folder with the file selected.
 - Cue splitting is proportional to text length; it does not do word-level forced
   alignment, so a very long single Whisper segment may still need manual `Split`.
 

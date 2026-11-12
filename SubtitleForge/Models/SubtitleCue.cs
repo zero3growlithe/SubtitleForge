@@ -12,6 +12,8 @@ namespace SubtitleForge.Models
     public class SubtitleCue : INotifyPropertyChanged
     {
         private int number;
+
+        private bool isOverlapping;
         private TimeSpan start;
         private TimeSpan end;
         private string text;
@@ -120,6 +122,7 @@ namespace SubtitleForge.Models
                     OnPropertyChanged();
                     OnPropertyChanged(nameof(HasCustomLook));
                     OnPropertyChanged(nameof(LabelBrush));
+                    OnPropertyChanged(nameof(NumberDisplay));
                 }
             }
         }
@@ -136,6 +139,7 @@ namespace SubtitleForge.Models
                     OnPropertyChanged();
                     OnPropertyChanged(nameof(HasCustomLook));
                     OnPropertyChanged(nameof(LabelBrush));
+                    OnPropertyChanged(nameof(NumberDisplay));
                 }
             }
         }
@@ -152,6 +156,7 @@ namespace SubtitleForge.Models
                     OnPropertyChanged();
                     OnPropertyChanged(nameof(HasCustomLook));
                     OnPropertyChanged(nameof(LabelBrush));
+                    OnPropertyChanged(nameof(NumberDisplay));
                 }
             }
         }
@@ -214,16 +219,49 @@ namespace SubtitleForge.Models
 
         private static readonly Brush PlainLabelBrush = CreateBrush("#FFD6DCE6");
 
-        private static readonly Brush CustomLabelBrush = CreateBrush("#FFE9D97A");
+        private static readonly Brush OverlapLabelBrush = CreateBrush("#FFE5484D");
 
         /// <summary>
-        /// Colour of this cue's row in the cue list: a pale yellow when the cue carries its own
-        /// style or animations. Cells bind to it directly, because an inherited Foreground from the
-        /// row would be overridden by the global TextBlock style.
+        /// Set by the window when this cue's times overlap another cue's. Overlapping cues are a
+        /// real timing problem, so they get the loud colour instead of a decorative one.
+        /// </summary>
+        public bool IsOverlapping
+        {
+            get { return isOverlapping; }
+            set
+            {
+                if (isOverlapping == value)
+                {
+                    return;
+                }
+
+                isOverlapping = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(LabelBrush));
+            }
+        }
+
+        /// <summary>
+        /// The number shown in the cue list, with a trailing star when the cue does not simply use
+        /// the default profiles.
+        /// </summary>
+        public string NumberDisplay
+        {
+            get
+            {
+                string text = Number.ToString(CultureInfo.InvariantCulture);
+                return HasCustomLook ? text + "*" : text;
+            }
+        }
+
+        /// <summary>
+        /// Colour of this cue's row in the cue list: red when its times overlap another cue. Cells
+        /// bind to it directly, because an inherited Foreground from the row would be overridden by
+        /// the global TextBlock style.
         /// </summary>
         public Brush LabelBrush
         {
-            get { return HasCustomLook ? CustomLabelBrush : PlainLabelBrush; }
+            get { return isOverlapping ? OverlapLabelBrush : PlainLabelBrush; }
         }
 
         private static Brush CreateBrush(string value)

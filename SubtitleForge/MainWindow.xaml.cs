@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.Diagnostics;
+using System.ComponentModel;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -25,6 +27,8 @@ namespace SubtitleForge
     public partial class MainWindow : Window
     {
         private readonly ObservableCollection<SubtitleCue> cues = new ObservableCollection<SubtitleCue>();
+
+        private bool overlapRefreshPending;
         private readonly SpeechTranscriber transcriber = new SpeechTranscriber();
         private readonly DispatcherTimer playbackTimer;
         private readonly List<LanguageOption> languages = new List<LanguageOption>();
@@ -1446,9 +1450,90 @@ namespace SubtitleForge
 
         private void OnCuesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
         {
+            // Overlaps are a property of the collection as a whole, so every cue change has to be
+            // watched instead of being recomputed at the handful of places that move a cue.
+            if (e.OldItems != null)
+            {
+                foreach (SubtitleCue cue in e.OldItems)
+                {
+                    cue.PropertyChanged -= CueTimingChanged;
+                }
+            }
+
+            if (e.NewItems != null)
+            {
+                foreach (SubtitleCue cue in e.NewItems)
+                {
+                    cue.PropertyChanged += CueTimingChanged;
+                }
+            }
+
+            ScheduleOverlapRefresh();
             UpdateCueCount();
             UpdateCommandStates();
             DrawTimeline();
+        }
+
+        private void CueTimingChanged(object? sender, PropertyChangedEventArgs e)
+        {
+            if (string.Equals(e.PropertyName, "Start", StringComparison.Ordinal)
+                || string.Equals(e.PropertyName, "End", StringComparison.Ordinal))
+            {
+                ScheduleOverlapRefresh();
+            }
+        }
+
+        private void ScheduleOverlapRefresh()
+        {
+            if (overlapRefreshPending)
+            {
+                return;
+            }
+
+            overlapRefreshPending = true;
+            Dispatcher.BeginInvoke(
+                DispatcherPriority.Background,
+                new Action(delegate
+                {
+                    overlapRefreshPending = false;
+                    RefreshCueOverlaps();
+                }));
+        }
+
+        /// <summary>
+        /// Marks both cues of every overlapping pair. Sorted by start time a running end and the cue
+        /// that owns it are enough, and the owner only moves when the end actually grows, so a cue
+        /// nested inside a long one still flags the long one.
+        /// </summary>
+        private void RefreshCueOverlaps()
+        {
+            List<SubtitleCue> ordered = new List<SubtitleCue>(cues);
+            ordered.Sort(delegate (SubtitleCue left, SubtitleCue right)
+            {
+                return left.Start.CompareTo(right.Start);
+            });
+
+            foreach (SubtitleCue cue in ordered)
+            {
+                cue.IsOverlapping = false;
+            }
+
+            SubtitleCue? owner = null;
+            TimeSpan runningEnd = TimeSpan.Zero;
+            foreach (SubtitleCue cue in ordered)
+            {
+                if (owner != null && cue.Start < runningEnd)
+                {
+                    cue.IsOverlapping = true;
+                    owner.IsOverlapping = true;
+                }
+
+                if (owner == null || cue.End > runningEnd)
+                {
+                    runningEnd = cue.End;
+                    owner = cue;
+                }
+            }
         }
 
         private void UpdateCueCount()
@@ -1983,7 +2068,9 @@ namespace SubtitleForge
                 }
 
                 SetStatus("Preparing " + model.DisplayName + "…");
-                transcriptionTask = BeginBackgroundTask("Transcription — " + model.DisplayName);
+                transcriptionTask = BeginBackgroundTask(
+                    "Transcription — " + model.DisplayName,
+                    operationCancellation);
                 IProgress<string> modelStatus = new Progress<string>(SetStatus);
                 IProgress<double> downloadProgress = new Progress<double>(delegate (double fraction)
                 {
@@ -5153,6 +5240,7 @@ namespace SubtitleForge
             {
                 WriteSubtitleFile(outputPath, format);
                 SetStatus("Saved " + Path.GetFileName(outputPath) + ".");
+                AnnounceExportFinished(outputPath);
             }
             catch (Exception exception)
             {
@@ -5368,6 +5456,7 @@ namespace SubtitleForge
                 {
                     WriteSubtitleFile(subtitlePath, options.SubtitleFormat);
                     SetStatus("Saved " + Path.GetFileName(subtitlePath) + ".");
+                    // Not announced separately: the media export that follows announces once.
                 }
                 catch (Exception exception)
                 {
@@ -5401,8 +5490,10 @@ namespace SubtitleForge
                 return;
             }
 
-            BackgroundTask task = BeginBackgroundTask("Export — " + Path.GetFileName(mediaPath));
             operationCancellation = new CancellationTokenSource();
+            BackgroundTask task = BeginBackgroundTask(
+                "Export — " + Path.GetFileName(mediaPath),
+                operationCancellation);
             CancellationToken token = operationCancellation.Token;
             SetBusy(true);
             SetProgress(0.0);
@@ -5433,6 +5524,7 @@ namespace SubtitleForge
 
                 SetProgress(1.0);
                 SetStatus("Exported " + Path.GetFileName(mediaPath) + ".");
+                AnnounceExportFinished(mediaPath);
             }
             catch (OperationCanceledException)
             {
@@ -5457,6 +5549,55 @@ namespace SubtitleForge
                 FinishBackgroundTask(task);
             }
         }
+
+        /// <summary>
+        /// Tells the user an export is over even when the window is not the one in front: the system
+        /// notification sound, then the folder with the new file already selected.
+        /// </summary>
+        private void AnnounceExportFinished(string path)
+        {
+            try
+            {
+                // MessageBeep(0x40) is the standard notification sound; SystemSounds would drag in
+                // another assembly for the same single call.
+                MessageBeep(0x00000040);
+            }
+            catch (Exception exception)
+            {
+                CrashLog.Write(exception, "ExportBeep");
+            }
+
+            try
+            {
+                if (File.Exists(path))
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = "explorer.exe",
+                        Arguments = "/select,\"" + path + "\"",
+                        UseShellExecute = true
+                    });
+                    return;
+                }
+
+                string? folder = Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(folder) && Directory.Exists(folder))
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = folder,
+                        UseShellExecute = true
+                    });
+                }
+            }
+            catch (Exception exception)
+            {
+                CrashLog.Write(exception, "ExportOpenFolder");
+            }
+        }
+
+        [DllImport("user32.dll")]
+        private static extern bool MessageBeep(uint sound);
 
         private static string SubtitleFilterFor(string format)
         {
@@ -5518,13 +5659,14 @@ namespace SubtitleForge
 
         private BackgroundTask? timelineBuildTask;
 
-        private BackgroundTask BeginBackgroundTask(string title)
+        private BackgroundTask BeginBackgroundTask(string title, CancellationTokenSource? cancellation = null)
         {
             BackgroundTask task = new BackgroundTask();
             task.Title = title;
             task.Detail = "Starting…";
             task.Percent = 0.0;
             task.IsIndeterminate = true;
+            task.Cancellation = cancellation;
 
             RunOnUi(delegate
             {
@@ -5538,6 +5680,20 @@ namespace SubtitleForge
             });
 
             return task;
+        }
+
+        /// <summary>Cancel button inside the background-task popup.</summary>
+        private void CancelBackgroundTaskClick(object sender, RoutedEventArgs e)
+        {
+            FrameworkElement? element = sender as FrameworkElement;
+            BackgroundTask? task = element == null ? null : element.Tag as BackgroundTask;
+            if (task == null)
+            {
+                return;
+            }
+
+            task.RequestCancel();
+            SetStatus("Cancelling…");
         }
 
         private void UpdateBackgroundTask(BackgroundTask? task, double percent, string detail)
@@ -5571,6 +5727,7 @@ namespace SubtitleForge
 
             RunOnUi(delegate
             {
+                task.ClearCancellation();
                 backgroundTasks.Remove(task);
                 UpdateBackgroundTaskIndicator();
 

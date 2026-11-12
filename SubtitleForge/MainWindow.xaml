@@ -54,10 +54,7 @@
 
         <!-- ── Export toolbar ────────────────────────────────────────────── -->
         <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8">
-            <Button x:Name="SaveSrtButton" Content="Save .srt" Click="SaveSrtClick" />
-            <Button x:Name="SaveVttButton" Content="Save .vtt" Click="SaveVttClick" />
-            <Button x:Name="SaveAssButton" Content="Save .ass" Click="SaveAssClick" />
-            <Button x:Name="BurnButton" Content="Burn into MP4…" Click="BurnClick" />
+            <Button x:Name="ExportButton" Content="Export…" MinWidth="84" Click="ExportClick" />
             <Rectangle Width="1" Margin="6,2,12,2" Fill="{StaticResource PanelBorderBrush}" />
             <TextBlock Text="Max chars" Style="{StaticResource SectionLabelStyle}" />
             <TextBox x:Name="MaxCharactersTextBox" Width="46" Margin="0,0,12,0" />
@@ -80,7 +77,7 @@
             <Grid Grid.Column="0">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="*" MinHeight="150" />
-                    <RowDefinition Height="14" />
+                    <RowDefinition Height="18" />
                     <RowDefinition Height="204" MinHeight="110" />
                 </Grid.RowDefinitions>
 
@@ -139,20 +136,25 @@
                     <Button x:Name="PlayPauseButton" Grid.Column="0" Content="▶ Play" Width="88" Click="PlayPauseClick" />
                     <Button x:Name="StopButton" Grid.Column="1" Content="■ Stop" Width="74" Click="StopClick" />
                     <TextBlock x:Name="PositionText" Grid.Column="2" Text="00:00:00.000" FontFamily="Consolas" Margin="8,0,10,0" VerticalAlignment="Center" />
-                    <Slider x:Name="PositionSlider" Grid.Column="3" Minimum="0" Maximum="100" Value="0" IsMoveToPointEnabled="True" ValueChanged="PositionSliderValueChanged" />
+                    <Grid Grid.Column="3">
+                        <Slider x:Name="PositionSlider"
+                                Minimum="0"
+                                Maximum="100"
+                                Value="0"
+                                IsMoveToPointEnabled="True"
+                                ValueChanged="PositionSliderValueChanged" />
+                        <Canvas x:Name="TimelineCanvas"
+                                Height="18"
+                                VerticalAlignment="Center"
+                                ClipToBounds="True"
+                                IsHitTestVisible="False"
+                                SizeChanged="TimelineCanvasSizeChanged" />
+                    </Grid>
                     <TextBlock x:Name="DurationText" Grid.Column="4" Text="00:00:00.000" FontFamily="Consolas" Margin="10,0,0,0" VerticalAlignment="Center" />
                 </Grid>
 
-                <Border Grid.Row="2" Height="58" Background="{StaticResource PanelBackgroundBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1">
-                    <Canvas x:Name="TimelineCanvas"
-                            ClipToBounds="True"
-                            Background="Transparent"
-                            MouseLeftButtonDown="TimelineCanvasMouseLeftButtonDown"
-                            SizeChanged="TimelineCanvasSizeChanged" />
-                </Border>
-
                 <!-- ── Track toolbar ─────────────────────────────────────── -->
-                <WrapPanel Grid.Row="3" Orientation="Horizontal" Margin="0,6,0,6">
+                <WrapPanel Grid.Row="2" Orientation="Horizontal" Margin="0,6,0,6">
                     <Button x:Name="AddAudioTrackButton" Content="+ Audio track" Click="AddAudioTrackClick" />
                     <Button x:Name="RecordButton" Content="● Record" MinWidth="98" Click="RecordClick" />
                     <Button x:Name="SplitTrackButton" Content="Split at playhead" Click="SplitTrackClick" />
@@ -173,15 +175,19 @@
                               Background="{StaticResource PanelBorderBrush}"
                               ShowsPreview="False"
                               Cursor="SizeNS" />
-                <StackPanel Grid.Row="1"
-                            Orientation="Horizontal"
-                            HorizontalAlignment="Center"
-                            VerticalAlignment="Center"
-                            IsHitTestVisible="False">
-                    <Ellipse Width="4" Height="4" Margin="3,0" Fill="#FF7C8494" />
-                    <Ellipse Width="4" Height="4" Margin="3,0" Fill="#FF7C8494" />
-                    <Ellipse Width="4" Height="4" Margin="3,0" Fill="#FF7C8494" />
-                </StackPanel>
+                <Border Grid.Row="1"
+                        HorizontalAlignment="Stretch"
+                        VerticalAlignment="Stretch"
+                        Background="{StaticResource PanelBorderBrush}"
+                        IsHitTestVisible="False">
+                    <StackPanel Orientation="Horizontal"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center">
+                        <Ellipse Width="4" Height="4" Margin="4,0" Fill="#FF8A93A3" />
+                        <Ellipse Width="4" Height="4" Margin="4,0" Fill="#FF8A93A3" />
+                        <Ellipse Width="4" Height="4" Margin="4,0" Fill="#FF8A93A3" />
+                    </StackPanel>
+                </Border>
 
                 <!-- ── Multitrack timeline (waveforms + video thumbnails) ── -->
                 <Border Grid.Row="2"
@@ -254,7 +260,8 @@
                              TextWrapping="Wrap"
                              VerticalScrollBarVisibility="Auto"
                              VerticalContentAlignment="Top"
-                             TextChanged="CueTextEditorTextChanged" />
+                             TextChanged="CueTextEditorTextChanged"
+                             LostFocus="CueTextEditorLostFocus" />
 
                     <WrapPanel Grid.Row="2" Orientation="Horizontal" Margin="0,6,0,0">
                         <Button x:Name="NudgeBackButton" Content="-100 ms" MinWidth="0" Padding="8,4" Click="NudgeBackClick" />
@@ -282,16 +289,61 @@
                 Background="{StaticResource PanelBackgroundBrush}"
                 BorderBrush="{StaticResource PanelBorderBrush}"
                 BorderThickness="1">
-            <Grid>
+            <Grid Cursor="Hand" MouseLeftButtonUp="StatusBarClick" ToolTip="Background tasks — click for the list and progress">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="176" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <ProgressBar x:Name="ProgressIndicator" Grid.Column="0" Minimum="0" Maximum="1" Value="0" VerticalAlignment="Center" />
                 <TextBlock x:Name="StatusText" Grid.Column="1" Margin="10,0,10,0" Text="Ready." VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                <TextBlock x:Name="RuntimeText" Grid.Column="2" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" />
+                <TextBlock x:Name="BackgroundTaskCountText"
+                           Grid.Column="2"
+                           Margin="0,0,10,0"
+                           Foreground="{StaticResource AccentBrush}"
+                           VerticalAlignment="Center"
+                           Visibility="Collapsed" />
+                <TextBlock x:Name="RuntimeText" Grid.Column="3" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" />
             </Grid>
         </Border>
+
+        <Popup x:Name="BackgroundTasksPopup"
+               PlacementTarget="{Binding ElementName=StatusText}"
+               Placement="Top"
+               StaysOpen="False"
+               AllowsTransparency="True">
+            <Border Background="{StaticResource PanelBackgroundBrush}"
+                    BorderBrush="{StaticResource PanelBorderBrush}"
+                    BorderThickness="1"
+                    Padding="12"
+                    MinWidth="320">
+                <StackPanel>
+                    <TextBlock Text="Background tasks" FontWeight="Bold" Margin="0,0,0,6" />
+                    <ItemsControl x:Name="BackgroundTasksList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Margin="0,0,0,8">
+                                    <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" />
+                                    <ProgressBar Value="{Binding Percent}"
+                                                 IsIndeterminate="{Binding IsIndeterminate}"
+                                                 Maximum="100"
+                                                 Height="6"
+                                                 Margin="0,3" />
+                                    <TextBlock Text="{Binding Detail}"
+                                               FontSize="11"
+                                               Foreground="{StaticResource SubtleTextBrush}"
+                                               TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock x:Name="NoBackgroundTasksText"
+                               Text="Nothing running right now."
+                               Foreground="{StaticResource SubtleTextBrush}"
+                               Visibility="Collapsed" />
+                </StackPanel>
+            </Border>
+        </Popup>
     </Grid>
 </Window>

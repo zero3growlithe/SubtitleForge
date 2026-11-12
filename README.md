@@ -18,12 +18,15 @@ Everything runs on your machine. No cloud, no API keys, no uploads.
 - **Cue list editing**: edit text, set start/end from the playhead, nudge ±100 ms,
   split, merge, add, delete; double-click a cue to jump to it in the preview.
   Column widths are draggable in the header row.
-- **Live preview** of the subtitles over the video plus a clickable timeline strip
-  showing every cue and the playhead.
+- **Live preview** of the subtitles over the video, with the cue positions drawn straight
+  into the seek bar below it (blue marks = cue start/length) plus the playhead.
 - **Cue cleanup** on transcription: long segments are wrapped and split proportionally,
   overlaps are removed, non-speech markers (`[Music]`, `(applause)`) are dropped.
-- **Export** `.srt`, `.vtt`, `.ass` — or burn into `*.subtitled.mp4` with ffmpeg
-  (H.264, CRF/preset configurable, audio stream copied).
+- **One `Export…` button.** Its menu offers the subtitle formats (`.srt` / `.vtt` / `.ass`)
+  and `As MP4…`, which opens a small dialog with the toggles **Include video**,
+  **Include audio**, **Include subtitles (as a file)** and **Burn in subtitles**. Without
+  video the burn-in renders onto a **solid colour backdrop** (chroma green by default) so the
+  result keys out cleanly in another program; audio and the sidecar can be combined freely.
 - **Open existing** `.srt` / `.vtt` to edit them with the same tools.
 - **Models…** dialog: shows every model, its size on disk and whether it is downloaded,
   with per-model `Delete`, `Delete all`, and a shortcut to the models folder.
@@ -79,7 +82,8 @@ Everything runs on your machine. No cloud, no API keys, no uploads.
 - The preview plays a **cached 540p H.264 proxy** built in the background on first open
   (`%LocalAppData%\SubtitleForge\proxies`), which makes seeking and playback smooth even for
   4K sources. Export, burn-in and transcription always use the original full-resolution file.
-  Videos that are 540p or smaller skip the proxy entirely.
+  **Full HD and smaller sources are never proxied** — they are cheap to seek directly, so
+  the original file is played as-is and only bigger-than-1080p sources get a proxy.
 - Proxy encodes use the **GPU** (`h264_nvenc`) whenever the ffmpeg build and driver provide
   it, and silently fall back to `libx264` on the CPU if the hardware encode fails. The audio
   lanes play from a cached **audio-only AAC file** per source, so hearing the timeline never
@@ -89,8 +93,10 @@ Everything runs on your machine. No cloud, no API keys, no uploads.
   cache; only a genuinely new file is ever encoded, and never the whole timeline again.
 - The **ruler shows proxy readiness** as a blue bar along its bottom edge: solid blue where a
   clip already plays from its proxy (or needs none), translucent blue while the encode is
-  still filling in, nothing while it has not started. The status line reports the percentage
-  while an encode runs.
+  still filling in, nothing while it has not started.
+- **Click the bar in the lower-left corner** to open a popup listing every background job
+  (proxy encodes, the audio cache, transcription, exports) with its live percentage; the same
+  bar shows how many tasks are running.
 
 ### Projects
 
@@ -108,8 +114,10 @@ stays a few kilobytes.
 - `←` / `→` — seek one second; `Shift`+`←` / `Shift`+`→` — seek ten seconds
 - `Del` — delete the selected track(s) or clip(s)
 - `Ctrl+Shift+D` — split every selected clip at the playhead
-- `Ctrl+Z` — undo the last edit (move, add, delete, split, reorder, rename, recolour, record)
-- `Ctrl+S` — save the project
+- `Ctrl+Shift+J` — join the selected neighbouring clips (also in a track's right-click menu)
+- `Ctrl+Z` — undo the last edit (move, add, delete, split, join, reorder, rename, recolour,
+  record, and every cue edit: add, delete, split, merge, nudge, timing and text changes)
+- `Ctrl+S` — save the project; `Ctrl+Shift+S` — save as…
 - double-click a track header — rename it; right-click a track — colour / split / delete
 
 ## Requirements
@@ -130,7 +138,8 @@ stays a few kilobytes.
 3. Pick the language (or leave `auto (detect)`), press `Transcribe`.
 4. Fix the cues: click a cue, edit the text, use `= playhead` for exact starts/ends,
    `-100 ms` / `+100 ms` to re-sync a block, `Split` / `Merge ↓` to fix boundaries.
-5. `Save .srt` (or `.vtt` / `.ass`), or `Burn into MP4…`.
+5. `Export…` — pick a subtitle format, or `As MP4…` for video/audio with the subtitles
+   burned in or written alongside.
 
 First transcription with a chosen model also downloads it to
 `%LocalAppData%\SubtitleForge\models` (base ≈ 142 MB, small ≈ 466 MB, medium ≈ 1.5 GB,
@@ -164,8 +173,8 @@ dotnet publish SubtitleForge/SubtitleForge.csproj -c Release -r win-x64 --self-c
   preview. Transcription and burn-in go through ffmpeg and work regardless.
 - Whisper reads the whole extracted 16 kHz mono track into memory: roughly 230 MB of
   samples per hour of audio.
-- Burn-in re-encodes the video, so it is CPU/GPU-bound and much slower than exporting
-  a sidecar `.srt`.
+- Burn-in (and any export that is not a plain remux) re-encodes the video, so it is
+  CPU/GPU-bound and much slower than exporting a sidecar `.srt`.
 - Cue splitting is proportional to text length; it does not do word-level forced
   alignment, so a very long single Whisper segment may still need manual `Split`.
 

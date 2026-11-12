@@ -155,10 +155,11 @@ namespace SubtitleForge.Controls
         }
         public const double VideoRowHeight = 66.0;
         public const double AudioRowHeight = 58.0;
-        public const double RowGap = 4.0;
+        public const double RowGap = 2.0;
         public const double EdgePadding = 2.0;
 
-        private const double SegmentSidePadding = 3.0;
+        private const double SegmentSidePadding = 0.5;
+        private const double SegmentCornerRadius = 1.5;
         private const double SnapDistancePixels = 12.0;
         private const double DragThreshold = 4.0;
 
@@ -659,7 +660,7 @@ namespace SubtitleForge.Controls
                 return;
             }
 
-            drawingContext.DrawRoundedRectangle(track.BackgroundBrush, null, rect, 3.0, 3.0);
+            drawingContext.DrawRoundedRectangle(track.BackgroundBrush, null, rect, SegmentCornerRadius, SegmentCornerRadius);
 
             drawingContext.PushClip(new RectangleGeometry(rect));
             try
@@ -681,7 +682,7 @@ namespace SubtitleForge.Controls
             if (segment.IsSelected)
             {
                 Pen selectionPen = new Pen(new SolidColorBrush(SelectionColor), 2.0);
-                drawingContext.DrawRoundedRectangle(null, selectionPen, new Rect(rect.X + 1.0, rect.Y + 1.0, rect.Width - 2.0, rect.Height - 2.0), 3.0, 3.0);
+                drawingContext.DrawRoundedRectangle(null, selectionPen, new Rect(rect.X + 1.0, rect.Y + 1.0, rect.Width - 2.0, rect.Height - 2.0), SegmentCornerRadius, SegmentCornerRadius);
             }
         }
 
@@ -690,7 +691,7 @@ namespace SubtitleForge.Controls
             double left = XForSeconds(segment.StartSeconds) + SegmentSidePadding;
             double right = XForSeconds(segment.EndSeconds) - SegmentSidePadding;
             double width = Math.Max(0.0, right - left);
-            return new Rect(left, rowTop + 3.0, width, rowHeight - 6.0);
+            return new Rect(left, rowTop + 1.0, width, rowHeight - 2.0);
         }
 
         private void DrawWaveform(DrawingContext drawingContext, TimelineTrack track, TimelineSegment segment, Rect rect)

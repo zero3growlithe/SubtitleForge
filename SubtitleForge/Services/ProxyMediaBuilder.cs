@@ -25,6 +25,9 @@ namespace SubtitleForge.Services
         /// </summary>
         public const int ProxyHeight = 540;
 
+        /// <summary>Sources at or below Full HD are cheap enough to seek directly — no proxy.</summary>
+        public const double FullHdHeight = 1080.0;
+
         public static string ProxiesFolder
         {
             get

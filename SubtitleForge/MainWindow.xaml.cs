@@ -673,6 +673,8 @@ namespace SubtitleForge
             Brush subtle = (Brush)FindResource("SubtleTextBrush");
             Brush accent = (Brush)FindResource("AccentBrush");
 
+            double markerHeight = Math.Max(4.0, Math.Min(8.0, height - 8.0));
+
             Line baseline = new Line();
             baseline.X1 = 0.0;
             baseline.X2 = width;
@@ -700,13 +702,13 @@ namespace SubtitleForge
 
                 Rectangle block = new Rectangle();
                 block.Width = blockWidth;
-                block.Height = 26.0;
+                block.Height = markerHeight;
                 block.Fill = accent;
                 block.Opacity = cue == selected ? 1.0 : 0.45;
                 block.RadiusX = 2.0;
                 block.RadiusY = 2.0;
                 Canvas.SetLeft(block, left);
-                Canvas.SetTop(block, (height - 26.0) / 2.0);
+                Canvas.SetTop(block, (height - markerHeight) / 2.0);
                 TimelineCanvas.Children.Add(block);
             }
 
@@ -768,36 +770,6 @@ namespace SubtitleForge
         private void TimelineCanvasSizeChanged(object sender, SizeChangedEventArgs e)
         {
             DrawTimeline();
-        }
-
-        private void TimelineCanvasMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-        {
-            double total = durationSeconds > 0.0 ? durationSeconds : EstimatedDuration();
-            double width = TimelineCanvas.ActualWidth;
-            if (total <= 0.0 || width <= 0.0)
-            {
-                return;
-            }
-
-            Point position = e.GetPosition(TimelineCanvas);
-            double seconds = (position.X / width) * total;
-            if (seconds < 0.0)
-            {
-                seconds = 0.0;
-            }
-
-            if (seconds > total)
-            {
-                seconds = total;
-            }
-
-            suppressSliderSeek = true;
-            PositionSlider.Value = seconds;
-            suppressSliderSeek = false;
-            PositionText.Text = SubtitleCue.FormatTimestamp(TimeSpan.FromSeconds(seconds));
-            SafeSeek(TimeSpan.FromSeconds(seconds));
-            UpdateOverlay(TimeSpan.FromSeconds(seconds));
-            UpdatePlayhead(seconds);
         }
 
         // ── Cue list and editor ────────────────────────────────────────────
@@ -907,7 +879,7 @@ namespace SubtitleForge
             UpdatePlayhead(cue.Start.TotalSeconds);
         }
 
-        private void CueTextEditorTextChanged(object sender, TextChangedEventArgs e)
+        private void CueTextEditorTextChangedCore(object sender, TextChangedEventArgs e)
         {
             if (isUpdatingCueEditor)
             {
@@ -924,12 +896,12 @@ namespace SubtitleForge
             DrawTimeline();
         }
 
-        private void StartEditorLostFocus(object sender, RoutedEventArgs e)
+        private void StartEditorLostFocusCore(object sender, RoutedEventArgs e)
         {
             CommitTimeEditors();
         }
 
-        private void EndEditorLostFocus(object sender, RoutedEventArgs e)
+        private void EndEditorLostFocusCore(object sender, RoutedEventArgs e)
         {
             CommitTimeEditors();
         }
@@ -976,7 +948,7 @@ namespace SubtitleForge
             UpdateOverlay(CurrentPosition);
         }
 
-        private void SetStartClick(object sender, RoutedEventArgs e)
+        private void SetStartClickCore(object sender, RoutedEventArgs e)
         {
             SubtitleCue? cue = SelectedCue;
             if (cue == null)
@@ -995,7 +967,7 @@ namespace SubtitleForge
             UpdateOverlay(CurrentPosition);
         }
 
-        private void SetEndClick(object sender, RoutedEventArgs e)
+        private void SetEndClickCore(object sender, RoutedEventArgs e)
         {
             SubtitleCue? cue = SelectedCue;
             if (cue == null)
@@ -1018,12 +990,12 @@ namespace SubtitleForge
             UpdateOverlay(CurrentPosition);
         }
 
-        private void NudgeBackClick(object sender, RoutedEventArgs e)
+        private void NudgeBackClickCore(object sender, RoutedEventArgs e)
         {
             NudgeSelected(TimeSpan.FromMilliseconds(-100));
         }
 
-        private void NudgeForwardClick(object sender, RoutedEventArgs e)
+        private void NudgeForwardClickCore(object sender, RoutedEventArgs e)
         {
             NudgeSelected(TimeSpan.FromMilliseconds(100));
         }
@@ -1042,7 +1014,7 @@ namespace SubtitleForge
             UpdateOverlay(CurrentPosition);
         }
 
-        private void SplitCueClick(object sender, RoutedEventArgs e)
+        private void SplitCueClickCore(object sender, RoutedEventArgs e)
         {
             SubtitleCue? cue = SelectedCue;
             if (cue == null)
@@ -1064,7 +1036,7 @@ namespace SubtitleForge
             DrawTimeline();
         }
 
-        private void MergeCueClick(object sender, RoutedEventArgs e)
+        private void MergeCueClickCore(object sender, RoutedEventArgs e)
         {
             SubtitleCue? cue = SelectedCue;
             if (cue == null)
@@ -1089,7 +1061,7 @@ namespace SubtitleForge
             DrawTimeline();
         }
 
-        private void AddCueClick(object sender, RoutedEventArgs e)
+        private void AddCueClickCore(object sender, RoutedEventArgs e)
         {
             TimeSpan start = CurrentPosition;
             SubtitleCue cue = new SubtitleCue(start, start + TimeSpan.FromSeconds(2.0), "New cue");
@@ -1112,7 +1084,7 @@ namespace SubtitleForge
             DrawTimeline();
         }
 
-        private void DeleteCueClick(object sender, RoutedEventArgs e)
+        private void DeleteCueClickCore(object sender, RoutedEventArgs e)
         {
             SubtitleCue? cue = SelectedCue;
             if (cue == null)
@@ -1200,6 +1172,7 @@ namespace SubtitleForge
                 }
 
                 SetStatus("Preparing " + model.DisplayName + "…");
+                transcriptionTask = BeginBackgroundTask("Transcription — " + model.DisplayName);
                 IProgress<string> modelStatus = new Progress<string>(SetStatus);
                 IProgress<double> downloadProgress = new Progress<double>(delegate (double fraction)
                 {
@@ -1240,6 +1213,7 @@ namespace SubtitleForge
                 }
 
                 SetProgress(0.10);
+                UpdateBackgroundTask(transcriptionTask, 10.0, "Transcribing the audio clips…");
                 DateTime startedUtc = DateTime.UtcNow;
 
                 List<SubtitleCue> combined = await TranscribeSegmentsAsync(
@@ -1298,6 +1272,8 @@ namespace SubtitleForge
             finally
             {
                 SetBusy(false);
+                FinishBackgroundTask(transcriptionTask);
+                transcriptionTask = null;
                 if (operationCancellation != null)
                 {
                     operationCancellation.Dispose();
@@ -1320,169 +1296,6 @@ namespace SubtitleForge
         }
 
         // ── Export ─────────────────────────────────────────────────────────
-
-        private void SaveSrtClick(object sender, RoutedEventArgs e)
-        {
-            SaveSubtitles("SRT subtitles|*.srt", ".srt");
-        }
-
-        private void SaveVttClick(object sender, RoutedEventArgs e)
-        {
-            SaveSubtitles("WebVTT subtitles|*.vtt", ".vtt");
-        }
-
-        private void SaveAssClick(object sender, RoutedEventArgs e)
-        {
-            SaveSubtitles("Advanced SubStation Alpha|*.ass", ".ass");
-        }
-
-        private void SaveSubtitles(string filter, string extension)
-        {
-            if (!EnsureCuesAvailable())
-            {
-                return;
-            }
-
-            ApplyUiToSettings();
-
-            SaveFileDialog dialog = new SaveFileDialog();
-            dialog.Title = "Save subtitles";
-            dialog.Filter = filter;
-            dialog.DefaultExt = extension;
-            dialog.FileName = BuildDefaultName(extension);
-            dialog.AddExtension = true;
-            dialog.OverwritePrompt = true;
-            ApplyStartDirectory(dialog);
-
-            if (dialog.ShowDialog(this) != true)
-            {
-                return;
-            }
-
-            try
-            {
-                RememberDirectory(dialog.FileName);
-                if (extension == ".srt")
-                {
-                    SubtitleWriter.SaveSrt(dialog.FileName, cues);
-                }
-                else if (extension == ".vtt")
-                {
-                    SubtitleWriter.SaveVtt(dialog.FileName, cues);
-                }
-                else
-                {
-                    SubtitleWriter.SaveAss(dialog.FileName, cues, BuildAssStyle());
-                }
-
-                SetStatus("Saved " + Path.GetFileName(dialog.FileName) + " (" + cues.Count.ToString(CultureInfo.InvariantCulture) + " cues).");
-            }
-            catch (Exception exception)
-            {
-                CrashLog.Write(exception, "SaveSubtitles");
-                SetStatus("Could not save: " + exception.Message);
-                MessageBox.Show(this, exception.Message, "SubtitleForge — save failed", MessageBoxButton.OK, MessageBoxImage.Error);
-            }
-        }
-
-        private async void BurnClick(object sender, RoutedEventArgs e)
-        {
-            if (isBusy || !EnsureCuesAvailable())
-            {
-                return;
-            }
-
-            ApplyUiToSettings();
-
-            string? ffmpeg = FfmpegLocator.Resolve("ffmpeg", App.Settings.FfmpegDirectory);
-            if (ffmpeg == null)
-            {
-                SetStatus("ffmpeg was not found — burn-in needs it.");
-                MessageBox.Show(
-                    this,
-                    "ffmpeg.exe was not found.\n\nInstall ffmpeg and either put it on PATH or set \"FfmpegDirectory\" in:\n"
-                    + AppSettings.SettingsPath,
-                    "SubtitleForge",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning);
-                return;
-            }
-
-            if (string.IsNullOrEmpty(videoPath))
-            {
-                SetStatus("Open the video you want to burn into first.");
-                return;
-            }
-
-            SaveFileDialog dialog = new SaveFileDialog();
-            dialog.Title = "Save video with burned-in subtitles";
-            dialog.Filter = "MP4 video|*.mp4";
-            dialog.DefaultExt = ".mp4";
-            dialog.FileName = Path.GetFileNameWithoutExtension(videoPath) + ".subtitled.mp4";
-            dialog.AddExtension = true;
-            dialog.OverwritePrompt = true;
-            ApplyStartDirectory(dialog);
-
-            if (dialog.ShowDialog(this) != true)
-            {
-                return;
-            }
-
-            string outputPath = dialog.FileName;
-            RememberDirectory(outputPath);
-
-            operationCancellation = new CancellationTokenSource();
-            CancellationToken token = operationCancellation.Token;
-            SetBusy(true);
-            SetProgress(0.0);
-
-            try
-            {
-                SetStatus("Burning " + cues.Count.ToString(CultureInfo.InvariantCulture) + " cues into "
-                    + Path.GetFileName(outputPath) + "… (re-encoding video, this takes a while)");
-
-                IProgress<double> progress = new Progress<double>(SetProgress);
-                await SubtitleBurner.BurnAsync(
-                    ffmpeg,
-                    videoPath,
-                    outputPath,
-                    cues,
-                    BuildAssStyle(),
-                    App.Settings.BurnPreset,
-                    App.Settings.BurnCrf,
-                    durationSeconds,
-                    progress,
-                    token).ConfigureAwait(true);
-
-                SetProgress(1.0);
-                SetStatus("Burned subtitles into " + Path.GetFileName(outputPath) + ".");
-            }
-            catch (OperationCanceledException)
-            {
-                SetStatus("Burn-in cancelled.");
-                TryDeleteFile(outputPath);
-            }
-            catch (Exception exception)
-            {
-                CrashLog.Write(exception, "BurnIn");
-                SetStatus("Burn-in failed: " + exception.Message);
-                MessageBox.Show(
-                    this,
-                    exception.Message + "\n\nDetails were written to:\n" + CrashLog.LogPath,
-                    "SubtitleForge — burn-in failed",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Error);
-            }
-            finally
-            {
-                SetBusy(false);
-                if (operationCancellation != null)
-                {
-                    operationCancellation.Dispose();
-                    operationCancellation = null;
-                }
-            }
-        }
 
         private void ImportSubtitlesClick(object sender, RoutedEventArgs e)
         {
@@ -1726,6 +1539,10 @@ namespace SubtitleForge
                         continue;
                     }
 
+                    FinishBackgroundTask(proxyTask);
+                    proxyTask = BeginBackgroundTask("Preview proxy — " + Path.GetFileName(sourcePath));
+                    UpdateBackgroundTask(proxyTask, -1.0, "Preparing the audio cache for preview…");
+
                     string? ffmpeg = FfmpegLocator.Resolve("ffmpeg", App.Settings.FfmpegDirectory);
                     string? ffprobe = FfmpegLocator.Resolve("ffprobe", App.Settings.FfmpegDirectory);
                     if (ffmpeg == null || ffprobe == null)
@@ -1764,7 +1581,7 @@ namespace SubtitleForge
                                 SetSourceAudio(sourcePath, audioFile);
                             }
 
-                            if (!metrics.HasVideo || metrics.Height <= ProxyMediaBuilder.ProxyHeight)
+                            if (!metrics.HasVideo || metrics.Height <= ProxyMediaBuilder.FullHdHeight)
                             {
                                 // Shrinking this would gain nothing: it is already cheap to seek.
                                 SetSourceReady(sourcePath, 1.0, null);
@@ -1810,6 +1627,8 @@ namespace SubtitleForge
             }
             finally
             {
+                FinishBackgroundTask(proxyTask);
+                proxyTask = null;
                 proxyBuildRunning = false;
             }
         }
@@ -1844,6 +1663,12 @@ namespace SubtitleForge
 
                 sourceReadyFractions[sourcePath] = fraction < 0.0 ? 0.0 : (fraction > 1.0 ? 1.0 : fraction);
                 TrackTimelineView.Refresh();
+
+                UpdateBackgroundTask(
+                    proxyTask,
+                    fraction * 100.0,
+                    "Encoding the preview proxy for " + Path.GetFileName(sourcePath)
+                        + " — " + Math.Round(fraction * 100.0).ToString(CultureInfo.InvariantCulture) + "%");
 
                 int percent = (int)Math.Round(fraction * 100.0);
                 if (percent < 100)
@@ -2144,6 +1969,14 @@ namespace SubtitleForge
 
         private void SeekToSeconds(double seconds)
         {
+            // One funnel for every seek surface: timeline clicks, slider drags, arrow keys and
+            // the cue list. Playback always stops first, otherwise the playhead keeps running
+            // away from the position the user just asked for.
+            if (isPlaying)
+            {
+                PausePlayback();
+            }
+
             double total = durationSeconds > 0.0 ? durationSeconds : EstimatedDuration();
             if (seconds < 0.0)
             {
@@ -2355,6 +2188,12 @@ namespace SubtitleForge
             splitItem.Header = "Split at playhead (Ctrl+Shift+D)";
             splitItem.Click += delegate { SplitSelectedSegments(); };
             menu.Items.Add(splitItem);
+
+            MenuItem joinItem = new MenuItem();
+            joinItem.Header = "Join clips (Ctrl+Shift+J)";
+            joinItem.IsEnabled = CanJoinSelection();
+            joinItem.Click += delegate { JoinSelectedSegments(); };
+            menu.Items.Add(joinItem);
 
             MenuItem deleteItem = new MenuItem();
             deleteItem.Header = "Delete track (Del)";
@@ -4068,6 +3907,792 @@ namespace SubtitleForge
                 : "Added " + added.ToString(CultureInfo.InvariantCulture) + " dropped files as tracks. Ctrl+Z undoes it.");
         }
 
+        // ── Export ─────────────────────────────────────────────────────────
+
+        private void ExportClick(object sender, RoutedEventArgs e)
+        {
+            if (isBusy)
+            {
+                SetStatus("Wait for the current job to finish before exporting.");
+                return;
+            }
+
+            ContextMenu menu = new ContextMenu();
+
+            MenuItem srt = new MenuItem();
+            srt.Header = "Subtitles as SubRip (.srt)…";
+            srt.IsEnabled = cues.Count > 0;
+            srt.Click += delegate { ExportSubtitlesAs("srt"); };
+            menu.Items.Add(srt);
+
+            MenuItem vtt = new MenuItem();
+            vtt.Header = "Subtitles as WebVTT (.vtt)…";
+            vtt.IsEnabled = cues.Count > 0;
+            vtt.Click += delegate { ExportSubtitlesAs("vtt"); };
+            menu.Items.Add(vtt);
+
+            MenuItem ass = new MenuItem();
+            ass.Header = "Subtitles as Advanced SubStation (.ass)…";
+            ass.IsEnabled = cues.Count > 0;
+            ass.Click += delegate { ExportSubtitlesAs("ass"); };
+            menu.Items.Add(ass);
+
+            menu.Items.Add(new Separator());
+
+            MenuItem media = new MenuItem();
+            media.Header = "As MP4…";
+            media.Click += ExportMediaClick;
+            menu.Items.Add(media);
+
+            menu.PlacementTarget = ExportButton;
+            menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+            menu.IsOpen = true;
+        }
+
+        private void ExportSubtitlesAs(string format)
+        {
+            if (!EnsureCuesAvailable())
+            {
+                return;
+            }
+
+            ApplyUiToSettings();
+
+            string extension = "." + format;
+            string filter;
+            switch (format)
+            {
+                case "vtt":
+                    filter = "WebVTT subtitles|*.vtt";
+                    break;
+                case "ass":
+                    filter = "Advanced SubStation subtitles|*.ass";
+                    break;
+                default:
+                    filter = "SubRip subtitles|*.srt";
+                    break;
+            }
+
+            SaveFileDialog dialog = new SaveFileDialog();
+            dialog.Title = "Export subtitles";
+            dialog.Filter = filter;
+            dialog.DefaultExt = extension;
+            dialog.FileName = BuildDefaultName(extension);
+            dialog.AddExtension = true;
+            dialog.OverwritePrompt = true;
+            ApplyStartDirectory(dialog);
+
+            if (dialog.ShowDialog(this) != true)
+            {
+                return;
+            }
+
+            string outputPath = dialog.FileName;
+            RememberDirectory(outputPath);
+
+            try
+            {
+                WriteSubtitleFile(outputPath, format);
+                SetStatus("Saved " + Path.GetFileName(outputPath) + ".");
+            }
+            catch (Exception exception)
+            {
+                CrashLog.Write(exception, "ExportSubtitles");
+                SetStatus("Could not write the subtitle file.");
+                MessageBox.Show(
+                    this,
+                    exception.Message,
+                    "SubtitleForge",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
+        }
+
+        private void WriteSubtitleFile(string outputPath, string format)
+        {
+            switch (format)
+            {
+                case "vtt":
+                    SubtitleWriter.SaveVtt(outputPath, cues);
+                    break;
+                case "ass":
+                    SubtitleWriter.SaveAss(outputPath, cues, BuildAssStyle());
+                    break;
+                default:
+                    SubtitleWriter.SaveSrt(outputPath, cues);
+                    break;
+            }
+        }
+
+        private async void ExportMediaClick(object sender, RoutedEventArgs e)
+        {
+            if (isBusy)
+            {
+                return;
+            }
+
+            ApplyUiToSettings();
+
+            ExportWindow window = new ExportWindow();
+            window.Owner = this;
+            if (window.ShowDialog() != true)
+            {
+                return;
+            }
+
+            MediaExportOptions options = window.Options;
+            options.SourcePath = ResolveExportSourcePath();
+            options.DurationSeconds = durationSeconds > 0.0 ? durationSeconds : EstimatedDuration();
+            options.Width = videoMetrics.Width > 0 ? videoMetrics.Width : 1920;
+            options.Height = videoMetrics.Height > 0 ? videoMetrics.Height : 1080;
+            options.FrameRate = videoMetrics.FrameRate > 1.0 ? videoMetrics.FrameRate : 30.0;
+
+            bool solidBackdrop = options.BurnSubtitles && !options.IncludeVideo;
+            if (!solidBackdrop && options.NeedsMediaFile && string.IsNullOrEmpty(options.SourcePath))
+            {
+                SetStatus("There is no video to export from yet — open one first.");
+                return;
+            }
+
+            if (options.BurnSubtitles && cues.Count == 0)
+            {
+                SetStatus("There are no cues to burn in.");
+                return;
+            }
+
+            string? subtitlePath = null;
+            if (options.IncludeSubtitles)
+            {
+                SaveFileDialog subtitleDialog = new SaveFileDialog();
+                subtitleDialog.Title = "Export subtitles";
+                subtitleDialog.Filter = SubtitleFilterFor(options.SubtitleFormat);
+                subtitleDialog.DefaultExt = "." + options.SubtitleFormat;
+                subtitleDialog.FileName = BuildDefaultName("." + options.SubtitleFormat);
+                subtitleDialog.AddExtension = true;
+                subtitleDialog.OverwritePrompt = true;
+                ApplyStartDirectory(subtitleDialog);
+
+                if (subtitleDialog.ShowDialog(this) != true)
+                {
+                    return;
+                }
+
+                subtitlePath = subtitleDialog.FileName;
+                RememberDirectory(subtitlePath);
+            }
+
+            string? mediaPath = null;
+            if (options.NeedsMediaFile)
+            {
+                string extension = MediaExporter.SuggestedExtension(options);
+                SaveFileDialog mediaDialog = new SaveFileDialog();
+                mediaDialog.Title = "Export media";
+                mediaDialog.Filter = extension == ".mp4" ? "MP4 video|*.mp4" : "M4A audio|*.m4a";
+                mediaDialog.DefaultExt = extension;
+                mediaDialog.FileName = MediaExporter.SuggestedFileName(BaseNameForExport(), options);
+                mediaDialog.AddExtension = true;
+                mediaDialog.OverwritePrompt = true;
+                ApplyStartDirectory(mediaDialog);
+
+                if (mediaDialog.ShowDialog(this) != true)
+                {
+                    return;
+                }
+
+                mediaPath = mediaDialog.FileName;
+                RememberDirectory(mediaPath);
+            }
+
+            if (subtitlePath != null)
+            {
+                try
+                {
+                    WriteSubtitleFile(subtitlePath, options.SubtitleFormat);
+                    SetStatus("Saved " + Path.GetFileName(subtitlePath) + ".");
+                }
+                catch (Exception exception)
+                {
+                    CrashLog.Write(exception, "ExportSubtitles");
+                    MessageBox.Show(
+                        this,
+                        exception.Message,
+                        "SubtitleForge",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                    return;
+                }
+            }
+
+            if (mediaPath == null)
+            {
+                return;
+            }
+
+            string? ffmpeg = FfmpegLocator.Resolve("ffmpeg", App.Settings.FfmpegDirectory);
+            if (ffmpeg == null)
+            {
+                SetStatus("ffmpeg was not found — exporting media needs it.");
+                MessageBox.Show(
+                    this,
+                    "ffmpeg.exe was not found.\n\nInstall ffmpeg and either put it on PATH or set \"FfmpegDirectory\" in:\n"
+                    + AppSettings.SettingsPath,
+                    "SubtitleForge",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            BackgroundTask task = BeginBackgroundTask("Export — " + Path.GetFileName(mediaPath));
+            operationCancellation = new CancellationTokenSource();
+            CancellationToken token = operationCancellation.Token;
+            SetBusy(true);
+            SetProgress(0.0);
+
+            try
+            {
+                SetStatus("Exporting " + Path.GetFileName(mediaPath) + "…");
+                IProgress<double> progress = new Progress<double>(delegate (double fraction)
+                {
+                    SetProgress(fraction);
+                    UpdateBackgroundTask(
+                        task,
+                        fraction * 100.0,
+                        "Exporting " + Path.GetFileName(mediaPath) + " — "
+                            + Math.Round(fraction * 100.0).ToString(CultureInfo.InvariantCulture) + "%");
+                });
+
+                await MediaExporter
+                    .ExportAsync(
+                        ffmpeg,
+                        options,
+                        cues,
+                        BuildAssStyle(),
+                        options.SourcePath,
+                        mediaPath,
+                        progress,
+                        token)
+                    .ConfigureAwait(true);
+
+                SetProgress(1.0);
+                SetStatus("Exported " + Path.GetFileName(mediaPath) + ".");
+            }
+            catch (OperationCanceledException)
+            {
+                SetStatus("Export cancelled.");
+                TryDeleteFile(mediaPath);
+            }
+            catch (Exception exception)
+            {
+                CrashLog.Write(exception, "ExportMedia");
+                SetStatus("Export failed.");
+                MessageBox.Show(
+                    this,
+                    exception.Message,
+                    "SubtitleForge",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                TryDeleteFile(mediaPath);
+            }
+            finally
+            {
+                SetBusy(false);
+                FinishBackgroundTask(task);
+            }
+        }
+
+        private static string SubtitleFilterFor(string format)
+        {
+            switch (format)
+            {
+                case "vtt":
+                    return "WebVTT subtitles|*.vtt";
+                case "ass":
+                    return "Advanced SubStation subtitles|*.ass";
+                default:
+                    return "SubRip subtitles|*.srt";
+            }
+        }
+
+        private string BaseNameForExport()
+        {
+            string source = ResolveExportSourcePath();
+            if (!string.IsNullOrEmpty(source))
+            {
+                return Path.GetFileNameWithoutExtension(source);
+            }
+
+            return "export";
+        }
+
+        private string ResolveExportSourcePath()
+        {
+            if (!string.IsNullOrEmpty(videoPath))
+            {
+                return videoPath;
+            }
+
+            foreach (TimelineTrack track in tracks)
+            {
+                if (track.Kind != TrackKind.Video)
+                {
+                    continue;
+                }
+
+                foreach (TimelineSegment segment in track.Segments)
+                {
+                    if (!string.IsNullOrEmpty(segment.SourcePath))
+                    {
+                        return segment.SourcePath!;
+                    }
+                }
+            }
+
+            return string.Empty;
+        }
+
+        // ── Background tasks ───────────────────────────────────────────────
+
+        private readonly ObservableCollection<BackgroundTask> backgroundTasks = new ObservableCollection<BackgroundTask>();
+
+        private BackgroundTask? proxyTask;
+
+        private BackgroundTask? transcriptionTask;
+
+        private BackgroundTask BeginBackgroundTask(string title)
+        {
+            BackgroundTask task = new BackgroundTask();
+            task.Title = title;
+            task.Detail = "Starting…";
+            task.Percent = 0.0;
+            task.IsIndeterminate = true;
+
+            RunOnUi(delegate
+            {
+                if (BackgroundTasksList.ItemsSource == null)
+                {
+                    BackgroundTasksList.ItemsSource = backgroundTasks;
+                }
+
+                backgroundTasks.Add(task);
+                UpdateBackgroundTaskIndicator();
+            });
+
+            return task;
+        }
+
+        private void UpdateBackgroundTask(BackgroundTask? task, double percent, string detail)
+        {
+            if (task == null)
+            {
+                return;
+            }
+
+            RunOnUi(delegate
+            {
+                task.IsIndeterminate = percent < 0.0;
+                if (percent >= 0.0)
+                {
+                    task.Percent = percent > 100.0 ? 100.0 : percent;
+                }
+
+                if (!string.IsNullOrEmpty(detail))
+                {
+                    task.Detail = detail;
+                }
+            });
+        }
+
+        private void FinishBackgroundTask(BackgroundTask? task)
+        {
+            if (task == null)
+            {
+                return;
+            }
+
+            RunOnUi(delegate
+            {
+                backgroundTasks.Remove(task);
+                UpdateBackgroundTaskIndicator();
+
+                if (backgroundTasks.Count == 0 && BackgroundTasksPopup.IsOpen)
+                {
+                    BackgroundTasksPopup.IsOpen = false;
+                }
+            });
+        }
+
+        private void UpdateBackgroundTaskIndicator()
+        {
+            int count = backgroundTasks.Count;
+            if (count <= 0)
+            {
+                BackgroundTaskCountText.Visibility = Visibility.Collapsed;
+                BackgroundTaskCountText.Text = string.Empty;
+                return;
+            }
+
+            BackgroundTaskCountText.Text = count == 1
+                ? "1 task running"
+                : count.ToString(CultureInfo.InvariantCulture) + " tasks running";
+            BackgroundTaskCountText.Visibility = Visibility.Visible;
+        }
+
+        private void StatusBarClick(object sender, MouseButtonEventArgs e)
+        {
+            if (backgroundTasks.Count == 0)
+            {
+                SetStatus("Nothing is running in the background right now.");
+                BackgroundTasksPopup.IsOpen = false;
+                return;
+            }
+
+            BackgroundTasksList.ItemsSource = backgroundTasks;
+            NoBackgroundTasksText.Visibility = Visibility.Collapsed;
+            BackgroundTasksPopup.IsOpen = !BackgroundTasksPopup.IsOpen;
+        }
+
+        // ── Joining clips ──────────────────────────────────────────────────
+
+        private void JoinSelectedSegments()
+        {
+            List<KeyValuePair<TimelineTrack, TimelineSegment>> selection = SelectedSegments();
+            if (selection.Count < 2)
+            {
+                SetStatus("Select two or more neighbouring clips on one track, then join them.");
+                return;
+            }
+
+            List<TimelineTrack> trackOrder = new List<TimelineTrack>();
+            Dictionary<TimelineTrack, List<TimelineSegment>> grouped =
+                new Dictionary<TimelineTrack, List<TimelineSegment>>();
+
+            foreach (KeyValuePair<TimelineTrack, TimelineSegment> entry in selection)
+            {
+                List<TimelineSegment> group;
+                if (!grouped.TryGetValue(entry.Key, out group))
+                {
+                    group = new List<TimelineSegment>();
+                    grouped[entry.Key] = group;
+                    trackOrder.Add(entry.Key);
+                }
+
+                if (!group.Contains(entry.Value))
+                {
+                    group.Add(entry.Value);
+                }
+            }
+
+            TimelineSnapshot before = CaptureTimeline();
+            int joinCount = 0;
+
+            foreach (TimelineTrack track in trackOrder)
+            {
+                List<TimelineSegment> group = grouped[track];
+                if (group.Count < 2)
+                {
+                    continue;
+                }
+
+                group.Sort(delegate (TimelineSegment left, TimelineSegment right)
+                {
+                    return left.StartSeconds.CompareTo(right.StartSeconds);
+                });
+
+                if (!CanJoinSegments(group))
+                {
+                    continue;
+                }
+
+                TimelineSegment first = group[0];
+                TimelineSegment last = group[group.Count - 1];
+                double newDuration = last.EndSeconds - first.StartSeconds;
+
+                first.DurationSeconds = newDuration;
+                first.SourceDuration = first.SourceOffsetSeconds + newDuration;
+                first.IsSelected = true;
+
+                for (int index = 1; index < group.Count; index++)
+                {
+                    group[index].IsSelected = false;
+                    track.Segments.Remove(group[index]);
+                }
+
+                joinCount++;
+            }
+
+            if (joinCount == 0)
+            {
+                SetStatus("Only neighbouring clips that come from the same source can be joined.");
+                return;
+            }
+
+            UndoStackPush("join clips", delegate
+            {
+                RestoreTimeline(before);
+            });
+
+            AfterTimelineStructureChanged();
+            SetStatus(joinCount == 1
+                ? "Joined the selected clips. Ctrl+Z undoes it."
+                : "Joined the selected clips on " + joinCount.ToString(CultureInfo.InvariantCulture)
+                    + " tracks. Ctrl+Z undoes it.");
+        }
+
+        private bool CanJoinSelection()
+        {
+            List<KeyValuePair<TimelineTrack, TimelineSegment>> selection = SelectedSegments();
+            if (selection.Count < 2)
+            {
+                return false;
+            }
+
+            Dictionary<TimelineTrack, List<TimelineSegment>> grouped =
+                new Dictionary<TimelineTrack, List<TimelineSegment>>();
+
+            foreach (KeyValuePair<TimelineTrack, TimelineSegment> entry in selection)
+            {
+                List<TimelineSegment> group;
+                if (!grouped.TryGetValue(entry.Key, out group))
+                {
+                    group = new List<TimelineSegment>();
+                    grouped[entry.Key] = group;
+                }
+
+                if (!group.Contains(entry.Value))
+                {
+                    group.Add(entry.Value);
+                }
+            }
+
+            foreach (KeyValuePair<TimelineTrack, List<TimelineSegment>> pair in grouped)
+            {
+                List<TimelineSegment> group = pair.Value;
+                if (group.Count < 2)
+                {
+                    continue;
+                }
+
+                group.Sort(delegate (TimelineSegment left, TimelineSegment right)
+                {
+                    return left.StartSeconds.CompareTo(right.StartSeconds);
+                });
+
+                if (CanJoinSegments(group))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool CanJoinSegments(List<TimelineSegment> group)
+        {
+            const double tolerance = 0.05;
+            TimelineSegment first = group[0];
+
+            for (int index = 1; index < group.Count; index++)
+            {
+                TimelineSegment previous = group[index - 1];
+                TimelineSegment current = group[index];
+
+                if (current.StartSeconds - previous.EndSeconds > tolerance)
+                {
+                    return false;
+                }
+
+                double previousSourceEnd = previous.SourceOffsetSeconds
+                    + (previous.EndSeconds - previous.StartSeconds);
+                if (Math.Abs(previousSourceEnd - current.SourceOffsetSeconds) > tolerance)
+                {
+                    return false;
+                }
+
+                if (!SharesSource(first, current))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool SharesSource(TimelineSegment left, TimelineSegment right)
+        {
+            if (ReferenceEquals(left.Samples, right.Samples) && left.Samples.Length > 0)
+            {
+                return true;
+            }
+
+            if (!string.IsNullOrEmpty(left.SourcePath)
+                && !string.IsNullOrEmpty(right.SourcePath)
+                && string.Equals(left.SourcePath, right.SourcePath, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        // ── Cue editing undo ───────────────────────────────────────────────
+
+        private List<SubtitleCue>? pendingCueTextSnapshot;
+
+        private List<SubtitleCue> CaptureCueSnapshot()
+        {
+            List<SubtitleCue> snapshot = new List<SubtitleCue>(cues.Count);
+            foreach (SubtitleCue cue in cues)
+            {
+                snapshot.Add(cue.Clone());
+            }
+
+            return snapshot;
+        }
+
+        private static bool CueSnapshotsMatch(List<SubtitleCue> before, IList<SubtitleCue> current)
+        {
+            if (before.Count != current.Count)
+            {
+                return false;
+            }
+
+            for (int index = 0; index < before.Count; index++)
+            {
+                SubtitleCue left = before[index];
+                SubtitleCue right = current[index];
+                if (left.Start != right.Start || left.End != right.End || left.Text != right.Text)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private void RestoreCueSnapshot(List<SubtitleCue> snapshot)
+        {
+            cues.Clear();
+            foreach (SubtitleCue cue in snapshot)
+            {
+                cues.Add(cue.Clone());
+            }
+
+            CuePostProcessor.Renumber(cues);
+            if (cues.Count > 0)
+            {
+                CueList.SelectedIndex = 0;
+            }
+
+            RefreshCueEditor();
+            UpdateOverlay(CurrentPosition);
+            DrawTimeline();
+        }
+
+        private void PushCueUndoIfChanged(string description, List<SubtitleCue> before)
+        {
+            if (before == null || CueSnapshotsMatch(before, cues))
+            {
+                return;
+            }
+
+            UndoStackPush(description, delegate
+            {
+                RestoreCueSnapshot(before);
+            });
+        }
+
+        private void SplitCueClick(object sender, RoutedEventArgs e)
+        {
+            List<SubtitleCue> before = CaptureCueSnapshot();
+            SplitCueClickCore(sender, e);
+            PushCueUndoIfChanged("split cue", before);
+        }
+
+        private void MergeCueClick(object sender, RoutedEventArgs e)
+        {
+            List<SubtitleCue> before = CaptureCueSnapshot();
+            MergeCueClickCore(sender, e);
+            PushCueUndoIfChanged("merge cues", before);
+        }
+
+        private void AddCueClick(object sender, RoutedEventArgs e)
+        {
+            List<SubtitleCue> before = CaptureCueSnapshot();
+            AddCueClickCore(sender, e);
+            PushCueUndoIfChanged("add cue", before);
+        }
+
+        private void DeleteCueClick(object sender, RoutedEventArgs e)
+        {
+            List<SubtitleCue> before = CaptureCueSnapshot();
+            DeleteCueClickCore(sender, e);
+            PushCueUndoIfChanged("delete cue", before);
+        }
+
+        private void NudgeBackClick(object sender, RoutedEventArgs e)
+        {
+            List<SubtitleCue> before = CaptureCueSnapshot();
+            NudgeBackClickCore(sender, e);
+            PushCueUndoIfChanged("nudge cue", before);
+        }
+
+        private void NudgeForwardClick(object sender, RoutedEventArgs e)
+        {
+            List<SubtitleCue> before = CaptureCueSnapshot();
+            NudgeForwardClickCore(sender, e);
+            PushCueUndoIfChanged("nudge cue", before);
+        }
+
+        private void SetStartClick(object sender, RoutedEventArgs e)
+        {
+            List<SubtitleCue> before = CaptureCueSnapshot();
+            SetStartClickCore(sender, e);
+            PushCueUndoIfChanged("set cue start", before);
+        }
+
+        private void SetEndClick(object sender, RoutedEventArgs e)
+        {
+            List<SubtitleCue> before = CaptureCueSnapshot();
+            SetEndClickCore(sender, e);
+            PushCueUndoIfChanged("set cue end", before);
+        }
+
+        private void StartEditorLostFocus(object sender, RoutedEventArgs e)
+        {
+            List<SubtitleCue> before = CaptureCueSnapshot();
+            StartEditorLostFocusCore(sender, e);
+            PushCueUndoIfChanged("edit cue timing", before);
+        }
+
+        private void EndEditorLostFocus(object sender, RoutedEventArgs e)
+        {
+            List<SubtitleCue> before = CaptureCueSnapshot();
+            EndEditorLostFocusCore(sender, e);
+            PushCueUndoIfChanged("edit cue timing", before);
+        }
+
+        private void CueTextEditorTextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (pendingCueTextSnapshot == null)
+            {
+                pendingCueTextSnapshot = CaptureCueSnapshot();
+            }
+
+            CueTextEditorTextChangedCore(sender, e);
+        }
+
+        private void CueTextEditorLostFocus(object sender, RoutedEventArgs e)
+        {
+            List<SubtitleCue>? before = pendingCueTextSnapshot;
+            pendingCueTextSnapshot = null;
+            if (before == null)
+            {
+                return;
+            }
+
+            PushCueUndoIfChanged("edit cue text", before);
+        }
+
         // ── Keyboard shortcuts ─────────────────────────────────────────────
 
         private bool IsTextInputFocused()
@@ -4098,9 +4723,9 @@ namespace SubtitleForge
 
             if (IsTextInputFocused())
             {
-                if (control && !shift && e.Key == Key.S)
+                if (control && e.Key == Key.S)
                 {
-                    SaveProject(false);
+                    SaveProject(shift);
                     e.Handled = true;
                 }
 
@@ -4114,9 +4739,16 @@ namespace SubtitleForge
                 return;
             }
 
-            if (control && !shift && e.Key == Key.S)
+            if (control && shift && e.Key == Key.J)
             {
-                SaveProject(false);
+                JoinSelectedSegments();
+                e.Handled = true;
+                return;
+            }
+
+            if (control && e.Key == Key.S)
+            {
+                SaveProject(shift);
                 e.Handled = true;
                 return;
             }
@@ -4243,11 +4875,19 @@ namespace SubtitleForge
                     }
                 }
 
-                suppressCudaCheck = true;
-                GpuCheckBox.IsChecked = false;
-                suppressCudaCheck = false;
-                App.Settings.UseGpu = false;
-                SetStatus("GPU transcription stays off until the CUDA 12 toolkit is installed.");
+                if (answer != MessageBoxResult.Yes)
+                {
+                    // Declined the download: leave the option off instead of pretending.
+                    suppressCudaCheck = true;
+                    GpuCheckBox.IsChecked = false;
+                    suppressCudaCheck = false;
+                    App.Settings.UseGpu = false;
+                    SetStatus("GPU transcription stays off until the CUDA 12 toolkit is installed.");
+                }
+                else
+                {
+                    SetStatus("Install the CUDA 12 toolkit, then GPU transcription becomes available.");
+                }
                 return;
             }
 
@@ -4369,10 +5009,7 @@ namespace SubtitleForge
             GpuCheckBox.IsEnabled = !isBusy;
             TranslateCheckBox.IsEnabled = !isBusy;
 
-            SaveSrtButton.IsEnabled = !isBusy && hasCues;
-            SaveVttButton.IsEnabled = !isBusy && hasCues;
-            SaveAssButton.IsEnabled = !isBusy && hasCues;
-            BurnButton.IsEnabled = !isBusy && hasCues && hasVideo;
+            ExportButton.IsEnabled = !isBusy && (hasCues || hasVideo);
 
             SplitCueButton.IsEnabled = !isBusy && CueList.SelectedItem != null;
             MergeCueButton.IsEnabled = !isBusy && CueList.SelectedItem != null;

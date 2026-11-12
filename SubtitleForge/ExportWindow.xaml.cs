@@ -118,7 +118,7 @@ namespace SubtitleForge
         {
             ComboBoxItem? item = AudioQualityCombo.SelectedItem as ComboBoxItem;
             string? tag = item == null ? null : item.Tag as string;
-            return string.IsNullOrWhiteSpace(tag) ? "320k" : tag;
+            return string.IsNullOrWhiteSpace(tag) ? "copy" : tag;
         }
 
         private bool IsCustomColor()

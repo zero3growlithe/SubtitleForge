@@ -26,9 +26,20 @@ Everything runs on your machine. No cloud, no API keys, no uploads.
   and `As MP4…`, which opens a small dialog with the toggles **Include video**,
   **Include audio**, **Include subtitles (as a file)** and **Burn in subtitles**, plus a
   **video resolution** (same as source, 4K, 1440p, 1080p, 720p, 480p) and an **audio quality**
-  (320 / 256 / 192 / 128 kbps, or a straight copy of the source stream). Without video the
-  burn-in renders onto a **solid colour backdrop** (chroma green by default) so the result keys
-  out cleanly in another program; audio and the sidecar can be combined freely.
+  (same as source, or 320 / 256 / 192 / 128 kbps). Without video the burn-in renders onto a
+  **solid colour backdrop** (chroma green by default) so the result keys out cleanly in another
+  program; audio and the sidecar can be combined freely.
+
+  **Burn-in is rendered, not typeset:** every frame is drawn with the same control the preview uses
+  and piped into ffmpeg as an alpha overlay, so the export matches the preview exactly — profile
+  font, gradient fills, the whole effect stack (including `Composition` targets) and the idle /
+  pop-in animations, which a plain `.ass` file could never carry. Frames without a cue are skipped
+  without drawing and the drawing runs on its own STA thread, so a long export leaves the window
+  responsive.
+
+  **Audio is copied, not re-encoded,** whenever it does not have to be: "same as source" passes the
+  AAC stream through untouched, and a codec MP4 cannot hold (Opus, Vorbis, PCM, …) is transcoded at
+  320 kbps instead of failing the export.
 - **Open existing** `.srt` / `.vtt` to edit them with the same tools.
 - **Models…** dialog: shows every model, its size on disk and whether it is downloaded,
   with per-model `Delete`, `Delete all`, and a shortcut to the models folder.
@@ -160,9 +171,16 @@ Cues that carry their own style, idle or pop-in profile are **tinted in the cue 
 running on the defaults stand out. Hovering a row draws an outline instead of a background, which
 used to paint over the selection colour and make selected rows look unselected.
 
-The preview audio cache is encoded at **320 kbps** rather than 192 kbps, and in the main window a
-click outside a text field drops keyboard focus, so the transport and editing shortcuts work again
-without having to focus another field first.
+**Preview audio is not re-encoded when it does not have to be.** The audio-only cache the lanes play
+is now built with `-c:a copy` whenever the source audio is AAC (phones, cameras, screen recorders,
+most MP4/MOV files), so what you hear is bit-for-bit the source; other codecs are transcoded at
+320 kbps instead of 192 kbps. The cache key was bumped, so old quieter-quality files are rebuilt
+automatically. A lane whose file Media Foundation refuses is switched off after a few failed
+re-syncs instead of being re-seeked on every tick — that retry loop used to be audible as a
+stuttering, robotic loop.
+
+In the main window a click outside a text field drops keyboard focus, so the transport and editing
+shortcuts work again without having to focus another field first.
 
 Both animation creators have a **per character / word / whole cue** switch next to the
 per-character toggle, so a sine wave can travel through the letters, move whole words out of

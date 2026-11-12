@@ -64,6 +64,66 @@ namespace SubtitleForge.Services
         /// Returns the first video stream's frame rate, or 0 when it cannot be determined.
         /// Fractional rates such as 30000/1001 are honoured.
         /// </summary>
+        /// <summary>
+        /// Name of the first audio codec ("aac", "opus", "pcm_s16le", …), or null when the file has
+        /// no audio at all. ffprobe is asked for one field only, so this stays cheap enough to run
+        /// before every export.
+        /// </summary>
+        public static async Task<string?> GetAudioCodecAsync(
+            string ffprobePath,
+            string mediaPath,
+            CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrEmpty(ffprobePath) || string.IsNullOrEmpty(mediaPath))
+            {
+                return null;
+            }
+
+            List<string> arguments = new List<string>
+            {
+                "-v", "error",
+                "-select_streams", "a:0",
+                "-show_entries", "stream=codec_name",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                mediaPath
+            };
+
+            try
+            {
+                ProcessResult result = await ProcessRunner
+                    .RunAsync(ffprobePath, arguments, null, null, cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (result.ExitCode != 0)
+                {
+                    return null;
+                }
+
+                string text = (result.StandardOutput ?? string.Empty).Trim();
+                if (text.Length == 0)
+                {
+                    return null;
+                }
+
+                int newline = text.IndexOf('\n');
+                if (newline > 0)
+                {
+                    text = text.Substring(0, newline).Trim();
+                }
+
+                return text.Length == 0 ? null : text.ToLowerInvariant();
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                CrashLog.Write(exception, "AudioCodecProbe");
+                return null;
+            }
+        }
+
         public static async Task<double> GetFrameRateAsync(
             string ffprobePath,
             string inputPath,

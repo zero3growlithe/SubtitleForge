@@ -44,7 +44,7 @@ namespace SubtitleForge.Services
         /// Audio bitrate such as "320k", or "copy" to pass the source audio through untouched.
         /// Changing it forces the audio to be re-encoded.
         /// </summary>
-        public string AudioBitrate { get; set; } = "320k";
+        public string AudioBitrate { get; set; } = "copy";
 
         /// <summary>Height actually used for the output picture.</summary>
         public int EffectiveHeight
@@ -90,6 +90,21 @@ namespace SubtitleForge.Services
             {
                 return !string.Equals(AudioBitrate, "copy", StringComparison.OrdinalIgnoreCase);
             }
+        }
+
+        /// <summary>
+        /// Codecs MP4 carries without help. Copying anything else into an MP4 fails, so those get
+        /// transcoded instead of failing the export.
+        /// </summary>
+        public static bool CanCopyIntoMp4(string? codec)
+        {
+            if (string.IsNullOrEmpty(codec))
+            {
+                return false;
+            }
+
+            string value = codec.Trim().ToLowerInvariant();
+            return value == "aac" || value == "mp3" || value == "ac3" || value == "eac3" || value == "alac";
         }
 
         private static int MakeEven(int value)
@@ -171,8 +186,14 @@ namespace SubtitleForge.Services
             MediaExportOptions options,
             string inputPath,
             string outputPath,
-            bool premultipliedAlpha)
+            bool premultipliedAlpha,
+            string? audioBitrateOverride = null)
         {
+            string audioBitrate = string.IsNullOrEmpty(audioBitrateOverride)
+                ? options.AudioBitrate
+                : audioBitrateOverride;
+            bool reEncodeAudio = !string.Equals(audioBitrate, "copy", StringComparison.OrdinalIgnoreCase);
+
             List<string> arguments = new List<string>();
             arguments.Add("-nostdin");
             arguments.Add("-hide_banner");
@@ -184,25 +205,44 @@ namespace SubtitleForge.Services
             bool hasSource = !string.IsNullOrEmpty(inputPath);
             bool burnIn = options.BurnSubtitles;
 
+            // Input indices are counted as they are added, because a wrong -map index is the one
+            // error that only shows up on one of the export paths.
+            int nextInput = 0;
+            int audioInput = -1;
+
             if (solidBackdrop)
             {
                 arguments.Add("-f");
                 arguments.Add("lavfi");
                 arguments.Add("-i");
                 arguments.Add(BuildBackdrop(options));
+                nextInput = 1;
             }
             else if (hasSource)
             {
                 arguments.Add("-i");
                 arguments.Add(inputPath);
+                audioInput = nextInput;
+                nextInput++;
             }
 
+            int rawInput = -1;
             if (burnIn)
             {
+                rawInput = nextInput;
                 AddRawVideoInput(arguments, options);
+                nextInput++;
             }
 
-            int audioInput = solidBackdrop ? (burnIn ? 2 : 1) : 0;
+            // The source is only an input of its own for the backdrop render: the picture comes from
+            // lavfi, so the audio still has to be pulled out of the file.
+            if (solidBackdrop && hasSource && options.IncludeAudio)
+            {
+                arguments.Add("-i");
+                arguments.Add(inputPath);
+                audioInput = nextInput;
+                nextInput++;
+            }
 
             // ── Picture ────────────────────────────────────────────────────────
             if (options.ProducesPicture)
@@ -210,7 +250,7 @@ namespace SubtitleForge.Services
                 if (burnIn)
                 {
                     arguments.Add("-filter_complex");
-                    arguments.Add(BuildBurnInFilter(options, solidBackdrop, premultipliedAlpha));
+                    arguments.Add(BuildBurnInFilter(options, solidBackdrop, premultipliedAlpha, rawInput));
                     arguments.Add("-map");
                     arguments.Add("[v]");
                 }
@@ -238,17 +278,12 @@ namespace SubtitleForge.Services
             }
 
             // ── Sound ──────────────────────────────────────────────────────────
-            if (options.IncludeAudio)
+            if (options.IncludeAudio && audioInput >= 0)
             {
-                if (hasSource || solidBackdrop)
-                {
-                    arguments.Add("-map");
-                    arguments.Add(
-                        audioInput.ToString(CultureInfo.InvariantCulture)
-                        + ":a:0?");
-                }
+                arguments.Add("-map");
+                arguments.Add(audioInput.ToString(CultureInfo.InvariantCulture) + ":a:0?");
             }
-            else
+            else if (!options.IncludeAudio)
             {
                 arguments.Add("-an");
             }
@@ -273,14 +308,14 @@ namespace SubtitleForge.Services
                 arguments.Add("copy");
             }
 
-            if (options.IncludeAudio && (hasSource || solidBackdrop))
+            if (options.IncludeAudio && audioInput >= 0)
             {
-                if (options.ReEncodesAudio)
+                if (reEncodeAudio)
                 {
                     arguments.Add("-c:a");
                     arguments.Add("aac");
                     arguments.Add("-b:a");
-                    arguments.Add(options.AudioBitrate);
+                    arguments.Add(audioBitrate);
                 }
                 else
                 {
@@ -328,7 +363,11 @@ namespace SubtitleForge.Services
         /// filter is told so instead of un-premultiplying every pixel in managed code. After the
         /// last frame the picture simply carries on without subtitles.
         /// </summary>
-        private static string BuildBurnInFilter(MediaExportOptions options, bool solidBackdrop, bool premultipliedAlpha)
+        private static string BuildBurnInFilter(
+            MediaExportOptions options,
+            bool solidBackdrop,
+            bool premultipliedAlpha,
+            int rawInput)
         {
             StringBuilder builder = new StringBuilder();
 
@@ -350,7 +389,9 @@ namespace SubtitleForge.Services
                 builder.Append("[0:v]setsar=1[bg];");
             }
 
-            builder.Append("[bg][1:v]overlay=0:0");
+            builder.Append("[bg][");
+            builder.Append(rawInput.ToString(CultureInfo.InvariantCulture));
+            builder.Append(":v]overlay=0:0");
             if (premultipliedAlpha)
             {
                 // WPF hands us premultiplied pixels; telling ffmpeg saves a second pass over every
@@ -380,6 +421,8 @@ namespace SubtitleForge.Services
                 return;
             }
 
+            bool hasSourceFile = !string.IsNullOrEmpty(inputPath) && File.Exists(inputPath);
+
             bool premultipliedAlpha = true;
             if (options.BurnSubtitles)
             {
@@ -387,7 +430,23 @@ namespace SubtitleForge.Services
                     .ConfigureAwait(false);
             }
 
-            List<string> arguments = BuildArguments(options, inputPath, outputPath, premultipliedAlpha);
+            string? audioBitrate = null;
+            if (options.IncludeAudio && !options.ReEncodesAudio && hasSourceFile)
+            {
+                // "Same as source" only works when MP4 can hold the stream; anything else (Opus,
+                // Vorbis, PCM, …) is transcoded rather than failing the whole export.
+                string ffprobe = FfmpegLocator.Resolve("ffprobe", Path.GetDirectoryName(ffmpegPath));
+                string? codec = await MediaInspector
+                    .GetAudioCodecAsync(ffprobe, inputPath, cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (!MediaExportOptions.CanCopyIntoMp4(codec))
+                {
+                    audioBitrate = "320k";
+                }
+            }
+
+            List<string> arguments = BuildArguments(options, inputPath, outputPath, premultipliedAlpha, audioBitrate);
 
             if (!options.BurnSubtitles)
             {

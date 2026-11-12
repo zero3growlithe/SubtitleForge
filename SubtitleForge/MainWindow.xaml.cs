@@ -49,6 +49,16 @@ namespace SubtitleForge
             public bool PositionApplied { get; set; }
 
             public bool Playing { get; set; }
+
+            /// <summary>
+            /// Set when Media Foundation refuses the file. A dead player used to be retried on
+            /// every tick — seek, play, position never moved, seek again — which came out as a
+            /// clipped, stuttering loop instead of silence.
+            /// </summary>
+            public bool Failed { get; set; }
+
+            /// <summary>How many times the player was re-synced without ever getting in step.</summary>
+            public int StuckResyncs { get; set; }
         }
         private readonly Dictionary<TimelineSegment, string> recordedClipFiles = new Dictionary<TimelineSegment, string>();
         private readonly Stopwatch playbackClock = new Stopwatch();
@@ -4104,11 +4114,21 @@ namespace SubtitleForge
 
             try
             {
+                AudioPlaybackSlot created = new AudioPlaybackSlot();
+
                 MediaPlayer player = new MediaPlayer();
                 player.Volume = 1.0;
+                player.MediaFailed += delegate (object sender, ExceptionEventArgs eventArgs)
+                {
+                    created.Failed = true;
+                    if (eventArgs != null && eventArgs.ErrorException != null)
+                    {
+                        CrashLog.Write(eventArgs.ErrorException, "AudioLaneMediaFailed");
+                    }
+                };
+
                 player.Open(new Uri(mediaPath, UriKind.Absolute));
 
-                AudioPlaybackSlot created = new AudioPlaybackSlot();
                 created.Player = player;
                 audioPlayers[segment] = created;
                 return created;
@@ -4155,7 +4175,7 @@ namespace SubtitleForge
             foreach (TimelineSegment segment in active)
             {
                 AudioPlaybackSlot? slot = EnsureAudioPlayer(segment);
-                if (slot == null)
+                if (slot == null || slot.Failed)
                 {
                     continue;
                 }
@@ -4179,9 +4199,31 @@ namespace SubtitleForge
                     }
                     else if (Math.Abs((slot.Player.Position - target).TotalSeconds) > 1.0)
                     {
-                        // Really out of step (long stall, resumed window): resync once.
+                        // Really out of step (long stall, resumed window): resync once. If the
+                        // player keeps failing to advance, stop nudging it — repeated seeks were
+                        // audible as a broken, stuttering loop.
+                        slot.StuckResyncs++;
+                        if (slot.StuckResyncs > 5)
+                        {
+                            slot.Failed = true;
+                            try
+                            {
+                                slot.Player.Stop();
+                            }
+                            catch (Exception)
+                            {
+                                // Nothing to stop.
+                            }
+
+                            continue;
+                        }
+
                         slot.Player.Position = target;
                         slot.Playing = false;
+                    }
+                    else if (slot.Playing)
+                    {
+                        slot.StuckResyncs = 0;
                     }
 
                     if (play && !slot.Playing)

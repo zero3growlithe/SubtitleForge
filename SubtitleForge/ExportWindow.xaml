@@ -107,11 +107,11 @@
             <TextBlock Grid.Column="2" Text="Audio quality" VerticalAlignment="Center" Margin="0,0,10,0" />
             <ComboBox x:Name="AudioQualityCombo" Grid.Column="3" SelectedIndex="0"
                       SelectionChanged="QualityChanged">
+                <ComboBoxItem Content="Same as source (no re-encode)" Tag="copy" />
                 <ComboBoxItem Content="Highest — 320 kbps" Tag="320k" />
                 <ComboBoxItem Content="256 kbps" Tag="256k" />
                 <ComboBoxItem Content="192 kbps" Tag="192k" />
                 <ComboBoxItem Content="128 kbps" Tag="128k" />
-                <ComboBoxItem Content="Same as source (no re-encode)" Tag="copy" />
             </ComboBox>
         </Grid>
 

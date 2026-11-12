@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using SubtitleForge.Services;
@@ -45,7 +46,8 @@ namespace SubtitleForge
             if (IncludeVideoCheck == null || IncludeAudioCheck == null || ExportButton == null
                 || SubtitleFormatCombo == null || BackgroundColorCombo == null
                 || CustomColorBox == null || HintText == null || BurnSubtitlesCheck == null
-                || IncludeSubtitlesCheck == null || ResolutionCombo == null || AudioQualityCombo == null)
+                || IncludeSubtitlesCheck == null || ResolutionCombo == null || AudioQualityCombo == null
+                || FrameRateCombo == null || FrameRatePanel == null)
             {
                 return;
             }
@@ -63,6 +65,8 @@ namespace SubtitleForge
             AudioQualityCombo.IsEnabled = includeAudio;
             BackgroundColorCombo.IsEnabled = burnSubtitles && !includeVideo;
             CustomColorBox.IsEnabled = BackgroundColorCombo.IsEnabled && IsCustomColor();
+            // Only a picture with no source video behind it has no frame rate of its own.
+            FrameRatePanel.Visibility = burnSubtitles && !includeVideo ? Visibility.Visible : Visibility.Collapsed;
 
             bool wantsMedia = includeVideo || includeAudio || burnSubtitles;
             ExportButton.IsEnabled = wantsMedia || includeSubtitles;
@@ -76,8 +80,10 @@ namespace SubtitleForge
             {
                 HintText.Text = "Without video the subtitles are rendered onto a solid colour backdrop ("
                     + SelectedColor()
-                    + "), which makes the result easy to key out in another program. Audio is kept when "
-                    + "\"Include audio\" is ticked.";
+                    + ") at "
+                    + SelectedFrameRate().ToString("0.###", CultureInfo.InvariantCulture)
+                    + " fps, which makes the result easy to key out in another program. Audio is kept "
+                    + "when \"Include audio\" is ticked.";
             }
             else if (burnSubtitles)
             {
@@ -119,6 +125,20 @@ namespace SubtitleForge
             ComboBoxItem? item = AudioQualityCombo.SelectedItem as ComboBoxItem;
             string? tag = item == null ? null : item.Tag as string;
             return string.IsNullOrWhiteSpace(tag) ? "copy" : tag;
+        }
+
+        /// <summary>The frame rate for a picture with no source video; up to 60 fps.</summary>
+        private double SelectedFrameRate()
+        {
+            ComboBoxItem? item = FrameRateCombo.SelectedItem as ComboBoxItem;
+            string? tag = item == null ? null : item.Tag as string;
+            double rate;
+            if (!string.IsNullOrEmpty(tag) && double.TryParse(tag, NumberStyles.Float, CultureInfo.InvariantCulture, out rate))
+            {
+                return rate > 0.0 && rate <= 60.0 ? rate : 30.0;
+            }
+
+            return 30.0;
         }
 
         private bool IsCustomColor()
@@ -203,6 +223,7 @@ namespace SubtitleForge
 
             options.OutputHeight = SelectedResolutionHeight();
             options.AudioBitrate = SelectedAudioBitrate();
+            options.OutputFrameRate = options.BurnSubtitles && !options.IncludeVideo ? SelectedFrameRate() : 0.0;
 
             ComboBoxItem? formatItem = SubtitleFormatCombo.SelectedItem as ComboBoxItem;
             string? format = formatItem == null ? null : formatItem.Tag as string;

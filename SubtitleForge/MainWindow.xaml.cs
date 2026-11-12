@@ -6280,6 +6280,46 @@ namespace SubtitleForge
                 }
             }
 
+            if (!CudaDetector.IsRuntimePresent(out string runtimeDetails))
+            {
+                string runtimeMessage = "The CUDA whisper libraries are not next to the app. They are a "
+                    + "separate download of about 560 MB and the CUDA toolkit does not replace them.\n\n"
+                    + runtimeDetails
+                    + "\n\nOpen the runtime package page now?";
+
+                MessageBoxResult runtimeAnswer = MessageBox.Show(
+                    this,
+                    runtimeMessage,
+                    "SubtitleForge — CUDA runtime missing",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Information);
+
+                if (runtimeAnswer == MessageBoxResult.Yes)
+                {
+                    try
+                    {
+                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                        {
+                            FileName = CudaDetector.RuntimeDownloadUrl,
+                            UseShellExecute = true
+                        });
+                    }
+                    catch (Exception exception)
+                    {
+                        CrashLog.Write(exception, "CudaRuntimePage");
+                    }
+                }
+
+                // Whisper cannot initialise CUDA without the native library, so leaving the box
+                // ticked would only promise something the next transcription cannot deliver.
+                suppressCudaCheck = true;
+                GpuCheckBox.IsChecked = false;
+                suppressCudaCheck = false;
+                App.Settings.UseGpu = false;
+                SetStatus("GPU transcription stays off until the CUDA runtime is installed next to the app.");
+                return;
+            }
+
             SetStatus("GPU transcription enabled — it falls back to the CPU automatically if CUDA cannot start.");
         }
 

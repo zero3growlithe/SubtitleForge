@@ -261,8 +261,9 @@ stays a few kilobytes.
 - **ffmpeg** — `ffmpeg.exe` and `ffprobe.exe`. Either put them on `PATH` or set
   `FfmpegDirectory` in `%AppData%\SubtitleForge\settings.json` (a folder or a full path).
 - **.NET 8 Desktop Runtime** (the build is framework-dependent).
-- Optional: **NVIDIA driver + CUDA 12 toolkit (>= 12.4.1)** for GPU transcription.
-  Without it the app simply runs on the CPU.
+- Optional: **NVIDIA driver + CUDA 12 toolkit (>= 12.4.1)** *and* the Whisper.net CUDA 12 runtime
+  next to the executable (see Build → GPU transcription without a CUDA build) for GPU
+  transcription. Without all three the app simply runs on the CPU.
 
 ## Typical workflow
 
@@ -273,7 +274,8 @@ stays a few kilobytes.
 4. Fix the cues: click a cue, edit the text, use `= playhead` for exact starts/ends,
    `-100 ms` / `+100 ms` to re-sync a block, `Split` / `Merge ↓` to fix boundaries.
 5. `Export…` — pick a subtitle format, or `As MP4…` for video/audio with the subtitles
-   burned in or written alongside.
+   burned in or written alongside. An MP4 without video is a solid-colour backdrop with the
+   subtitles burned in, so it has its own **frame rate** choice (24 / 25 / 30 / 50 / 60 fps).
 
 First transcription with a chosen model also downloads it to
 `%LocalAppData%\SubtitleForge\models` (base ≈ 142 MB, small ≈ 466 MB, medium ≈ 1.5 GB,
@@ -294,16 +296,30 @@ large-v3-turbo ≈ 1.6 GB). Progress is shown in the status bar.
 
 Nothing is built locally; GitHub Actions is the build authority
 (`.github/workflows/build.yml`): `windows-latest`, .NET 8, `dotnet publish -r win-x64
---self-contained false`. It produces two artifacts:
+--self-contained false -p:EnableCuda=false`. One artifact:
 
-- `SubtitleForge-win-x64-cuda` — CPU **and** CUDA 12 native runtimes (~250 MB zipped).
-  Use this one for GPU transcription.
-- `SubtitleForge-win-x64-cpu` — CPU natives only (~20 MB zipped). Works everywhere,
-  just slower; handy for testing the UI.
+- `SubtitleForge-win-x64` — CPU whisper natives only (~3.3 MB zipped). Works everywhere.
 
 ```
-dotnet publish SubtitleForge/SubtitleForge.csproj -c Release -r win-x64 --self-contained false -o publish
+dotnet publish SubtitleForge/SubtitleForge.csproj -c Release -r win-x64 --self-contained false -p:EnableCuda=false -o publish
 ```
+
+### GPU transcription without a CUDA build
+
+The CUDA whisper natives are a ~560 MB package and the CUDA toolkit cannot stand in for them, so
+they are not shipped. A CPU build turns into a GPU build by dropping the package's native folder
+next to `SubtitleForge.exe`:
+
+1. Download `https://www.nuget.org/api/v2/package/Whisper.net.Runtime.Cuda12.Windows/1.9.1`
+   (it is a plain zip).
+2. Extract its `runtimes` folder so the layout is
+   `<app>\runtimes\cuda12\win-x64\ggml-cuda-whisper.dll`.
+3. Install the NVIDIA driver and a CUDA 12 toolkit (>= 12.4.1).
+4. Restart the app. Ticking `Use GPU` now works; the checkbox reports what is missing instead of
+   silently falling back when one of the three pieces is absent.
+
+Building the CUDA variant from source instead is a `-p:EnableCuda=true` publish, which pulls the
+same package as a `PackageReference`.
 
 ## Known limitations
 

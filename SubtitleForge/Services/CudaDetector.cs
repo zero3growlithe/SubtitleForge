@@ -17,6 +17,8 @@ namespace SubtitleForge.Services
         private const string DriverFileName = "nvcuda.dll";
         private const string EnvironmentVariablePrefix = "CUDA_PATH";
         private const string DownloadPage = "https://developer.nvidia.com/cuda-downloads";
+        private const string RuntimePackageUrl = "https://www.nuget.org/packages/Whisper.net.Runtime.Cuda12.Windows/1.9.1";
+        private const string RuntimeFileName = "ggml-cuda-whisper.dll";
 
         // ── Public API
 
@@ -26,6 +28,51 @@ namespace SubtitleForge.Services
         public static string DownloadUrl
         {
             get { return DownloadPage; }
+        }
+
+        /// <summary>
+        /// Where to send the user when the CUDA whisper natives are missing: the NuGet package that
+        /// carries them, because that is exactly what has to be dropped next to the executable.
+        /// </summary>
+        public static string RuntimeDownloadUrl
+        {
+            get { return RuntimePackageUrl; }
+        }
+
+        /// <summary>
+        /// True when the CUDA whisper natives sit next to the executable. The build ships without
+        /// them (the package is about 560 MB and the CUDA toolkit cannot replace it), so GPU
+        /// transcription needs both this and the toolkit.
+        /// </summary>
+        public static bool IsRuntimePresent(out string details)
+        {
+            try
+            {
+                string baseDirectory = AppContext.BaseDirectory;
+                string[] candidates = new string[]
+                {
+                    Path.Combine(baseDirectory, "runtimes", "cuda12", "win-x64", RuntimeFileName),
+                    Path.Combine(baseDirectory, "runtimes", "win-x64", RuntimeFileName),
+                    Path.Combine(baseDirectory, RuntimeFileName)
+                };
+
+                foreach (string candidate in candidates)
+                {
+                    if (File.Exists(candidate))
+                    {
+                        details = "The CUDA runtime was found in " + (Path.GetDirectoryName(candidate) ?? baseDirectory) + ".";
+                        return true;
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // A settings handler should report the negative case, not throw.
+            }
+
+            details = "No " + RuntimeFileName + " next to SubtitleForge.exe. Those libraries are not part "
+                + "of the download; install the Whisper.net CUDA 12 runtime into the app folder.";
+            return false;
         }
 
         /// <summary>

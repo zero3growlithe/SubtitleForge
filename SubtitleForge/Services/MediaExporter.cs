@@ -38,6 +38,9 @@ namespace SubtitleForge.Services
         /// Height of the exported picture. 0 keeps the source size (the project canvas for a
         /// subtitle-only export), anything else scales the picture to that height.
         /// </summary>
+        /// <summary>Frame rate for a picture with no source video behind it; 0 follows the source.</summary>
+        public double OutputFrameRate { get; set; }
+
         public int OutputHeight { get; set; }
 
         /// <summary>
@@ -549,6 +552,12 @@ namespace SubtitleForge.Services
 
         private static double BuildFrameRate(MediaExportOptions options)
         {
+            // An export without video has no source rate to follow, so the dialog's own choice wins.
+            if (options.OutputFrameRate > 1.0 && options.OutputFrameRate <= 120.0)
+            {
+                return Math.Round(options.OutputFrameRate, 3);
+            }
+
             if (options.FrameRate > 1.0 && options.FrameRate < 240.0)
             {
                 return Math.Round(options.FrameRate, 3);
@@ -561,11 +570,9 @@ namespace SubtitleForge.Services
         {
             int width = options.EffectiveWidth;
             int height = options.EffectiveHeight;
-            int frameRate = 30;
-            if (options.FrameRate > 1.0 && options.FrameRate < 240.0)
-            {
-                frameRate = (int)Math.Round(options.FrameRate);
-            }
+            // The backdrop has to generate frames at exactly the rate the subtitle frames arrive at,
+            // otherwise ffmpeg duplicates or drops them and the animation stutters.
+            int frameRate = (int)Math.Round(BuildFrameRate(options));
 
             StringBuilder builder = new StringBuilder();
             builder.Append("color=c=");

@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Export"
         Height="500"
-        Width="540"
+        Width="640"
         MinHeight="440"
         MinWidth="480"
         ShowInTaskbar="False"
@@ -63,6 +63,7 @@
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <TextBlock Grid.Column="0" Text="Backdrop colour" VerticalAlignment="Center" Margin="0,0,10,0" />
             <ComboBox x:Name="BackgroundColorCombo" Grid.Column="1" SelectedIndex="0" SelectionChanged="BackgroundColorChanged">
@@ -82,6 +83,21 @@
                      IsEnabled="False"
                      Text="0x00FF00"
                      ToolTip="Any ffmpeg colour, e.g. 0x00FF00" />
+
+            <StackPanel x:Name="FrameRatePanel"
+                        Grid.Column="3"
+                        Orientation="Horizontal"
+                        VerticalAlignment="Center"
+                        Margin="16,0,0,0">
+                <TextBlock Text="Frame rate" VerticalAlignment="Center" Margin="0,0,10,0" />
+                <ComboBox x:Name="FrameRateCombo" Width="96" SelectedIndex="2" SelectionChanged="QualityChanged">
+                    <ComboBoxItem Content="24 fps" Tag="24" />
+                    <ComboBoxItem Content="25 fps" Tag="25" />
+                    <ComboBoxItem Content="30 fps" Tag="30" />
+                    <ComboBoxItem Content="50 fps" Tag="50" />
+                    <ComboBoxItem Content="60 fps" Tag="60" />
+                </ComboBox>
+            </StackPanel>
         </Grid>
 
 

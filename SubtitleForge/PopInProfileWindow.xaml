@@ -1,0 +1,109 @@
+<Window x:Class="SubtitleForge.PopInProfileWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:SubtitleForge.Controls"
+        Title="Pop-in animation profile"
+        Height="680"
+        Width="860"
+        MinHeight="540"
+        MinWidth="720"
+        ShowInTaskbar="False"
+        Background="{StaticResource WindowBackgroundBrush}"
+        WindowStartupLocation="CenterOwner">
+
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <TextBlock Grid.Column="0" Text="Profile" Style="{StaticResource SectionLabelStyle}" />
+            <ComboBox x:Name="ProfileCombo" Grid.Column="1" SelectionChanged="ProfileSelectionChanged" />
+            <StackPanel Grid.Column="2" Orientation="Horizontal">
+                <Button Content="New" MinWidth="0" Padding="10,4" Click="NewProfileClick" />
+                <Button Content="Delete" MinWidth="0" Padding="10,4" Click="DeleteProfileClick" />
+                <Button x:Name="DefaultButton" Content="Set as default" MinWidth="0" Padding="10,4" Click="SetDefaultClick" />
+            </StackPanel>
+        </Grid>
+
+        <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <WrapPanel>
+                    <TextBlock Text="Name" Style="{StaticResource SectionLabelStyle}" />
+                    <TextBox x:Name="NameBox" Width="180" Margin="0,0,16,0" LostFocus="FieldChanged" />
+                    <TextBlock Text="Kind" Style="{StaticResource SectionLabelStyle}" />
+                    <ComboBox x:Name="KindCombo" Width="140" Margin="0,0,16,0" SelectionChanged="FieldChanged">
+                        <ComboBoxItem Content="None" Tag="None" />
+                        <ComboBoxItem Content="Slide in" Tag="SlideIn" />
+                        <ComboBoxItem Content="Scale in (jelly)" Tag="ScaleIn" />
+                        <ComboBoxItem Content="Fade in" Tag="FadeIn" />
+                    </ComboBox>
+                    <TextBlock Text="Direction" Style="{StaticResource SectionLabelStyle}" />
+                    <ComboBox x:Name="DirectionCombo" Width="110" SelectionChanged="FieldChanged">
+                        <ComboBoxItem Content="Bottom" Tag="Bottom" />
+                        <ComboBoxItem Content="Top" Tag="Top" />
+                        <ComboBoxItem Content="Left" Tag="Left" />
+                        <ComboBoxItem Content="Right" Tag="Right" />
+                    </ComboBox>
+                </WrapPanel>
+
+                <WrapPanel Margin="0,10,0,0">
+                    <TextBlock Text="Duration (s)" Style="{StaticResource SectionLabelStyle}" />
+                    <TextBox x:Name="DurationBox" Width="58" Margin="0,0,16,0" LostFocus="FieldChanged" />
+                    <CheckBox x:Name="PerCharacterCheck"
+                              Content="Animate characters one by one"
+                              Margin="0,0,16,0"
+                              Click="FieldChanged" />
+                    <TextBlock Text="Character delay (s)" Style="{StaticResource SectionLabelStyle}" />
+                    <TextBox x:Name="CharacterDelayBox" Width="58" LostFocus="FieldChanged" />
+                </WrapPanel>
+
+                <TextBlock Text="Slide spring" FontWeight="SemiBold" Margin="0,16,0,4" />
+                <WrapPanel>
+                    <TextBlock Text="Distance (× font size)" Style="{StaticResource SectionLabelStyle}" />
+                    <TextBox x:Name="DistanceBox" Width="58" Margin="0,0,16,0" LostFocus="FieldChanged" />
+                    <TextBlock Text="Stiffness" Style="{StaticResource SectionLabelStyle}" />
+                    <TextBox x:Name="StiffnessBox" Width="58" Margin="0,0,16,0" LostFocus="FieldChanged" />
+                    <TextBlock Text="Damping" Style="{StaticResource SectionLabelStyle}" />
+                    <TextBox x:Name="DampingBox" Width="58" LostFocus="FieldChanged" />
+                </WrapPanel>
+                <TextBlock Text="Lower damping bounces more; stiffness decides how fast it snaps into place."
+                           FontSize="11"
+                           TextWrapping="Wrap"
+                           Foreground="{StaticResource SubtleTextBrush}"
+                           Margin="0,4,0,0" />
+
+                <TextBlock Text="Scale-in jelly" FontWeight="SemiBold" Margin="0,16,0,4" />
+                <WrapPanel>
+                    <TextBlock Text="Amplitude X" Style="{StaticResource SectionLabelStyle}" />
+                    <TextBox x:Name="JellyXBox" Width="58" Margin="0,0,16,0" LostFocus="FieldChanged" />
+                    <TextBlock Text="Amplitude Y" Style="{StaticResource SectionLabelStyle}" />
+                    <TextBox x:Name="JellyYBox" Width="58" Margin="0,0,16,0" LostFocus="FieldChanged" />
+                    <TextBlock Text="Frequency" Style="{StaticResource SectionLabelStyle}" />
+                    <TextBox x:Name="JellyFrequencyBox" Width="58" Margin="0,0,16,0" LostFocus="FieldChanged" />
+                    <TextBlock Text="Falloff" Style="{StaticResource SectionLabelStyle}" />
+                    <TextBox x:Name="JellyFalloffBox" Width="58" LostFocus="FieldChanged" />
+                </WrapPanel>
+            </StackPanel>
+        </ScrollViewer>
+
+        <Border Grid.Row="3" Height="170" Margin="0,12,0,0" Background="#FF14141A" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1">
+            <controls:SubtitleOverlay x:Name="PreviewOverlay" IsHitTestVisible="False" />
+        </Border>
+
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button Content="Cancel" MinWidth="90" IsCancel="True" Click="CancelClick" />
+            <Button Content="Save profile" MinWidth="120" IsDefault="True" Style="{StaticResource AccentButtonStyle}" Click="SaveClick" />
+        </StackPanel>
+    </Grid>
+</Window>

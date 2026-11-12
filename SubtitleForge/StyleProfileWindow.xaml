@@ -1,0 +1,184 @@
+<Window x:Class="SubtitleForge.StyleProfileWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:SubtitleForge.Controls"
+        Title="Text style profile"
+        Height="820"
+        Width="900"
+        MinHeight="620"
+        MinWidth="760"
+        ShowInTaskbar="False"
+        Background="{StaticResource WindowBackgroundBrush}"
+        WindowStartupLocation="CenterOwner">
+
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Profile picker -->
+        <Grid Grid.Row="0" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <TextBlock Grid.Column="0" Text="Profile" Style="{StaticResource SectionLabelStyle}" />
+            <ComboBox x:Name="ProfileCombo" Grid.Column="1" SelectionChanged="ProfileSelectionChanged" />
+            <StackPanel Grid.Column="2" Orientation="Horizontal">
+                <Button Content="New" MinWidth="0" Padding="10,4" Click="NewProfileClick" />
+                <Button Content="Delete" MinWidth="0" Padding="10,4" Click="DeleteProfileClick" />
+                <Button x:Name="DefaultButton" Content="Set as default" MinWidth="0" Padding="10,4" Click="SetDefaultClick" />
+            </StackPanel>
+        </Grid>
+
+        <!-- Body -->
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Column="0" Text="Name" Style="{StaticResource SectionLabelStyle}" />
+                    <TextBox x:Name="NameBox" Grid.Column="1" Margin="0,0,10,0" LostFocus="BasicsChanged" />
+
+                    <TextBlock Grid.Column="2" Text="Font" Style="{StaticResource SectionLabelStyle}" />
+                    <ComboBox x:Name="FontCombo" Grid.Column="3" Width="190" Margin="0,0,10,0" SelectionChanged="BasicsChanged" />
+                    <StackPanel Grid.Column="4" Orientation="Horizontal">
+                        <CheckBox x:Name="BoldCheck" Content="Bold" Margin="0,0,10,0" Click="BasicsChanged" />
+                        <CheckBox x:Name="ItalicCheck" Content="Italic" Margin="0,0,10,0" Click="BasicsChanged" />
+                    </StackPanel>
+                </Grid>
+
+                <WrapPanel Margin="0,8,0,0">
+                    <TextBlock Text="Font size" Style="{StaticResource SectionLabelStyle}" />
+                    <TextBox x:Name="FontSizeBox" Width="62" Margin="0,0,14,0" LostFocus="BasicsChanged" />
+                    <TextBlock Text="Words on screen (0 = whole cue)" Style="{StaticResource SectionLabelStyle}" />
+                    <TextBox x:Name="WordsBox" Width="52" Margin="0,0,14,0" LostFocus="BasicsChanged" />
+                    <TextBlock Text="Opacity" Style="{StaticResource SectionLabelStyle}" />
+                    <TextBox x:Name="OpacityBox" Width="52" LostFocus="BasicsChanged" />
+                </WrapPanel>
+
+                <TextBlock Text="Fill" FontWeight="SemiBold" Margin="0,14,0,4" />
+                <controls:ColorSpecPicker x:Name="FillPicker" ValueChanged="FillChanged" />
+
+                <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                    <CheckBox x:Name="HighlightCheck" Content="Highlight the word being spoken" Click="BasicsChanged" />
+                    <TextBlock Text="Highlight" Style="{StaticResource SectionLabelStyle}" Margin="16,0,6,0" />
+                    <controls:ColorSpecPicker x:Name="HighlightPicker" Width="420" ValueChanged="FillChanged" />
+                </StackPanel>
+
+                <!-- Outlines -->
+                <TextBlock Text="Outlines (stacked bottom to top)" FontWeight="SemiBold" Margin="0,16,0,4" />
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="230" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Column="0">
+                        <ListBox x:Name="OutlineList" Height="112" SelectionChanged="OutlineSelectionChanged" />
+                        <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                            <Button Content="Add" MinWidth="0" Padding="10,4" Click="AddOutlineClick" />
+                            <Button Content="Copy" MinWidth="0" Padding="10,4" Click="CopyOutlineClick" />
+                            <Button Content="Remove" MinWidth="0" Padding="10,4" Click="RemoveOutlineClick" />
+                        </StackPanel>
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1" Margin="10,0,0,0">
+                        <WrapPanel>
+                            <TextBlock Text="Name" Style="{StaticResource SectionLabelStyle}" />
+                            <TextBox x:Name="OutlineNameBox" Width="112" Margin="0,0,10,0" LostFocus="OutlineFieldChanged" />
+                            <CheckBox x:Name="OutlineEnabledCheck" Content="On" Margin="0,0,10,0" Click="OutlineFieldChanged" />
+                            <TextBlock Text="Applies to" Style="{StaticResource SectionLabelStyle}" />
+                            <ComboBox x:Name="OutlineTargetCombo" Width="118" SelectionChanged="OutlineFieldChanged">
+                                <ComboBoxItem Content="Font" Tag="Font" />
+                                <ComboBoxItem Content="Composition" Tag="Composition" />
+                            </ComboBox>
+                        </WrapPanel>
+                        <WrapPanel Margin="0,6,0,0">
+                            <TextBlock Text="Thickness" Style="{StaticResource SectionLabelStyle}" />
+                            <TextBox x:Name="OutlineThicknessBox" Width="52" Margin="0,0,10,0" LostFocus="OutlineFieldChanged" />
+                            <TextBlock Text="Offset X" Style="{StaticResource SectionLabelStyle}" />
+                            <TextBox x:Name="OutlineOffsetXBox" Width="52" Margin="0,0,10,0" LostFocus="OutlineFieldChanged" />
+                            <TextBlock Text="Offset Y" Style="{StaticResource SectionLabelStyle}" />
+                            <TextBox x:Name="OutlineOffsetYBox" Width="52" LostFocus="OutlineFieldChanged" />
+                        </WrapPanel>
+                        <controls:ColorSpecPicker x:Name="OutlineColorPicker" Margin="0,6,0,0" ValueChanged="OutlineColorChanged" />
+                    </StackPanel>
+                </Grid>
+
+                <!-- Shadows -->
+                <TextBlock Text="Shadows (stacked bottom to top)" FontWeight="SemiBold" Margin="0,16,0,4" />
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="230" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Column="0">
+                        <ListBox x:Name="ShadowList" Height="112" SelectionChanged="ShadowSelectionChanged" />
+                        <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                            <Button Content="Add" MinWidth="0" Padding="10,4" Click="AddShadowClick" />
+                            <Button Content="Copy" MinWidth="0" Padding="10,4" Click="CopyShadowClick" />
+                            <Button Content="Remove" MinWidth="0" Padding="10,4" Click="RemoveShadowClick" />
+                        </StackPanel>
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1" Margin="10,0,0,0">
+                        <WrapPanel>
+                            <TextBlock Text="Name" Style="{StaticResource SectionLabelStyle}" />
+                            <TextBox x:Name="ShadowNameBox" Width="112" Margin="0,0,10,0" LostFocus="ShadowFieldChanged" />
+                            <CheckBox x:Name="ShadowEnabledCheck" Content="On" Margin="0,0,10,0" Click="ShadowFieldChanged" />
+                            <TextBlock Text="Applies to" Style="{StaticResource SectionLabelStyle}" />
+                            <ComboBox x:Name="ShadowTargetCombo" Width="118" SelectionChanged="ShadowFieldChanged">
+                                <ComboBoxItem Content="Font" Tag="Font" />
+                                <ComboBoxItem Content="Composition" Tag="Composition" />
+                            </ComboBox>
+                        </WrapPanel>
+                        <WrapPanel Margin="0,6,0,0">
+                            <TextBlock Text="Thickness" Style="{StaticResource SectionLabelStyle}" />
+                            <TextBox x:Name="ShadowThicknessBox" Width="52" Margin="0,0,10,0" LostFocus="ShadowFieldChanged" />
+                            <TextBlock Text="Offset X" Style="{StaticResource SectionLabelStyle}" />
+                            <TextBox x:Name="ShadowOffsetXBox" Width="52" Margin="0,0,10,0" LostFocus="ShadowFieldChanged" />
+                            <TextBlock Text="Offset Y" Style="{StaticResource SectionLabelStyle}" />
+                            <TextBox x:Name="ShadowOffsetYBox" Width="52" Margin="0,0,10,0" LostFocus="ShadowFieldChanged" />
+                            <TextBlock Text="Opacity" Style="{StaticResource SectionLabelStyle}" />
+                            <TextBox x:Name="ShadowOpacityBox" Width="52" LostFocus="ShadowFieldChanged" />
+                        </WrapPanel>
+                        <controls:ColorSpecPicker x:Name="ShadowColorPicker" Margin="0,6,0,0" ValueChanged="ShadowColorChanged" />
+                    </StackPanel>
+                </Grid>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Preview -->
+        <Border Grid.Row="2" Height="150" Margin="0,12,0,0" Background="#FF14141A" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1">
+            <Grid>
+                <controls:SubtitleOverlay x:Name="PreviewOverlay" IsHitTestVisible="False" />
+                <TextBox x:Name="PreviewTextBox"
+                         Text="Preview text with animation"
+                         HorizontalAlignment="Left"
+                         VerticalAlignment="Top"
+                         Width="240"
+                         Margin="8"
+                         TextChanged="PreviewTextChanged" />
+            </Grid>
+        </Border>
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button Content="Cancel" MinWidth="90" IsCancel="True" Click="CancelClick" />
+            <Button Content="Save profile" MinWidth="120" IsDefault="True" Style="{StaticResource AccentButtonStyle}" Click="SaveClick" />
+        </StackPanel>
+    </Grid>
+</Window>

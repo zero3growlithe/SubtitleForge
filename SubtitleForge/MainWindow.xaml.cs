@@ -4245,6 +4245,90 @@ namespace SubtitleForge
                 : "Added " + added.ToString(CultureInfo.InvariantCulture) + " dropped files as tracks. Ctrl+Z undoes it.");
         }
 
+        // ── Profile editors ────────────────────────────────────────────────
+
+        private void TextStyleClick(object sender, RoutedEventArgs e)
+        {
+            StyleProfileWindow window = new StyleProfileWindow(
+                App.Profiles,
+                App.Settings.DefaultStyleProfileId,
+                App.Settings.DefaultStyleProfileId);
+            window.PreviewIdle = App.Profiles.ResolveIdle(App.Settings.DefaultIdleProfileId);
+            window.PreviewPopIn = App.Profiles.ResolvePopIn(App.Settings.DefaultPopInProfileId);
+            window.Owner = this;
+
+            bool saved = window.ShowDialog() == true;
+            ApplyProfileEdits(window.DefaultChanged, window.DefaultProfileId, null, null, saved);
+        }
+
+        private void IdleProfileClick(object sender, RoutedEventArgs e)
+        {
+            IdleProfileWindow window = new IdleProfileWindow(
+                App.Profiles,
+                App.Settings.DefaultIdleProfileId,
+                App.Settings.DefaultIdleProfileId);
+            window.PreviewStyle = App.Profiles.ResolveStyle(App.Settings.DefaultStyleProfileId);
+            window.Owner = this;
+
+            bool saved = window.ShowDialog() == true;
+            ApplyProfileEdits(window.DefaultChanged, null, window.DefaultProfileId, null, saved);
+        }
+
+        private void PopInProfileClick(object sender, RoutedEventArgs e)
+        {
+            PopInProfileWindow window = new PopInProfileWindow(
+                App.Profiles,
+                App.Settings.DefaultPopInProfileId,
+                App.Settings.DefaultPopInProfileId);
+            window.PreviewStyle = App.Profiles.ResolveStyle(App.Settings.DefaultStyleProfileId);
+            window.PreviewIdle = App.Profiles.ResolveIdle(App.Settings.DefaultIdleProfileId);
+            window.Owner = this;
+
+            bool saved = window.ShowDialog() == true;
+            ApplyProfileEdits(window.DefaultChanged, null, null, window.DefaultProfileId, saved);
+        }
+
+        private void ApplyProfileEdits(
+            bool defaultChanged,
+            string? styleId,
+            string? idleId,
+            string? popInId,
+            bool saved)
+        {
+            if (defaultChanged)
+            {
+                if (!string.IsNullOrEmpty(styleId))
+                {
+                    App.Settings.DefaultStyleProfileId = styleId;
+                }
+
+                if (!string.IsNullOrEmpty(idleId))
+                {
+                    App.Settings.DefaultIdleProfileId = idleId;
+                }
+
+                if (!string.IsNullOrEmpty(popInId))
+                {
+                    App.Settings.DefaultPopInProfileId = popInId;
+                }
+
+                App.Settings.Save();
+            }
+
+            App.Profiles.Save();
+            RefreshCueAppearanceCombos();
+            UpdateOverlay(CurrentPosition);
+
+            if (defaultChanged)
+            {
+                SetStatus("New default profile saved — every cue without its own override uses it.");
+            }
+            else if (saved)
+            {
+                SetStatus("Profile saved to " + ProfileStore.Folder + ".");
+            }
+        }
+
         private void OnOverlayTimerTick(object? sender, EventArgs e)
         {
             idleSeconds = overlayClock.Elapsed.TotalSeconds;

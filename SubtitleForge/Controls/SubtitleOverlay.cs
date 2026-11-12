@@ -119,14 +119,21 @@ namespace SubtitleForge.Controls
                 textBounds.Height);
 
             double globalOpacity = style.Opacity < 0.0 ? 0.0 : (style.Opacity > 1.0 ? 1.0 : style.Opacity);
-            Brush? fill = StyleBrushes.CreateBrush(style.Fill, absoluteBounds, globalOpacity);
-            Brush? highlight = style.HighlightSpokenWord
-                ? StyleBrushes.CreateBrush(style.HighlightFill, absoluteBounds, globalOpacity)
-                : fill;
+            if (globalOpacity <= 0.001)
+            {
+                return;
+            }
+
+            // Brushes are built once per frame and reused by every glyph; per-glyph fading is
+            // applied with PushOpacity so nothing has to be allocated inside the loop.
+            PaintSet paint = BuildPaintSet(style, absoluteBounds);
 
             IdleAnimationProfile? idle = Idle;
             PopInProfile? popIn = PopIn;
             double popDuration = popIn == null ? 0.0 : Math.Max(0.01, popIn.DurationSeconds);
+            double transformScale = canvasScale * Math.Max(0.05, Scale);
+
+            drawingContext.PushOpacity(globalOpacity);
 
             for (int index = 0; index < glyphs.Count; index++)
             {
@@ -175,13 +182,13 @@ namespace SubtitleForge.Controls
                     else if (string.Equals(kind, PopInKind.ScaleIn, StringComparison.OrdinalIgnoreCase))
                     {
                         double spring = Spring(popProgress, 10.0, 0.5);
-                        double jelly = 1.0 + (popIn.JellyAmplitudeX
+                        double jellyX = 1.0 + (popIn.JellyAmplitudeX
                             * Math.Sin(Math.PI * 2.0 * popIn.JellyFrequency * popProgress)
                             * Math.Exp(-popIn.JellyFalloff * popProgress));
                         double jellyY = 1.0 + (popIn.JellyAmplitudeY
                             * Math.Sin((Math.PI * 2.0 * popIn.JellyFrequency * popProgress) + 0.7)
                             * Math.Exp(-popIn.JellyFalloff * popProgress));
-                        popScaleX = spring * jelly;
+                        popScaleX = spring * jellyX;
                         popScaleY = spring * jellyY;
                         opacity = Math.Min(1.0, popProgress * 4.0);
                     }
@@ -210,10 +217,10 @@ namespace SubtitleForge.Controls
                         double frequency = Math.Max(0.05, idle.Shake.Frequency);
                         double amplitude = idle.Shake.Amplitude * fontSize;
                         offsetX += amplitude * 0.5 * (
-                            Math.Sin(tau * frequency * idleTime * 7.0 + Phase(idle.Shake.Phase))
+                            Math.Sin((tau * frequency * idleTime * 7.0) + Phase(idle.Shake.Phase))
                             + Math.Sin(tau * frequency * idleTime * 11.7));
                         offsetY += amplitude * 0.5 * (
-                            Math.Cos(tau * frequency * idleTime * 8.3 + Phase(idle.Shake.Phase))
+                            Math.Cos((tau * frequency * idleTime * 8.3) + Phase(idle.Shake.Phase))
                             + Math.Sin(tau * frequency * idleTime * 13.1));
                     }
 
@@ -250,7 +257,7 @@ namespace SubtitleForge.Controls
 
                     if (idle.Spin.Enabled)
                     {
-                        double angle = tau * Math.Max(0.01, idle.Spin.Frequency) * idleTime + Phase(idle.Spin.Phase);
+                        double angle = (tau * Math.Max(0.01, idle.Spin.Frequency) * idleTime) + Phase(idle.Spin.Phase);
                         double squash = Math.Abs(Math.Cos(angle));
                         if (squash < 0.06)
                         {
@@ -286,41 +293,81 @@ namespace SubtitleForge.Controls
                     transform.Children.Add(new TranslateTransform(offsetX, offsetY));
                 }
 
+                drawingContext.PushOpacity(opacity);
                 drawingContext.PushTransform(transform);
-                DrawGlyph(
-                    drawingContext,
-                    glyph,
-                    style,
-                    absoluteBounds,
-                    canvasScale * Math.Max(0.05, Scale),
-                    globalOpacity * opacity,
-                    highlight,
-                    fill);
+                DrawGlyph(drawingContext, glyph, style, paint, transformScale);
+                drawingContext.Pop();
                 drawingContext.Pop();
             }
+
+            drawingContext.Pop();
         }
 
-        private void DrawGlyph(
+        private sealed class PaintSet
+        {
+            public Brush? Fill;
+            public Brush? Highlight;
+            public Brush?[] ShadowCore = Array.Empty<Brush?>();
+            public Brush?[] ShadowSoft = Array.Empty<Brush?>();
+            public Brush?[] Outline = Array.Empty<Brush?>();
+        }
+
+        private static PaintSet BuildPaintSet(StyleProfile style, Rect bounds)
+        {
+            PaintSet paint = new PaintSet();
+            paint.Fill = StyleBrushes.CreateBrush(style.Fill, bounds, 1.0);
+            paint.Highlight = style.HighlightSpokenWord
+                ? StyleBrushes.CreateBrush(style.HighlightFill, bounds, 1.0)
+                : null;
+
+            paint.ShadowCore = new Brush?[style.Shadows.Count];
+            paint.ShadowSoft = new Brush?[style.Shadows.Count];
+            for (int index = 0; index < style.Shadows.Count; index++)
+            {
+                ShadowLayer shadow = style.Shadows[index];
+                if (!shadow.Enabled)
+                {
+                    continue;
+                }
+
+                double layerOpacity = Math.Max(0.0, Math.Min(1.0, shadow.Opacity));
+                paint.ShadowCore[index] = StyleBrushes.CreateBrush(shadow.Color, bounds, layerOpacity);
+                paint.ShadowSoft[index] = StyleBrushes.CreateBrush(shadow.Color, bounds, layerOpacity * 0.45);
+            }
+
+            paint.Outline = new Brush?[style.Outlines.Count];
+            for (int index = 0; index < style.Outlines.Count; index++)
+            {
+                OutlineLayer outline = style.Outlines[index];
+                if (!outline.Enabled)
+                {
+                    continue;
+                }
+
+                paint.Outline[index] = StyleBrushes.CreateBrush(outline.Color, bounds, 1.0);
+            }
+
+            return paint;
+        }
+
+        private static void DrawGlyph(
             DrawingContext drawingContext,
             GlyphBox glyph,
             StyleProfile style,
-            Rect absoluteBounds,
-            double scaleFactor,
-            double opacity,
-            Brush? highlightBrush,
-            Brush? fillBrush)
+            PaintSet paint,
+            double scaleFactor)
         {
             Geometry geometry = glyph.Geometry;
 
             // Layer order: shadows first (font group, then composition group), then outlines,
             // then the fill on top so the glyph edges always stay crisp.
-            DrawShadows(drawingContext, geometry, style, absoluteBounds, scaleFactor, opacity, EffectTarget.Font);
-            DrawShadows(drawingContext, geometry, style, absoluteBounds, scaleFactor, opacity, EffectTarget.Composition);
-            DrawOutlines(drawingContext, geometry, style, absoluteBounds, scaleFactor, opacity, EffectTarget.Font);
-            DrawOutlines(drawingContext, geometry, style, absoluteBounds, scaleFactor, opacity, EffectTarget.Composition);
+            DrawShadows(drawingContext, geometry, style, paint, scaleFactor, EffectTarget.Font);
+            DrawShadows(drawingContext, geometry, style, paint, scaleFactor, EffectTarget.Composition);
+            DrawOutlines(drawingContext, geometry, style, paint, scaleFactor, EffectTarget.Font);
+            DrawOutlines(drawingContext, geometry, style, paint, scaleFactor, EffectTarget.Composition);
 
             bool highlighted = style.HighlightSpokenWord && glyph.WordIndex == activeWordIndex;
-            Brush? brush = highlighted && highlightBrush != null ? highlightBrush : fillBrush;
+            Brush? brush = highlighted && paint.Highlight != null ? paint.Highlight : paint.Fill;
             if (brush != null)
             {
                 drawingContext.DrawGeometry(brush, null, geometry);
@@ -331,9 +378,8 @@ namespace SubtitleForge.Controls
             DrawingContext drawingContext,
             Geometry geometry,
             StyleProfile style,
-            Rect absoluteBounds,
+            PaintSet paint,
             double scaleFactor,
-            double opacity,
             string target)
         {
             List<ShadowLayer> shadows = style.Shadows;
@@ -345,28 +391,29 @@ namespace SubtitleForge.Controls
                     continue;
                 }
 
+                Brush? core = paint.ShadowCore[index];
+                Brush? soft = paint.ShadowSoft[index];
+                if (core == null && soft == null)
+                {
+                    continue;
+                }
+
                 double thickness = Math.Max(0.0, shadow.Thickness * scaleFactor);
                 double offsetX = shadow.OffsetX * scaleFactor;
                 double offsetY = shadow.OffsetY * scaleFactor;
-                double layerOpacity = Math.Max(0.0, Math.Min(1.0, shadow.Opacity)) * opacity;
 
                 drawingContext.PushTransform(new TranslateTransform(offsetX, offsetY));
 
-                if (thickness > 0.6)
+                if (thickness > 0.6 && soft != null)
                 {
-                    Brush? soft = StyleBrushes.CreateBrush(shadow.Color, absoluteBounds, layerOpacity * 0.45);
-                    if (soft != null)
-                    {
-                        Pen pen = new Pen(soft, thickness * 2.0);
-                        pen.LineJoin = PenLineJoin.Round;
-                        pen.StartLineCap = PenLineCap.Round;
-                        pen.EndLineCap = PenLineCap.Round;
-                        pen.Freeze();
-                        drawingContext.DrawGeometry(null, pen, geometry);
-                    }
+                    Pen pen = new Pen(soft, thickness * 2.0);
+                    pen.LineJoin = PenLineJoin.Round;
+                    pen.StartLineCap = PenLineCap.Round;
+                    pen.EndLineCap = PenLineCap.Round;
+                    pen.Freeze();
+                    drawingContext.DrawGeometry(null, pen, geometry);
                 }
 
-                Brush? core = StyleBrushes.CreateBrush(shadow.Color, absoluteBounds, layerOpacity);
                 if (core != null)
                 {
                     drawingContext.DrawGeometry(core, null, geometry);
@@ -380,9 +427,8 @@ namespace SubtitleForge.Controls
             DrawingContext drawingContext,
             Geometry geometry,
             StyleProfile style,
-            Rect absoluteBounds,
+            PaintSet paint,
             double scaleFactor,
-            double opacity,
             string target)
         {
             List<OutlineLayer> outlines = style.Outlines;
@@ -394,14 +440,14 @@ namespace SubtitleForge.Controls
                     continue;
                 }
 
-                double width = Math.Max(0.0, outline.Thickness * scaleFactor) * 2.0;
-                if (width <= 0.2)
+                Brush? brush = paint.Outline[index];
+                if (brush == null)
                 {
                     continue;
                 }
 
-                Brush? brush = StyleBrushes.CreateBrush(outline.Color, absoluteBounds, opacity);
-                if (brush == null)
+                double width = Math.Max(0.0, outline.Thickness * scaleFactor) * 2.0;
+                if (width <= 0.2)
                 {
                     continue;
                 }

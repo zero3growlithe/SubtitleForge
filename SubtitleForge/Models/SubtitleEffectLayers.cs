@@ -43,6 +43,11 @@ namespace SubtitleForge.Models
             return copy;
         }
 
+        public override string ToString()
+        {
+            return string.IsNullOrWhiteSpace(Name) ? "Outline" : Name;
+        }
+
         public static List<OutlineLayer> CreateDefaults()
         {
             List<OutlineLayer> layers = new List<OutlineLayer>();
@@ -88,6 +93,11 @@ namespace SubtitleForge.Models
             copy.Opacity = Opacity;
             copy.Target = Target;
             return copy;
+        }
+
+        public override string ToString()
+        {
+            return string.IsNullOrWhiteSpace(Name) ? "Shadow" : Name;
         }
 
         public static List<ShadowLayer> CreateDefaults()

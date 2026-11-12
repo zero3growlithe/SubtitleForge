@@ -1,0 +1,50 @@
+<UserControl x:Class="SubtitleForge.Controls.ColorSpecPicker"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <TextBox x:Name="StartBox"
+                 Grid.Column="0"
+                 Width="82"
+                 Margin="0,0,4,0"
+                 VerticalContentAlignment="Center"
+                 ToolTip="Start colour, e.g. #FFFFFFFF"
+                 LostFocus="FieldChanged" />
+
+        <TextBox x:Name="EndBox"
+                 Grid.Column="1"
+                 Width="82"
+                 Margin="0,0,4,0"
+                 VerticalContentAlignment="Center"
+                 ToolTip="End colour (gradients only)"
+                 LostFocus="FieldChanged" />
+
+        <ComboBox x:Name="DirectionCombo"
+                  Grid.Column="2"
+                  Width="118"
+                  Margin="0,0,6,0"
+                  SelectionChanged="DirectionChanged">
+            <ComboBoxItem Content="Solid" Tag="Solid" />
+            <ComboBoxItem Content="Left → right" Tag="LeftToRight" />
+            <ComboBoxItem Content="Right → left" Tag="RightToLeft" />
+            <ComboBoxItem Content="Top → bottom" Tag="TopToBottom" />
+            <ComboBoxItem Content="Bottom → top" Tag="BottomToTop" />
+            <ComboBoxItem Content="↘ diagonal" Tag="DownRight" />
+            <ComboBoxItem Content="↗ diagonal" Tag="UpRight" />
+        </ComboBox>
+
+        <Border x:Name="Swatch"
+                Grid.Column="3"
+                Height="20"
+                BorderBrush="{StaticResource ControlBorderBrush}"
+                BorderThickness="1"
+                CornerRadius="2"
+                VerticalAlignment="Center" />
+    </Grid>
+</UserControl>

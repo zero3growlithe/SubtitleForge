@@ -38,6 +38,9 @@
                 </ComboBox.ItemTemplate>
             </ComboBox>
             <Button x:Name="ModelsButton" Content="Models…" MinWidth="0" Padding="10,4" Margin="0,0,12,0" Click="ModelsClick" />
+            <Button x:Name="TextStyleButton" Content="Text style…" MinWidth="0" Padding="10,4" Margin="0,0,6,0" Click="TextStyleClick" />
+            <Button x:Name="IdleProfileButton" Content="Idle anim…" MinWidth="0" Padding="10,4" Margin="0,0,6,0" Click="IdleProfileClick" />
+            <Button x:Name="PopInProfileButton" Content="Pop-in…" MinWidth="0" Padding="10,4" Margin="0,0,12,0" Click="PopInProfileClick" />
             <TextBlock Text="Language" Style="{StaticResource SectionLabelStyle}" />
             <ComboBox x:Name="LanguageComboBox" Width="138" SelectionChanged="LanguageSelectionChanged">
                 <ComboBox.ItemTemplate>

@@ -120,11 +120,18 @@ its own. Three kinds of named profile drive it:
 Outlines and shadows each carry a **target**: `Font` applies them to the glyphs, `Composition`
 applies them around the finished font + outlines + shadows stack.
 
+Three buttons in the toolbar open one creator per kind — **Text style…**, **Idle anim…** and
+**Pop-in…**. Each one lists the saved profiles of that kind with `New`, `Delete` and
+`Set as default`, edits every field with numeric inputs and colour/gradient pickers, and shows a
+live preview that loops the animation so you can judge it before saving.
+
 Profiles live in `%AppData%\SubtitleForge\profiles` (`styles.json`, `idle.json`,
 `popin.json`) and are plain JSON, so they can be shared or hand-edited. Every cue uses the
-default profile of its kind unless it overrides one in the Cues view; a cue can also override
-its own **position** (X/Y as a fraction of the frame) and **scale**. All of it — profile
-choices included — is saved in the `.sfproj` project.
+default profile of its kind unless it overrides one in the Cues view, where each cue has its own
+**Style / Idle / Pop-in** pickers (default entries marked `(default …)`) plus **X / Y / Scale**
+boxes and `Reset placement` — X and Y are fractions of the frame (`0.5, 0.86` places the cue at
+the bottom centre), so a cue can sit anywhere at any size. All of it — profile choices
+included — is saved in the `.sfproj` project.
 
 ### Projects
 

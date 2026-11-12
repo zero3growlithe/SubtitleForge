@@ -61,6 +61,22 @@ namespace SubtitleForge.Services
 
         public int BurnCrf { get; set; } = 20;
 
+        /// <summary>
+        /// Seconds added to every cue when the preview plays or when anything is exported. The
+        /// times stored on the cues stay relative to zero, so this can be adjusted at any time
+        /// without losing the transcription's timing.
+        /// </summary>
+        public double SubtitleOffsetSeconds { get; set; }
+
+        /// <summary>Height of the multitrack timeline panel, remembered from the splitter.</summary>
+        public double TimelineHeight { get; set; } = 204.0;
+
+        /// <summary>Width of the cue panel on the right, remembered from the splitter.</summary>
+        public double CuePanelWidth { get; set; } = 474.0;
+
+        /// <summary>Restores the window maximised on the next launch.</summary>
+        public bool WindowMaximized { get; set; }
+
         public string? LastDirectory { get; set; }
 
         public static string SettingsPath

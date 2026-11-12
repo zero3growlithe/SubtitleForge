@@ -118,6 +118,12 @@ namespace SubtitleForge
 
             PreviewMouseDown += MainWindowPreviewMouseDown;
 
+            // Splitter sizes, the global subtitle offset and a maximised window are remembered.
+            Loaded += delegate (object sender, RoutedEventArgs e)
+            {
+                RestoreLayout();
+            };
+
             CueList.ItemsSource = cues;
             cues.CollectionChanged += OnCuesCollectionChanged;
 
@@ -673,22 +679,65 @@ namespace SubtitleForge
             }
         }
 
+        /// <summary>
+        /// Seconds added to every cue when the preview plays it. The times on the cues themselves
+        /// stay relative to zero, so the offset can be adjusted at any moment.
+        /// </summary>
+        private double SubtitleOffsetSeconds
+        {
+            get { return App.Settings.SubtitleOffsetSeconds; }
+        }
+
+        private TimeSpan SubtitleOffset
+        {
+            get { return TimeSpan.FromSeconds(SubtitleOffsetSeconds); }
+        }
+
+        /// <summary>A cue's start on the timeline, with the global offset applied.</summary>
+        private TimeSpan ShiftedStart(SubtitleCue cue)
+        {
+            return Shift(cue.Start);
+        }
+
+        private TimeSpan ShiftedEnd(SubtitleCue cue)
+        {
+            return Shift(cue.End);
+        }
+
+        /// <summary>
+        /// The opposite of <see cref="Shift"/>: a timeline position turned back into the value a cue
+        /// stores, so "= playhead" puts the cue exactly where the playhead is on screen.
+        /// </summary>
+        private TimeSpan BaseTime(TimeSpan timelinePosition)
+        {
+            TimeSpan baseTime = timelinePosition - SubtitleOffset;
+            return baseTime < TimeSpan.Zero ? TimeSpan.Zero : baseTime;
+        }
+
+        private TimeSpan Shift(TimeSpan time)
+        {
+            TimeSpan shifted = time + SubtitleOffset;
+            return shifted < TimeSpan.Zero ? TimeSpan.Zero : shifted;
+        }
+
         private void UpdateOverlay(TimeSpan position)
         {
             SubtitleCue? active = null;
             foreach (SubtitleCue cue in cues)
             {
-                if (cue.Start <= position && position <= cue.End)
+                if (ShiftedStart(cue) <= position && position <= ShiftedEnd(cue))
                 {
                     active = cue;
                 }
-                else if (cue.Start > position)
+                else if (ShiftedStart(cue) > position)
                 {
                     break;
                 }
             }
 
-            SubtitleOverlayView.PlayheadSeconds = position.TotalSeconds;
+            // The playhead is moved along with the cues so the animations inside the overlay keep
+            // exactly the same relationship to the cue.
+            SubtitleOverlayView.PlayheadSeconds = position.TotalSeconds + SubtitleOffsetSeconds;
             SubtitleOverlayView.IdleSeconds = idleSeconds;
 
             if (isPlaying && active != null)
@@ -746,17 +795,20 @@ namespace SubtitleForge
             IdleAnimationProfile idle = store.ResolveIdle(cue.IdleProfileId ?? App.Settings.DefaultIdleProfileId);
             PopInProfile popIn = store.ResolvePopIn(cue.PopInProfileId ?? App.Settings.DefaultPopInProfileId);
 
+            double cueStart = ShiftedStart(cue).TotalSeconds;
+            double cueEnd = ShiftedEnd(cue).TotalSeconds;
+
             bool profileChanged = !ReferenceEquals(SubtitleOverlayView.TextStyle, style)
                 || !ReferenceEquals(SubtitleOverlayView.Idle, idle)
                 || !ReferenceEquals(SubtitleOverlayView.PopIn, popIn)
-                || Math.Abs(SubtitleOverlayView.CueStartSeconds - cue.Start.TotalSeconds) > 0.0005
-                || Math.Abs(SubtitleOverlayView.CueEndSeconds - cue.End.TotalSeconds) > 0.0005;
+                || Math.Abs(SubtitleOverlayView.CueStartSeconds - cueStart) > 0.0005
+                || Math.Abs(SubtitleOverlayView.CueEndSeconds - cueEnd) > 0.0005;
 
             SubtitleOverlayView.TextStyle = style;
             SubtitleOverlayView.Idle = idle;
             SubtitleOverlayView.PopIn = popIn;
-            SubtitleOverlayView.CueStartSeconds = cue.Start.TotalSeconds;
-            SubtitleOverlayView.CueEndSeconds = cue.End.TotalSeconds;
+            SubtitleOverlayView.CueStartSeconds = cueStart;
+            SubtitleOverlayView.CueEndSeconds = cueEnd;
             SubtitleOverlayView.PositionX = cue.PositionX ?? App.Settings.OverlayPositionX;
             SubtitleOverlayView.PositionY = cue.PositionY ?? App.Settings.OverlayPositionY;
             SubtitleOverlayView.Scale = cue.Scale ?? App.Settings.OverlayScale;
@@ -864,9 +916,9 @@ namespace SubtitleForge
                     SelectChoice(CueStyleCombo, null);
                     SelectChoice(CueIdleCombo, null);
                     SelectChoice(CuePopInCombo, null);
-                    CuePositionXBox.ClearSilently();
-                    CuePositionYBox.ClearSilently();
-                    CueScaleBox.ClearSilently();
+                    CuePositionXBox.SetValueSilently(0.0);
+                    CuePositionYBox.SetValueSilently(0.0);
+                    CueScaleBox.SetValueSilently(1.0);
                     return;
                 }
 
@@ -874,14 +926,38 @@ namespace SubtitleForge
                 SelectSharedChoice(CueIdleCombo, selection, cue => cue.IdleProfileId);
                 SelectSharedChoice(CuePopInCombo, selection, cue => cue.PopInProfileId);
 
-                ApplySharedNumber(CuePositionXBox, selection, cue => cue.PositionX);
-                ApplySharedNumber(CuePositionYBox, selection, cue => cue.PositionY);
-                ApplySharedNumber(CueScaleBox, selection, cue => cue.Scale);
+                double defaultX = App.Settings.OverlayPositionX;
+                double defaultY = App.Settings.OverlayPositionY;
+                SeedPlacement(CuePositionXBox, selection, cue => ((cue.PositionX ?? defaultX) - defaultX) * 100.0);
+                SeedPlacement(CuePositionYBox, selection, cue => ((cue.PositionY ?? defaultY) - defaultY) * 100.0);
+                SeedPlacement(CueScaleBox, selection, cue => cue.Scale ?? 1.0);
             }
             finally
             {
                 suppressCueAppearanceEvents = false;
             }
+        }
+
+        /// <summary>
+        /// Writes the shared value of a placement field, or the multi-selection placeholder when
+        /// the selected cues do not agree.
+        /// </summary>
+        private static void SeedPlacement(
+            NumericDragBox box,
+            List<SubtitleCue> selection,
+            Func<SubtitleCue, double> read)
+        {
+            double first = read(selection[0]);
+            for (int index = 1; index < selection.Count; index++)
+            {
+                if (Math.Abs(read(selection[index]) - first) > 0.0005)
+                {
+                    box.SetMixed();
+                    return;
+                }
+            }
+
+            box.SetValueSilently(first);
         }
 
         /// <summary>
@@ -1082,26 +1158,126 @@ namespace SubtitleForge
                 pendingPlacementSnapshot = CaptureCueSnapshot();
             }
 
+            // The X/Y fields show a percentage away from the default position, so 0 means "follow
+            // the default" and the stored value goes back to null.
             foreach (SubtitleCue cue in selection)
             {
                 // A field still showing the mixed placeholder must not overwrite the cues that
                 // already had their own value.
                 if (!CuePositionXBox.IsMixed)
                 {
-                    cue.PositionX = CuePositionXBox.IsEmpty ? null : (double?)CuePositionXBox.Value;
+                    cue.PositionX = ApplyPlacementOffset(
+                        CuePositionXBox.Value,
+                        App.Settings.OverlayPositionX);
                 }
 
                 if (!CuePositionYBox.IsMixed)
                 {
-                    cue.PositionY = CuePositionYBox.IsEmpty ? null : (double?)CuePositionYBox.Value;
+                    cue.PositionY = ApplyPlacementOffset(
+                        CuePositionYBox.Value,
+                        App.Settings.OverlayPositionY);
                 }
 
                 if (!CueScaleBox.IsMixed)
                 {
-                    cue.Scale = CueScaleBox.IsEmpty ? null : (double?)CueScaleBox.Value;
+                    double scale = CueScaleBox.Value;
+                    cue.Scale = Math.Abs(scale - 1.0) < 0.0005 ? null : (double?)scale;
                 }
             }
             MarkProjectDirty();
+            UpdateOverlay(CurrentPosition);
+        }
+
+        /// <summary>
+        /// Turns "percent away from the default" into the absolute 0-1 position that is stored on
+        /// the cue. Zero keeps the cue on the default, which is stored as no override at all.
+        /// </summary>
+        private static double? ApplyPlacementOffset(double offsetPercent, double defaultPosition)
+        {
+            if (Math.Abs(offsetPercent) < 0.0005)
+            {
+                return null;
+            }
+
+            double position = defaultPosition + (offsetPercent / 100.0);
+            if (position < 0.0)
+            {
+                position = 0.0;
+            }
+
+            if (position > 1.0)
+            {
+                position = 1.0;
+            }
+
+            return position;
+        }
+
+        /// <summary>Stores the splitter sizes and the window state so the next launch looks the same.</summary>
+        private void RememberLayout()
+        {
+            if (TimelineRow.Height.IsAbsolute)
+            {
+                App.Settings.TimelineHeight = TimelineRow.Height.Value;
+            }
+
+            if (CuePanelColumn.Width.IsAbsolute)
+            {
+                App.Settings.CuePanelWidth = CuePanelColumn.Width.Value;
+            }
+
+            App.Settings.WindowMaximized = WindowState == WindowState.Maximized;
+            App.Settings.SubtitleOffsetSeconds = GlobalTimeOffsetBox.Value;
+        }
+
+        /// <summary>Puts back the sizes and state remembered by <see cref="RememberLayout"/>.</summary>
+        private void RestoreLayout()
+        {
+            double timeline = App.Settings.TimelineHeight;
+            if (timeline >= TimelineRow.MinHeight && timeline <= 4000.0)
+            {
+                TimelineRow.Height = new GridLength(timeline);
+            }
+
+            double cuePanel = App.Settings.CuePanelWidth;
+            if (cuePanel >= CuePanelColumn.MinWidth && cuePanel <= 2000.0)
+            {
+                CuePanelColumn.Width = new GridLength(cuePanel);
+            }
+
+            GlobalTimeOffsetBox.SetValueSilently(App.Settings.SubtitleOffsetSeconds);
+
+            if (App.Settings.WindowMaximized)
+            {
+                WindowState = WindowState.Maximized;
+            }
+        }
+
+        private void GlobalTimeOffsetChanged(object? sender, EventArgs e)
+        {
+            if (suppressCueAppearanceEvents)
+            {
+                return;
+            }
+
+            App.Settings.SubtitleOffsetSeconds = GlobalTimeOffsetBox.Value;
+            RefreshSubtitleTiming();
+        }
+
+        private void GlobalTimeOffsetCommit(object sender, RoutedEventArgs e)
+        {
+            App.Settings.SubtitleOffsetSeconds = GlobalTimeOffsetBox.Value;
+            App.Settings.Save();
+            RefreshSubtitleTiming();
+        }
+
+        /// <summary>
+        /// Re-paints everything that depends on when a cue happens: the seek strip marks, the cue
+        /// that is on screen and the cue list selection.
+        /// </summary>
+        private void RefreshSubtitleTiming()
+        {
+            DrawTimeline();
             UpdateOverlay(CurrentPosition);
         }
 
@@ -1179,8 +1355,10 @@ namespace SubtitleForge
             HashSet<SubtitleCue> selectedLookup = new HashSet<SubtitleCue>(selectedCues);
             foreach (SubtitleCue cue in cues)
             {
-                double left = (cue.Start.TotalSeconds / total) * width;
-                double blockWidth = (cue.Duration.TotalSeconds / total) * width;
+                TimeSpan markStart = ShiftedStart(cue);
+                TimeSpan markEnd = ShiftedEnd(cue);
+                double left = (markStart.TotalSeconds / total) * width;
+                double blockWidth = ((markEnd - markStart).TotalSeconds / total) * width;
                 if (blockWidth < 2.0)
                 {
                     blockWidth = 2.0;
@@ -1547,9 +1725,10 @@ namespace SubtitleForge
                 return;
             }
 
+            TimeSpan start = BaseTime(CurrentPosition);
             foreach (SubtitleCue cue in selection)
             {
-                cue.Start = CurrentPosition;
+                cue.Start = start;
                 if (cue.End <= cue.Start)
                 {
                     cue.End = cue.Start + TimeSpan.FromMilliseconds(400);
@@ -1569,9 +1748,10 @@ namespace SubtitleForge
                 return;
             }
 
+            TimeSpan end = BaseTime(CurrentPosition);
             foreach (SubtitleCue cue in selection)
             {
-                cue.End = CurrentPosition;
+                cue.End = end;
                 if (cue.End <= cue.Start)
                 {
                     cue.Start = cue.End - TimeSpan.FromMilliseconds(400);
@@ -1688,7 +1868,7 @@ namespace SubtitleForge
 
         private void AddCueClickCore(object sender, RoutedEventArgs e)
         {
-            TimeSpan start = CurrentPosition;
+            TimeSpan start = BaseTime(CurrentPosition);
             SubtitleCue cue = new SubtitleCue(start, start + TimeSpan.FromSeconds(2.0), "New cue");
             int index = cues.Count;
             for (int cueIndex = 0; cueIndex < cues.Count; cueIndex++)
@@ -4998,7 +5178,7 @@ namespace SubtitleForge
 
             foreach (SubtitleCue cue in cues)
             {
-                if (cue.End <= cue.Start)
+                if (ShiftedEnd(cue) <= ShiftedStart(cue))
                 {
                     continue;
                 }
@@ -5006,8 +5186,8 @@ namespace SubtitleForge
                 list.Add(new BurnInCue
                 {
                     Text = cue.Text ?? string.Empty,
-                    StartSeconds = cue.Start.TotalSeconds,
-                    EndSeconds = cue.End.TotalSeconds,
+                    StartSeconds = ShiftedStart(cue).TotalSeconds,
+                    EndSeconds = ShiftedEnd(cue).TotalSeconds,
                     Style = store.ResolveStyle(cue.StyleProfileId ?? App.Settings.DefaultStyleProfileId),
                     Idle = store.ResolveIdle(cue.IdleProfileId ?? App.Settings.DefaultIdleProfileId),
                     PopIn = store.ResolvePopIn(cue.PopInProfileId ?? App.Settings.DefaultPopInProfileId),
@@ -5020,18 +5200,50 @@ namespace SubtitleForge
             return list;
         }
 
+        /// <summary>
+        /// The cues as they have to be written to an export: shifted by the global offset. The
+        /// live list is handed back untouched when there is no offset, so nothing is copied for
+        /// the usual case.
+        /// </summary>
+        private List<SubtitleCue> CuesForExport()
+        {
+            double offset = SubtitleOffsetSeconds;
+            if (Math.Abs(offset) < 0.0005)
+            {
+                return cues;
+            }
+
+            List<SubtitleCue> shifted = new List<SubtitleCue>(cues.Count);
+            foreach (SubtitleCue cue in cues)
+            {
+                SubtitleCue copy = cue.Clone();
+                TimeSpan start = Shift(cue.Start);
+                TimeSpan end = Shift(cue.End);
+                if (end <= start)
+                {
+                    end = start + TimeSpan.FromMilliseconds(200.0);
+                }
+
+                copy.Start = start;
+                copy.End = end;
+                shifted.Add(copy);
+            }
+
+            return shifted;
+        }
+
         private void WriteSubtitleFile(string outputPath, string format)
         {
             switch (format)
             {
                 case "vtt":
-                    SubtitleWriter.SaveVtt(outputPath, cues);
+                    SubtitleWriter.SaveVtt(outputPath, CuesForExport());
                     break;
                 case "ass":
-                    SubtitleWriter.SaveAss(outputPath, cues, BuildAssStyle());
+                    SubtitleWriter.SaveAss(outputPath, CuesForExport(), BuildAssStyle());
                     break;
                 default:
-                    SubtitleWriter.SaveSrt(outputPath, cues);
+                    SubtitleWriter.SaveSrt(outputPath, CuesForExport());
                     break;
             }
         }
@@ -6223,6 +6435,7 @@ namespace SubtitleForge
             microphoneRecorder.Dispose();
 
             ApplyUiToSettings();
+            RememberLayout();
             App.Settings.Save();
             playbackTimer.Stop();
         }

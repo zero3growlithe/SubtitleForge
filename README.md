@@ -167,9 +167,24 @@ creator saves the edits of the profile you were just in, so the picker doubles a
 in any field submits it — the value is validated and the field gives up focus instead of triggering
 the window's Save button — and `Esc` puts the previous value back.
 
-Cues that carry their own style, idle or pop-in profile are **tinted in the cue list**, so the ones
-running on the defaults stand out. Hovering a row draws an outline instead of a background, which
-used to paint over the selection colour and make selected rows look unselected.
+Cues that carry their own style, idle or pop-in profile are **tinted pale yellow in the cue list**,
+so the ones running on the defaults stand out. Hovering a row draws an outline instead of a
+background, which used to paint over the selection colour and make selected rows look unselected.
+
+**Cue placement is edited as an offset.** The `X` / `Y` fields under the cue editor show how far the
+cue sits from the default subtitle position in percent of the frame — `0` is the default, `-12` is
+twelve percent to the left (or up). `Scale` starts at `1`, which means the size from the text style
+profile. Multi-selection shows a `—` for any field the selected cues disagree on.
+
+**Global subtitle time offset.** `Time offset` in the cue panel shifts every cue by that many
+seconds (negative = earlier) when the preview plays it, on the cue strip, and in every export — SRT,
+VTT, ASS and the burned-in video. The times listed on the cues stay untouched, so the transcription
+timing is never destroyed by trying an offset, and `= playhead`, `+ New cue` and the arrow nudges
+keep landing where you see them.
+
+The **splitter sizes and the maximised state are remembered**: the height of the multitrack timeline,
+the width of the cue panel and whether the window was maximised come back on the next launch (they
+live in `settings.json` together with the global offset).
 
 **Preview audio is not re-encoded when it does not have to be.** The audio-only cache the lanes play
 is now built with `-c:a copy` whenever the source audio is AAC (phones, cameras, screen recorders,

@@ -1,5 +1,6 @@
 using System;
 using System.ComponentModel;
+using System.Windows.Media;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 
@@ -118,6 +119,7 @@ namespace SubtitleForge.Models
                     styleProfileId = value;
                     OnPropertyChanged();
                     OnPropertyChanged(nameof(HasCustomLook));
+                    OnPropertyChanged(nameof(LabelBrush));
                 }
             }
         }
@@ -133,6 +135,7 @@ namespace SubtitleForge.Models
                     idleProfileId = value;
                     OnPropertyChanged();
                     OnPropertyChanged(nameof(HasCustomLook));
+                    OnPropertyChanged(nameof(LabelBrush));
                 }
             }
         }
@@ -148,6 +151,7 @@ namespace SubtitleForge.Models
                     popInProfileId = value;
                     OnPropertyChanged();
                     OnPropertyChanged(nameof(HasCustomLook));
+                    OnPropertyChanged(nameof(LabelBrush));
                 }
             }
         }
@@ -206,6 +210,27 @@ namespace SubtitleForge.Models
                     || !string.IsNullOrEmpty(idleProfileId)
                     || !string.IsNullOrEmpty(popInProfileId);
             }
+        }
+
+        private static readonly Brush PlainLabelBrush = CreateBrush("#FFD6DCE6");
+
+        private static readonly Brush CustomLabelBrush = CreateBrush("#FFE9D97A");
+
+        /// <summary>
+        /// Colour of this cue's row in the cue list: a pale yellow when the cue carries its own
+        /// style or animations. Cells bind to it directly, because an inherited Foreground from the
+        /// row would be overridden by the global TextBlock style.
+        /// </summary>
+        public Brush LabelBrush
+        {
+            get { return HasCustomLook ? CustomLabelBrush : PlainLabelBrush; }
+        }
+
+        private static Brush CreateBrush(string value)
+        {
+            SolidColorBrush brush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(value));
+            brush.Freeze();
+            return brush;
         }
 
         public TimeSpan Duration

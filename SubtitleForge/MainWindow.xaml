@@ -74,14 +74,14 @@
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" MinWidth="420" />
                 <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="474" MinWidth="360" />
+                <ColumnDefinition x:Name="CuePanelColumn" Width="474" MinWidth="300" />
             </Grid.ColumnDefinitions>
 
             <Grid Grid.Column="0">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="*" MinHeight="150" />
                     <RowDefinition Height="18" />
-                    <RowDefinition Height="204" MinHeight="110" />
+                    <RowDefinition x:Name="TimelineRow" Height="204" MinHeight="110" />
                 </Grid.RowDefinitions>
 
                 <!-- ── Preview, transport, cue strip and track toolbar ──────── -->
@@ -215,7 +215,8 @@
             <Grid Grid.Column="2" Margin="8,0,0,0">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
-                    <RowDefinition Height="*" />
+                    <RowDefinition Height="*" MinHeight="90" />
+                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
@@ -224,28 +225,63 @@
                     <TextBlock x:Name="CueCountText" Text="0 cues" HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" />
                 </Grid>
 
+                <!-- Global time offset: every cue plays and exports this many seconds away from
+                     the times shown in the list. -->
+                <WrapPanel Grid.Row="3" Orientation="Horizontal" Margin="0,6,0,0">
+                    <TextBlock Text="Time offset" Style="{StaticResource SectionLabelStyle}"
+                               ToolTip="Shifts every cue on the timeline and in every export. The times in the list stay untouched." />
+                    <controls:NumericDragBox x:Name="GlobalTimeOffsetBox"
+                                             Width="72"
+                                             Margin="0,0,6,0"
+                                             Minimum="-600"
+                                             Maximum="600"
+                                             DragStep="0.01"
+                                             Format="0.##"
+                                             ToolTip="Seconds added to every cue when playing and exporting. Negative values make the subtitles earlier."
+                                             ValueChanged="GlobalTimeOffsetChanged"
+                                             LostFocus="GlobalTimeOffsetCommit" />
+                    <TextBlock Text="s" Style="{StaticResource SectionLabelStyle}" />
+                </WrapPanel>
+
                 <ListView x:Name="CueList"
                           Grid.Row="1"
                           SelectionMode="Extended"
                           SelectionChanged="CueListSelectionChanged"
                           MouseDoubleClick="CueListMouseDoubleClick">
-                    <ListView.ItemContainerStyle>
-                        <Style TargetType="ListViewItem" BasedOn="{StaticResource {x:Type ListViewItem}}">
-                            <Style.Triggers>
-                                <!-- Cues that carry their own style/idle/pop-in are tinted so they are
-                                     easy to tell apart from the ones running on the defaults. -->
-                                <DataTrigger Binding="{Binding HasCustomLook}" Value="True">
-                                    <Setter Property="Foreground" Value="{StaticResource AccentTextBrush}" />
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </ListView.ItemContainerStyle>
                     <ListView.View>
                         <GridView AllowsColumnReorder="False">
-                            <GridViewColumn Header="#" Width="34" DisplayMemberBinding="{Binding Number}" />
-                            <GridViewColumn Header="Start" Width="86" DisplayMemberBinding="{Binding StartDisplay}" />
-                            <GridViewColumn Header="End" Width="86" DisplayMemberBinding="{Binding EndDisplay}" />
-                            <GridViewColumn Header="Text" Width="236" DisplayMemberBinding="{Binding TextPreview}" />
+                            <!-- Cell templates instead of DisplayMemberBinding: the colour of a cue
+                                 that overrides the look has to be set on the TextBlock itself, or
+                                 the global TextBlock style wins over what the row inherits. -->
+                            <GridViewColumn Header="#" Width="34">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Number}" Foreground="{Binding LabelBrush}" />
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <GridViewColumn Header="Start" Width="86">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding StartDisplay}" Foreground="{Binding LabelBrush}" />
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <GridViewColumn Header="End" Width="86">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding EndDisplay}" Foreground="{Binding LabelBrush}" />
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <GridViewColumn Header="Text" Width="236">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding TextPreview}" TextTrimming="CharacterEllipsis"
+                                                   Foreground="{Binding LabelBrush}" />
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
                         </GridView>
                     </ListView.View>
                 </ListView>
@@ -311,28 +347,28 @@
                         </WrapPanel>
 
                         <WrapPanel Grid.Row="1" Orientation="Horizontal" Margin="0,6,0,0">
+                            <TextBlock Text="Offset" Style="{StaticResource SectionLabelStyle}"
+                                       ToolTip="How far this cue is moved away from the default subtitle position, in percent of the frame. 0 means the default." />
                             <TextBlock Text="X" Style="{StaticResource SectionLabelStyle}" />
                             <controls:NumericDragBox x:Name="CuePositionXBox"
                                                      Width="56"
                                                      Margin="0,0,6,0"
-                                                     Minimum="0"
-                                                     Maximum="1"
-                                                     DragStep="0.002"
-                                                     Format="0.###"
-                                                     AllowEmpty="True"
-                                                     ToolTip="Horizontal centre, 0 = left edge, 1 = right edge. Empty follows the global default."
+                                                     Minimum="-100"
+                                                     Maximum="100"
+                                                     DragStep="0.1"
+                                                     Format="0.#"
+                                                     ToolTip="Horizontal offset from the default position, in percent of the frame width (negative = left). 0 = the default."
                                                      ValueChanged="CuePlacementChanged"
                                                      LostFocus="CuePlacementCommit" />
                             <TextBlock Text="Y" Style="{StaticResource SectionLabelStyle}" />
                             <controls:NumericDragBox x:Name="CuePositionYBox"
                                                      Width="56"
                                                      Margin="0,0,6,0"
-                                                     Minimum="0"
-                                                     Maximum="1"
-                                                     DragStep="0.002"
-                                                     Format="0.###"
-                                                     AllowEmpty="True"
-                                                     ToolTip="Vertical centre, 0 = top edge, 1 = bottom edge. Empty follows the global default."
+                                                     Minimum="-100"
+                                                     Maximum="100"
+                                                     DragStep="0.1"
+                                                     Format="0.#"
+                                                     ToolTip="Vertical offset from the default position, in percent of the frame height (negative = up). 0 = the default."
                                                      ValueChanged="CuePlacementChanged"
                                                      LostFocus="CuePlacementCommit" />
                             <TextBlock Text="Scale" Style="{StaticResource SectionLabelStyle}" />
@@ -343,8 +379,7 @@
                                                      Maximum="6"
                                                      DragStep="0.005"
                                                      Format="0.###"
-                                                     AllowEmpty="True"
-                                                     ToolTip="Size multiplier. Empty follows the global default."
+                                                     ToolTip="Size multiplier. 1 = the size set in the text style profile."
                                                      ValueChanged="CuePlacementChanged"
                                                      LostFocus="CuePlacementCommit" />
                             <Button x:Name="CuePlacementResetButton"

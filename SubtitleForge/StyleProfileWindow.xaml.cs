@@ -365,6 +365,29 @@ namespace SubtitleForge
             UpdatePreview();
         }
 
+        private static void SelectTarget(ComboBox combo, string? target)
+        {
+            string value = string.IsNullOrEmpty(target) ? EffectTarget.Font : target;
+            for (int index = 0; index < combo.Items.Count; index++)
+            {
+                ComboBoxItem? item = combo.Items[index] as ComboBoxItem;
+                if (item != null && string.Equals(item.Tag as string, value, StringComparison.OrdinalIgnoreCase))
+                {
+                    combo.SelectedIndex = index;
+                    return;
+                }
+            }
+
+            combo.SelectedIndex = 0;
+        }
+
+        private static string SelectedTarget(ComboBox combo)
+        {
+            ComboBoxItem? item = combo.SelectedItem as ComboBoxItem;
+            string? tag = item == null ? null : item.Tag as string;
+            return string.IsNullOrEmpty(tag) ? EffectTarget.Font : tag;
+        }
+
         private void EffectFieldChanged(object? sender, EventArgs e)
         {
             if (suppress)

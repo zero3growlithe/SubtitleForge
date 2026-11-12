@@ -404,7 +404,7 @@ namespace SubtitleForge.Controls
                 {
                     composition.Children.Add(matrix.IsIdentity
                         ? glyph.Geometry
-                        : glyph.Geometry.GetTransformedCopy(matrix));
+                        : TransformedCopy(glyph.Geometry, matrix));
                 }
             }
 
@@ -549,6 +549,18 @@ namespace SubtitleForge.Controls
             }
 
             return paint;
+        }
+
+        /// <summary>
+        /// Copies a glyph outline with its transform baked in, so several glyphs can be added to one
+        /// silhouette. WPF has no "get transformed copy" on <see cref="Geometry"/>, but a path keeps
+        /// its own <see cref="Geometry.Transform"/> and a <see cref="GeometryGroup"/> honours it.
+        /// </summary>
+        private static Geometry TransformedCopy(Geometry geometry, Matrix matrix)
+        {
+            PathGeometry path = PathGeometry.CreateFromGeometry(geometry);
+            path.Transform = new MatrixTransform(matrix);
+            return path;
         }
 
         /// <summary>

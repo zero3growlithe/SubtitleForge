@@ -121,6 +121,7 @@ namespace SubtitleForge.Services
             bool gpuRequested = request.UseGpu && WhisperRuntimeProbe.IsCudaAvailable(out cudaReason);
             if (request.UseGpu && !gpuRequested)
             {
+                CrashLog.WriteNote("GPU requested but not used: " + cudaReason);
                 status?.Report("GPU not used (" + cudaReason + ") — running on CPU.");
             }
 
@@ -136,7 +137,10 @@ namespace SubtitleForge.Services
                 {
                     // Missing cuBLAS / cuDNN or an unusable device: fall back instead of failing the job.
                     CrashLog.Write(exception, "SpeechTranscriber.GpuFactory");
-                    status?.Report("CUDA could not be initialised — falling back to CPU.");
+                    CrashLog.WriteNote("GPU requested but CUDA failed to initialise: " + WhisperRuntimeProbe.DescribeError(exception));
+                    status?.Report(
+                        "CUDA could not be initialised (" + WhisperRuntimeProbe.DescribeError(exception)
+                        + ") — falling back to CPU.");
                     factory = null;
                 }
             }
@@ -433,6 +437,14 @@ namespace SubtitleForge.Services
                 return false;
             }
 
+            // The build ships CPU natives only, so the CUDA whisper library has to be installed next
+            // to the app. Without it nothing else can work, so it is checked before the DLLs.
+            if (!CudaDetector.IsRuntimePresent(out _))
+            {
+                reason = "the CUDA whisper runtime is not installed next to the app";
+                return false;
+            }
+
             if (!AreCudaLibrariesReachable())
             {
                 reason = "CUDA 12 runtime (cublas64_12 / cudart64_12) not found";
@@ -528,6 +540,25 @@ namespace SubtitleForge.Services
             }
 
             return new List<RuntimeLibrary> { RuntimeLibrary.Cuda12, RuntimeLibrary.Cpu };
+        }
+
+        /// <summary>The first line of an exception, short enough for the status bar.</summary>
+        public static string DescribeError(Exception exception)
+        {
+            string message = exception.Message ?? string.Empty;
+            int lineBreak = message.IndexOf('\n');
+            if (lineBreak > 0)
+            {
+                message = message.Substring(0, lineBreak);
+            }
+
+            message = message.Trim();
+            if (message.Length == 0)
+            {
+                message = exception.GetType().Name;
+            }
+
+            return message.Length > 160 ? message.Substring(0, 160) + "…" : message;
         }
 
         public static string Describe(RuntimeLibrary? library, bool gpuRequested)

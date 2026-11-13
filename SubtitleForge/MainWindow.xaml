@@ -50,6 +50,12 @@
                 </ComboBox.ItemTemplate>
             </ComboBox>
             <CheckBox x:Name="GpuCheckBox" Content="GPU (CUDA)" Checked="GpuCheckedChanged" />
+            <Button x:Name="GpuDiagnosticsButton"
+                    Content="GPU diagnostics…"
+                    MinWidth="0"
+                    Padding="10,4"
+                    Click="GpuDiagnosticsClick"
+                    ToolTip="Check the driver, the CUDA toolkit, the CUDA libraries and a real CUDA model load" />
             <CheckBox x:Name="TranslateCheckBox" Content="Translate → EN" />
             <Button x:Name="TranscribeButton" Content="Transcribe" Style="{StaticResource AccentButtonStyle}" Click="TranscribeClick" />
             <Button x:Name="CancelButton" Content="Cancel" Click="CancelClick" IsEnabled="False" />

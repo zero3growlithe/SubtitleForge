@@ -332,6 +332,19 @@ next to `SubtitleForge.exe`:
 4. Restart the app. Ticking `Use GPU` now works; the checkbox reports what is missing instead of
    silently falling back when one of the three pieces is absent.
 
+### Why did it fall back to the CPU?
+
+`GPU diagnostics…` next to the GPU checkbox runs the whole chain and shows the result: the driver
+(`nvcuda.dll` plus its version), the toolkit (`nvcc.exe`, `CUDA_PATH`, installed versions), the
+libraries whisper.cpp links against (`cublas64_12`, `cublasLt64_12`, `cudart64_12`, `cudnn64_9`) with
+the path each one was found at or "not found anywhere", the whisper CUDA natives next to the exe,
+and finally a real attempt at opening the selected model through CUDA — the only check that cannot
+lie. The report is also written to `%LocalAppData%\SubtitleForge\gpu-diagnostics.txt`.
+
+Every transcription that asks for the GPU and does not get it now leaves a line in
+`crash.log` starting with `GPU requested but not used:` or `GPU requested but CUDA failed to
+initialise:`, and the status bar shows the same reason while it runs.
+
 Building the CUDA variant from source instead is a `-p:EnableCuda=true` publish, which pulls the
 same package as a `PackageReference`.
 

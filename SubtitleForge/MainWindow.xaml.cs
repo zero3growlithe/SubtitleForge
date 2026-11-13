@@ -6468,6 +6468,48 @@ namespace SubtitleForge
             public string DetectedLanguage = string.Empty;
         }
 
+        /// <summary>
+        /// Collects a full GPU report in the background and shows it, so a fallback to the CPU can
+        /// be explained instead of guessed at.
+        /// </summary>
+        private async void GpuDiagnosticsClick(object sender, RoutedEventArgs e)
+        {
+            WhisperModelInfo? model = ModelComboBox.SelectedItem as WhisperModelInfo;
+            string modelPath = model == null ? string.Empty : WhisperModelStore.GetModelPath(model.FileName);
+
+            BackgroundTask task = BeginBackgroundTask("GPU diagnostics");
+            UpdateBackgroundTask(task, -1.0, "Checking the driver, the toolkit and the CUDA libraries…");
+
+            string report = string.Empty;
+            bool gpuUsable = false;
+            try
+            {
+                await Task.Run(delegate
+                {
+                    bool usable;
+                    report = GpuDiagnostics.Build(modelPath, out usable);
+                    gpuUsable = usable;
+                }).ConfigureAwait(true);
+            }
+            catch (Exception exception)
+            {
+                CrashLog.Write(exception, "GpuDiagnostics");
+                SetStatus("The GPU diagnostics could not be collected.");
+                FinishBackgroundTask(task);
+                return;
+            }
+
+            FinishBackgroundTask(task);
+            GpuDiagnostics.Save(report);
+            SetStatus(gpuUsable
+                ? "GPU diagnostics: CUDA works."
+                : "GPU diagnostics: CUDA does not work — the report says which piece is missing.");
+
+            GpuDiagnosticsWindow window = new GpuDiagnosticsWindow(report, gpuUsable);
+            window.Owner = this;
+            window.ShowDialog();
+        }
+
         // ── GPU / CUDA availability ────────────────────────────────────────
 
         private void GpuCheckedChanged(object sender, RoutedEventArgs e)

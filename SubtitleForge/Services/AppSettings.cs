@@ -63,6 +63,13 @@ namespace SubtitleForge.Services
         /// </summary>
         public bool ShowOverlappingCues { get; set; } = true;
 
+        /// <summary>
+        /// When true, moving the playhead selects every cue that is on screen at that position, so the
+        /// cue panel always edits what the preview shows. Turning it off keeps the selection untouched
+        /// while scrubbing.
+        /// </summary>
+        public bool SelectCuesAtPlayhead { get; set; } = true;
+
         public string BurnPreset { get; set; } = "medium";
 
         public int BurnCrf { get; set; } = 20;

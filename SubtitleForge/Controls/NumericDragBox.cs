@@ -227,7 +227,7 @@ namespace SubtitleForge.Controls
             if (e.Key == Key.Escape)
             {
                 SetValueSilently(lastValidValue);
-                MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
+                LeaveField();
                 e.Handled = true;
                 return;
             }
@@ -389,6 +389,21 @@ namespace SubtitleForge.Controls
 
             // Reformat whatever was typed so the field always shows a parsable number.
             SetValueSilently(Value);
+        }
+
+        /// <summary>
+        /// Hands the focus to the window so the single-key shortcuts work again. Moving to the next
+        /// control would only land in the next field.
+        /// </summary>
+        private void LeaveField()
+        {
+            Window? owner = Window.GetWindow(this);
+            if (owner != null && owner.Focus())
+            {
+                return;
+            }
+
+            MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
         }
 
         private double Clamp(double value)

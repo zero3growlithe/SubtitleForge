@@ -46,6 +46,43 @@ jobs:
           # to sit under cuda12 or GPU transcription stays on the CPU.
           if (-not ($cuda | Where-Object { $_ -like "*\runtimes\cuda12\win-*" })) { throw "The CUDA natives are not in runtimes\cuda12\win-<arch>" }
 
+      # The cuBLAS / cuDNN blobs are hundreds of megabytes and every CUDA toolkit already contains
+      # them, so they are not shipped. The folder and its own native (ggml-cuda-whisper.dll) stay, with
+      # a note inside, so the two or three files can be dropped in by hand if there is no toolkit.
+      - name: Trim the CUDA blobs
+        shell: pwsh
+        run: |
+          $cudaRoot = Join-Path $PWD "publish/runtimes/cuda12"
+          if (-not (Test-Path $cudaRoot)) { throw "runtimes\cuda12 is missing from the publish output" }
+
+          $removed = @()
+          Get-ChildItem -Recurse $cudaRoot -Filter *.dll | ForEach-Object {
+            "{0,10:N1} MB  {1}" -f ($_.Length / 1MB), $_.FullName
+            if ($_.Name -like "cublas*.dll" -or $_.Name -like "cudnn*.dll") {
+              $removed += ("{0} ({1:N1} MB)" -f $_.Name, ($_.Length / 1MB))
+              Remove-Item $_.FullName -Force
+            }
+          }
+
+          $note = @(
+            "The large CUDA libraries are deliberately not part of this build.",
+            "",
+            "whisper.cpp loads them at run time from the CUDA toolkit: SubtitleForge adds the",
+            "toolkit's bin folder to the DLL search path when it starts. Install CUDA 12 (>= 12.4.1)",
+            "and nothing has to be copied here.",
+            "",
+            "Without a toolkit, drop cublas64_12.dll, cublasLt64_12.dll and cudart64_12.dll into this",
+            "folder instead - next to ggml-cuda-whisper.dll.",
+            "",
+            "GPU diagnostics in the app lists every file it looked for and where."
+          )
+          foreach ($folder in (Get-ChildItem -Directory $cudaRoot)) {
+            Set-Content -Path (Join-Path $folder.FullName "PUT-CUDA-LIBRARIES-HERE.txt") -Value $note -Encoding UTF8
+          }
+
+          if ($removed.Count -eq 0) { "trimmed: nothing (the package no longer ships cuBLAS)" }
+          else { "trimmed: " + ($removed -join ", ") }
+
       - name: Archive
         shell: pwsh
         run: |

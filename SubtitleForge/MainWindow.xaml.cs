@@ -848,6 +848,24 @@ namespace SubtitleForge
             suppressOverlappingCuesChange = true;
             ShowOverlappingCuesCheck.IsChecked = App.Settings.ShowOverlappingCues;
             suppressOverlappingCuesChange = false;
+
+            suppressSelectCuesAtPlayheadChange = true;
+            SelectCuesAtPlayheadCheck.IsChecked = App.Settings.SelectCuesAtPlayhead;
+            suppressSelectCuesAtPlayheadChange = false;
+        }
+
+        private void SelectCuesAtPlayheadChanged(object sender, RoutedEventArgs e)
+        {
+            if (suppressSelectCuesAtPlayheadChange)
+            {
+                return;
+            }
+
+            App.Settings.SelectCuesAtPlayhead = SelectCuesAtPlayheadCheck.IsChecked == true;
+            if (App.Settings.SelectCuesAtPlayhead)
+            {
+                SelectCuesAtPlayhead(CurrentPosition);
+            }
         }
 
         private void ShowOverlappingCuesChanged(object sender, RoutedEventArgs e)
@@ -3088,6 +3106,69 @@ namespace SubtitleForge
             SafeSeek(position);
             UpdateOverlay(position);
             UpdatePlayhead(seconds);
+            SelectCuesAtPlayhead(position);
+        }
+
+        /// <summary>
+        /// Makes the cue panel follow the playhead: every cue that is on screen at
+        /// <paramref name="position"/> becomes selected, so whatever the preview draws is what the
+        /// editors show. Does nothing when the switch is off, when no cue is there, or when the
+        /// selection already matches, so it never fights the user mid-edit.
+        /// </summary>
+        private void SelectCuesAtPlayhead(TimeSpan position)
+        {
+            if (suppressCueAutoSelect || !App.Settings.SelectCuesAtPlayhead)
+            {
+                return;
+            }
+
+            List<SubtitleCue> active = new List<SubtitleCue>();
+            foreach (SubtitleCue cue in cues)
+            {
+                if (cue.Start <= position && position < cue.End)
+                {
+                    active.Add(cue);
+                }
+            }
+
+            if (active.Count == 0 || CueListSelectedEquals(active))
+            {
+                return;
+            }
+
+            suppressCueAutoSelect = true;
+            try
+            {
+                CueList.SelectedItems.Clear();
+                foreach (SubtitleCue cue in active)
+                {
+                    CueList.SelectedItems.Add(cue);
+                }
+
+                CueList.ScrollIntoView(active[0]);
+            }
+            finally
+            {
+                suppressCueAutoSelect = false;
+            }
+        }
+
+        private bool CueListSelectedEquals(List<SubtitleCue> wanted)
+        {
+            if (CueList.SelectedItems.Count != wanted.Count)
+            {
+                return false;
+            }
+
+            foreach (SubtitleCue cue in wanted)
+            {
+                if (!CueList.SelectedItems.Contains(cue))
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         private void SeekBy(double deltaSeconds)
@@ -6259,6 +6340,8 @@ namespace SubtitleForge
         // ── Scrub-driven value fields ──────────────────────────────────────
 
         private FocusedView lastFocusedView = FocusedView.None;
+        private bool suppressSelectCuesAtPlayheadChange;
+        private bool suppressCueAutoSelect;
         private bool numericScrubActive;
         private bool numericScrubUndoPushed;
 
@@ -6320,7 +6403,7 @@ namespace SubtitleForge
                 {
                     // Leave the field so the single-key shortcuts work again. A numeric field keeps
                     // Escape for itself: it puts the previous value back and then moves focus on.
-                    Keyboard.ClearFocus();
+                    LeaveField();
                     e.Handled = true;
                 }
 
@@ -6466,6 +6549,19 @@ namespace SubtitleForge
                     SeekBy(shift ? 10.0 : 1.0);
                     e.Handled = true;
                     break;
+            }
+        }
+
+        /// <summary>
+        /// Takes focus away from a text field and gives it to the window itself. Clearing the focus
+        /// instead would leave the process with no input target at all, and the window would never see
+        /// another key press — which is why the shortcuts kept looking "stuck" after Escape.
+        /// </summary>
+        private void LeaveField()
+        {
+            if (!Focus())
+            {
+                Keyboard.ClearFocus();
             }
         }
 

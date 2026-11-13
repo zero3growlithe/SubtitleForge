@@ -168,6 +168,13 @@
                               ToolTip="Draw every cue that is on screen at the same time, like the burned-in export"
                               Checked="ShowOverlappingCuesChanged"
                               Unchecked="ShowOverlappingCuesChanged" />
+                    <CheckBox x:Name="SelectCuesAtPlayheadCheck"
+                              Content="Select cues at playhead"
+                              Margin="12,0,0,0"
+                              VerticalAlignment="Center"
+                              ToolTip="Scrubbing the timeline selects every cue that is on screen at the new position"
+                              Checked="SelectCuesAtPlayheadChanged"
+                              Unchecked="SelectCuesAtPlayheadChanged" />
                 </WrapPanel>
                 </Grid>
 

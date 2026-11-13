@@ -61,7 +61,12 @@ Everything runs on your machine. No cloud, no API keys, no uploads.
   black frame while the audio keeps running.
 - **Sound comes only from the audio lanes** — the preview itself is always muted, so a video
   clip is heard through its audio lane (and never twice).
-- **Clicking or scrubbing the timeline pauses playback first**, then moves the playhead, so
+- **Seeking selects the cues under the playhead.** Clicking or dragging the timeline (and any other seek)
+selects every cue that is on screen at the new position, so the cue panel always edits exactly what the
+preview draws — several cues when they overlap. Untick `Select cues at playhead` in the timeline toolbar
+to keep the selection untouched while scrubbing.
+
+**Clicking or scrubbing the timeline pauses playback first**, then moves the playhead, so
   the preview does not run away from where you clicked.
 
 ### Timeline editing
@@ -275,7 +280,8 @@ stays a few kilobytes.
 - `Ctrl+Alt+-` / `Ctrl+Alt++` — move only the start of the selected cue(s) by 100 ms
 - `Ctrl+Alt+Shift+-` / `Ctrl+Alt+Shift++` — move only the end of the selected cue(s) by 100 ms
 - `[` / `]` — jump to the previous / next cue, selecting it and putting the playhead on its start
-- `Esc` — while a text or value field has focus, leaves the field so the single-key shortcuts work again
+- `Esc` — while a text or value field has focus, leaves the field and hands focus to the window, so the
+  single-key shortcuts work again (`Esc` in a numeric field first puts its previous value back)
 - `Ctrl+S` — save the project; `Ctrl+Shift+S` — save as…
 - double-click a track header — rename it; right-click a track — colour / split / delete
 
@@ -323,9 +329,15 @@ Nothing is built locally; GitHub Actions is the build authority
 (`.github/workflows/build.yml`): `windows-latest`, .NET 8, `dotnet publish -r win-x64
 --self-contained false -p:EnableCuda=true`. One artifact:
 
-- `SubtitleForge-win-x64` — the CPU whisper natives in `runtimes\win-<arch>` plus the CUDA 12 natives
-  in `runtimes\cuda12\win-<arch>`, so GPU transcription works out of the box and a machine without an
-  NVIDIA card still has the CPU fallback to walk on to.
+- `SubtitleForge-win-x64` — the CPU whisper natives in `runtimes\win-<arch>` plus the small CUDA 12
+  natives in `runtimes\cuda12\win-<arch>`, so GPU transcription works on a machine with a driver and
+  the toolkit, and a machine without one still has the CPU fallback to walk on to.
+
+The multi-hundred-megabyte `cublas64_12` / `cublasLt64_12` / `cudnn` blobs are **not** shipped: every
+CUDA 12 toolkit already contains them and the app resolves them from the toolkit's `bin` folder. The
+`runtimes\cuda12\win-<arch>` folder itself stays in the artifact with a
+`PUT-CUDA-LIBRARIES-HERE.txt` inside, so those files can also be dropped in by hand when there is no
+toolkit.
 
 ```
 dotnet publish SubtitleForge/SubtitleForge.csproj -c Release -r win-x64 --self-contained false -p:EnableCuda=true -o publish
@@ -342,7 +354,9 @@ Three things are needed, in this order:
 1. An **NVIDIA driver** — `nvcuda.dll` in `System32`.
 2. A **CUDA 12 toolkit (>= 12.4.1)** — `cudart64_12`, `cublas64_12`, `cublasLt64_12`.
 3. The **CUDA whisper natives**, which the published build already contains as
-   `runtimes\cuda12\win-<arch>\ggml-cuda-whisper.dll` next to its `whisper.dll` companion.
+   `runtimes\cuda12\win-<arch>\ggml-cuda-whisper.dll` next to its `whisper.dll` companion. The large
+   `cublas` / `cudnn` libraries come from the toolkit; if you would rather not install one, copy
+   `cublas64_12.dll`, `cublasLt64_12.dll` and `cudart64_12.dll` into the same folder.
 
 Nothing has to be moved or copied by hand. whisper.net walks its runtime list and loads the first one it
 can, so the CPU natives in `runtimes\win-<arch>` stay as the fallback for machines that fail check 1 or 2.

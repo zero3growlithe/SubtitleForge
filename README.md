@@ -332,6 +332,28 @@ next to `SubtitleForge.exe`:
 4. Restart the app. Ticking `Use GPU` now works; the checkbox reports what is missing instead of
    silently falling back when one of the three pieces is absent.
 
+### The CUDA runtime folder has to be in the right place
+
+whisper.net does not look for `ggml-cuda-whisper.dll` next to the executable. Its loader probes
+`runtimes\cuda12\win-x64` and nothing else, and when that folder is missing it silently walks on to
+`runtimes\win-x64` and runs on the CPU. So the `runtimes` folder from the package must be unzipped
+into the app folder, giving:
+
+```
+SubtitleForge.exe
+runtimes\win-x64\              whisper.dll  ggml-whisper.dll  ggml-base-whisper.dll  ggml-cpu-whisper.dll
+runtimes\cuda12\win-x64\      whisper.dll  ggml-whisper.dll  ggml-base-whisper.dll  ggml-cuda-whisper.dll
+```
+
+A `ggml-cuda-whisper.dll` sitting in the app folder root is never loaded; the app says so when the
+`Use GPU` checkbox is ticked.
+
+The second gate is `cudart64_12.dll`: whisper.net loads it by name to decide whether CUDA exists, which
+only searches the app folder, `System32` and `PATH`. A toolkit installed under
+`C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.x\bin` is on none of them, so the app adds that
+folder to the DLL search path at startup (`SetDllDirectory`). Nothing has to be added to `PATH` by
+hand, and `ggml-cuda-whisper.dll` finds its cublas / cudart dependencies the same way.
+
 ### Why did it fall back to the CPU?
 
 `GPU diagnostics…` next to the GPU checkbox runs the whole chain and shows the result: the driver

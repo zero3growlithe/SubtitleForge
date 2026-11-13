@@ -21,6 +21,12 @@ namespace SubtitleForge
         protected override void OnStartup(StartupEventArgs e)
         {
             base.OnStartup(e);
+
+            // Has to happen before the first whisper.net call: it decides whether CUDA exists by
+            // loading cudart64_12 by name, which only finds the toolkit if its bin folder is on the
+            // DLL search path.
+            CudaSearchPath.Apply();
+
             Settings = AppSettings.Load();
             Profiles = ProfileStore.Load();
 

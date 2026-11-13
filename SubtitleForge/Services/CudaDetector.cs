@@ -19,6 +19,7 @@ namespace SubtitleForge.Services
         private const string DownloadPage = "https://developer.nvidia.com/cuda-downloads";
         private const string RuntimePackageUrl = "https://www.nuget.org/packages/Whisper.net.Runtime.Cuda12.Windows/1.9.1";
         private const string RuntimeFileName = "ggml-cuda-whisper.dll";
+        private const string RuntimeFolderRelative = "runtimes\\cuda12\\win-x64";
 
         // ── Public API
 
@@ -46,23 +47,35 @@ namespace SubtitleForge.Services
         /// </summary>
         public static bool IsRuntimePresent(out string details)
         {
+            // whisper.net only probes runtimes\cuda12\win-x64 (plus the same folder under any custom
+            // LibraryPath). A ggml-cuda-whisper.dll dropped straight into the app folder is never seen,
+            // which is the most common reason the GPU silently falls back to the CPU.
+            string runtimeFolder = Path.Combine(AppContext.BaseDirectory, RuntimeFolderRelative);
+            string runtimeFile = Path.Combine(runtimeFolder, RuntimeFileName);
+            string whisperFile = Path.Combine(runtimeFolder, "whisper.dll");
+            string misplacedFile = Path.Combine(AppContext.BaseDirectory, RuntimeFileName);
+
             try
             {
-                string baseDirectory = AppContext.BaseDirectory;
-                string[] candidates = new string[]
+                if (File.Exists(runtimeFile) && File.Exists(whisperFile))
                 {
-                    Path.Combine(baseDirectory, "runtimes", "cuda12", "win-x64", RuntimeFileName),
-                    Path.Combine(baseDirectory, "runtimes", "win-x64", RuntimeFileName),
-                    Path.Combine(baseDirectory, RuntimeFileName)
-                };
+                    details = "The CUDA runtime is in " + runtimeFolder + ".";
+                    return true;
+                }
 
-                foreach (string candidate in candidates)
+                if (File.Exists(runtimeFile))
                 {
-                    if (File.Exists(candidate))
-                    {
-                        details = "The CUDA runtime was found in " + (Path.GetDirectoryName(candidate) ?? baseDirectory) + ".";
-                        return true;
-                    }
+                    details = runtimeFolder + " contains " + RuntimeFileName + " but no whisper.dll, so whisper.net "
+                        + "cannot use that folder. Unzip the whole runtimes folder from the package into the app folder.";
+                    return false;
+                }
+
+                if (File.Exists(misplacedFile))
+                {
+                    details = "There is a " + RuntimeFileName + " in the app folder itself, but whisper.net only "
+                        + "looks in " + runtimeFolder + ". Move it (with whisper.dll, ggml-whisper.dll and "
+                        + "ggml-base-whisper.dll) into that folder.";
+                    return false;
                 }
             }
             catch (Exception)
@@ -70,8 +83,8 @@ namespace SubtitleForge.Services
                 // A settings handler should report the negative case, not throw.
             }
 
-            details = "No " + RuntimeFileName + " next to SubtitleForge.exe. Those libraries are not part "
-                + "of the download; install the Whisper.net CUDA 12 runtime into the app folder.";
+            details = "No " + RuntimeFolderRelative + " folder next to SubtitleForge.exe. Those libraries are "
+                + "not part of the download; unzip the Whisper.net CUDA 12 runtime package into the app folder.";
             return false;
         }
 

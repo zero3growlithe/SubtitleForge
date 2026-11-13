@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using Whisper.net;
 using Whisper.net.LibraryLoader;
@@ -50,10 +51,12 @@ namespace SubtitleForge.Services
             report.AppendLine("app folder: " + AppContext.BaseDirectory);
             report.AppendLine();
 
+            CudaSearchPath.Apply();
+
             AppendDriver(report);
             AppendToolkit(report);
             AppendCudaLibraries(report);
-            AppendWhisperRuntime(report);
+            AppendLoaderSearchPaths(report);
             AppendAttempt(report, modelPath, ref gpuUsable);
 
             return report.ToString();
@@ -131,10 +134,36 @@ namespace SubtitleForge.Services
         private static void AppendCudaLibraries(StringBuilder report)
         {
             report.AppendLine("3. CUDA libraries whisper.cpp links against");
+            report.AppendLine("   loadable = Windows can open it by name right now, which is the only thing that counts");
+
             foreach (string library in CudaLibraries)
             {
+                string bareName = Path.GetFileNameWithoutExtension(library);
                 string found = Locate(library);
-                report.AppendLine("   " + library.PadRight(18) + (found.Length == 0 ? "not found anywhere" : found));
+                string loadable;
+                string loadError;
+                bool canLoad = TryLoadByName(bareName, out loadError);
+                if (canLoad)
+                {
+                    loadable = "yes";
+                }
+                else
+                {
+                    loadable = "NO (error " + loadError + ")";
+                }
+
+                report.AppendLine("   " + library.PadRight(18) + "loadable: " + loadable.PadRight(16)
+                    + (found.Length == 0 ? "not installed" : found));
+            }
+
+            string? applied = CudaSearchPath.AppliedFolder;
+            if (applied == null)
+            {
+                report.AppendLine("   search path: no CUDA bin folder could be added to the DLL search path");
+            }
+            else
+            {
+                report.AppendLine("   search path: added " + applied + " to the DLL search path");
             }
 
             report.AppendLine("   PATH entries mentioning CUDA or NVIDIA:");
@@ -159,26 +188,136 @@ namespace SubtitleForge.Services
             report.AppendLine();
         }
 
-        private static void AppendWhisperRuntime(StringBuilder report)
+        /// <summary>
+        /// Mirrors what whisper.net does: <c>NativeLibrary.TryLoad</c> with the bare library name.
+        /// </summary>
+        private static bool TryLoadByName(string name, out string errorCode)
         {
-            report.AppendLine("4. CUDA whisper natives next to the app");
-            string details;
-            bool present = CudaDetector.IsRuntimePresent(out details);
-            report.AppendLine("   " + (present ? "found:   " : "MISSING: ") + details);
-
-            string[] folders = new string[]
+            errorCode = string.Empty;
+            try
             {
-                Path.Combine(AppContext.BaseDirectory, "runtimes", "cuda12", "win-x64"),
-                Path.Combine(AppContext.BaseDirectory, "runtimes", "win-x64"),
-                AppContext.BaseDirectory
-            };
+                if (NativeLibrary.TryLoad(name, out IntPtr handle))
+                {
+                    NativeLibrary.Free(handle);
+                    return true;
+                }
 
-            foreach (string folder in folders)
+                errorCode = Marshal.GetLastWin32Error().ToString(CultureInfo.InvariantCulture);
+                return false;
+            }
+            catch (Exception exception)
             {
-                report.AppendLine("   " + folder + ": " + DescribeFolder(folder));
+                errorCode = exception.GetType().Name;
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Walks the folders whisper.net's own loader probes, since a native DLL in the wrong folder
+        /// is invisible to it and that failure is completely silent.
+        /// </summary>
+        private static void AppendLoaderSearchPaths(StringBuilder report)
+        {
+            report.AppendLine("4. Where whisper.net looks for the runtime");
+            report.AppendLine("   library path override: "
+                + (string.IsNullOrEmpty(RuntimeOptions.LibraryPath) ? "(none)" : RuntimeOptions.LibraryPath));
+            report.AppendLine("   app folder:            " + AppContext.BaseDirectory);
+            report.AppendLine("   current order:         " + DescribeOrder(RuntimeOptions.RuntimeLibraryOrder));
+
+            foreach (string candidate in ProbedRuntimeFolders())
+            {
+                report.AppendLine("   " + candidate);
+            }
+
+            string cudaFolder = Path.Combine(AppContext.BaseDirectory, "runtimes", "cuda12", "win-x64");
+            report.AppendLine("   files the CUDA folder must contain:");
+            foreach (string required in new string[] { "whisper.dll", "ggml-whisper.dll", "ggml-base-whisper.dll", "ggml-cuda-whisper.dll" })
+            {
+                string path = Path.Combine(cudaFolder, required);
+                bool exists = false;
+                try
+                {
+                    exists = File.Exists(path);
+                }
+                catch (Exception)
+                {
+                    exists = false;
+                }
+
+                report.AppendLine("     " + (exists ? "present: " : "MISSING: ") + required);
+            }
+
+            string misplaced = Path.Combine(AppContext.BaseDirectory, "ggml-cuda-whisper.dll");
+            bool misplacedExists = false;
+            try
+            {
+                misplacedExists = File.Exists(misplaced);
+            }
+            catch (Exception)
+            {
+                misplacedExists = false;
+            }
+
+            if (misplacedExists && !Directory.Exists(cudaFolder))
+            {
+                report.AppendLine("   note: ggml-cuda-whisper.dll sits in the app folder, but the loader never looks there.");
+                report.AppendLine("         Move it into " + cudaFolder + " along with whisper.dll, ggml-whisper.dll");
+                report.AppendLine("         and ggml-base-whisper.dll (the CPU copies of those three are in runtimes\\win-x64).");
             }
 
             report.AppendLine();
+        }
+
+        private static IEnumerable<string> ProbedRuntimeFolders()
+        {
+            List<string> lines = new List<string>();
+            string runtimesRoot = Path.Combine(AppContext.BaseDirectory, "runtimes");
+
+            foreach (RuntimeLibrary library in RuntimeOptions.RuntimeLibraryOrder)
+            {
+                string relative = library switch
+                {
+                    RuntimeLibrary.Cuda => Path.Combine("cuda", "win-x64"),
+                    RuntimeLibrary.Cuda12 => Path.Combine("cuda12", "win-x64"),
+                    RuntimeLibrary.Vulkan => Path.Combine("vulkan", "win-x64"),
+                    RuntimeLibrary.Cpu => "win-x64",
+                    RuntimeLibrary.CpuNoAvx => Path.Combine("noavx", "win-x64"),
+                    RuntimeLibrary.CoreML => Path.Combine("coreml", "win-x64"),
+                    RuntimeLibrary.OpenVino => Path.Combine("openvino", "win-x64"),
+                    _ => library.ToString()
+                };
+
+                string folder = Path.Combine(runtimesRoot, relative);
+                bool exists = false;
+                try
+                {
+                    exists = Directory.Exists(folder);
+                }
+                catch (Exception)
+                {
+                    exists = false;
+                }
+
+                lines.Add((exists ? "checked:   " : "not there: ") + library + " -> " + DescribeFolder(folder));
+            }
+
+            return lines;
+        }
+
+        private static string DescribeOrder(List<RuntimeLibrary> order)
+        {
+            if (order == null || order.Count == 0)
+            {
+                return "(empty)";
+            }
+
+            List<string> names = new List<string>();
+            foreach (RuntimeLibrary library in order)
+            {
+                names.Add(library.ToString());
+            }
+
+            return string.Join(" -> ", names.ToArray());
         }
 
         private static void AppendAttempt(StringBuilder report, string? modelPath, ref bool gpuUsable)
@@ -198,14 +337,36 @@ namespace SubtitleForge.Services
             bool preCheck = WhisperRuntimeProbe.IsCudaAvailable(out reason);
             report.AppendLine("   pre-check: " + (preCheck ? "pass" : "fail") + " (" + reason + ")");
 
+            if (RuntimeOptions.LoadedLibrary.HasValue)
+            {
+                report.AppendLine("   note: whisper.net already loaded " + RuntimeOptions.LoadedLibrary.Value
+                    + " earlier in this process and never reloads. Restart the app and run the diagnostics");
+                report.AppendLine("         first if the result below looks inherited.");
+            }
+
             try
             {
                 RuntimeOptions.RuntimeLibraryOrder = WhisperRuntimeProbe.AutoOrder;
                 using (WhisperFactory factory = WhisperFactory.FromPath(modelPath, new WhisperFactoryOptions { UseGpu = true }))
                 {
-                    report.AppendLine("   OK: the model opened through CUDA.");
-                    report.AppendLine("   loaded library: " + WhisperRuntimeProbe.Describe(RuntimeOptions.LoadedLibrary, true));
-                    gpuUsable = true;
+                    // FromPath does not throw when CUDA is unavailable: the loader quietly walks on to
+                    // the next runtime in the order. The loaded library is the only honest answer.
+                    RuntimeLibrary? loaded = RuntimeOptions.LoadedLibrary;
+                    string loadedText = WhisperRuntimeProbe.Describe(loaded, true);
+                    report.AppendLine("   loaded library: " + loadedText);
+
+                    if (loaded == RuntimeLibrary.Cuda || loaded == RuntimeLibrary.Cuda12)
+                    {
+                        report.AppendLine("   OK: the model runs on the GPU through " + loadedText + ".");
+                        gpuUsable = true;
+                    }
+                    else
+                    {
+                        report.AppendLine("   FAILED: whisper.net fell back to " + loadedText + " even though CUDA was requested.");
+                        report.AppendLine("   A CUDA attempt is skipped when either check below fails:");
+                        report.AppendLine("     a) runtimes\\cuda12\\win-x64 must hold whisper.dll and ggml-cuda-whisper.dll (section 4)");
+                        report.AppendLine("     b) cudart64_12.dll must be loadable by name (section 3)");
+                    }
                 }
             }
             catch (Exception exception)

@@ -73,8 +73,8 @@ namespace SubtitleForge.Services
                 if (File.Exists(misplacedFile))
                 {
                     details = "There is a " + RuntimeFileName + " in the app folder itself, but whisper.net only "
-                        + "looks in " + runtimeFolder + ". SubtitleForge moves it there on the next start; "
-                        + "restart the app.";
+                        + "looks in " + runtimeFolder + ". That folder is part of the published build, so a "
+                        + "loose copy in the app folder means the layout was altered.";
                     return false;
                 }
             }

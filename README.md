@@ -286,9 +286,9 @@ stays a few kilobytes.
 - **ffmpeg** — `ffmpeg.exe` and `ffprobe.exe`. Either put them on `PATH` or set
   `FfmpegDirectory` in `%AppData%\SubtitleForge\settings.json` (a folder or a full path).
 - **.NET 8 Desktop Runtime** (the build is framework-dependent).
-- Optional: **NVIDIA driver + CUDA 12 toolkit (>= 12.4.1)** *and* the Whisper.net CUDA 12 runtime
-  next to the executable (see Build → GPU transcription without a CUDA build) for GPU
-  transcription. Without all three the app simply runs on the CPU.
+- Optional: **NVIDIA driver + CUDA 12 toolkit (>= 12.4.1)** for GPU transcription. The CUDA whisper
+  natives ship with the build (`runtimes\cuda12\win-<arch>`), so nothing else has to be installed.
+  Without a driver and the toolkit the app simply runs on the CPU.
 
 ## Typical workflow
 
@@ -321,50 +321,46 @@ large-v3-turbo ≈ 1.6 GB). Progress is shown in the status bar.
 
 Nothing is built locally; GitHub Actions is the build authority
 (`.github/workflows/build.yml`): `windows-latest`, .NET 8, `dotnet publish -r win-x64
---self-contained false -p:EnableCuda=false`. One artifact:
+--self-contained false -p:EnableCuda=true`. One artifact:
 
-- `SubtitleForge-win-x64` — CPU whisper natives only (~3.3 MB zipped). Works everywhere.
-
-```
-dotnet publish SubtitleForge/SubtitleForge.csproj -c Release -r win-x64 --self-contained false -p:EnableCuda=false -o publish
-```
-
-### GPU transcription without a CUDA build
-
-The CUDA whisper natives are a ~560 MB package and the CUDA toolkit cannot stand in for them, so
-they are not shipped. A CPU build turns into a GPU build by dropping the package's native folder
-next to `SubtitleForge.exe`:
-
-1. Download `https://www.nuget.org/api/v2/package/Whisper.net.Runtime.Cuda12.Windows/1.9.1`
-   (it is a plain zip).
-2. Extract its `runtimes` folder so the layout is
-   `<app>\runtimes\cuda12\win-x64\ggml-cuda-whisper.dll`.
-3. Install the NVIDIA driver and a CUDA 12 toolkit (>= 12.4.1).
-4. Restart the app. Ticking `Use GPU` now works; the checkbox reports what is missing instead of
-   silently falling back when one of the three pieces is absent.
-
-### The CUDA runtime folder has to be in the right place
-
-whisper.net does not look for `ggml-cuda-whisper.dll` next to the executable. Its loader probes
-`runtimes\cuda12\win-x64` and nothing else, and when that folder is missing it silently walks on to
-`runtimes\win-x64` and runs on the CPU. So the `runtimes` folder from the package must be unzipped
-into the app folder, giving:
+- `SubtitleForge-win-x64` — the CPU whisper natives in `runtimes\win-<arch>` plus the CUDA 12 natives
+  in `runtimes\cuda12\win-<arch>`, so GPU transcription works out of the box and a machine without an
+  NVIDIA card still has the CPU fallback to walk on to.
 
 ```
-SubtitleForge.exe
-runtimes\win-x64\              whisper.dll  ggml-whisper.dll  ggml-base-whisper.dll  ggml-cpu-whisper.dll
-runtimes\cuda12\win-x64\      whisper.dll  ggml-whisper.dll  ggml-base-whisper.dll  ggml-cuda-whisper.dll
+dotnet publish SubtitleForge/SubtitleForge.csproj -c Release -r win-x64 --self-contained false -p:EnableCuda=true -o publish
 ```
 
-A `ggml-cuda-whisper.dll` sitting in the app folder root is never loaded, so on start-up the app moves
-it into `runtimes\cuda12\win-x64` (and logs the move to `crash.log`). The same move can be triggered by
-hand with `Move runtime to runtimes\cuda12` in the GPU diagnostics window.
+CI fails the build when `ggml-cuda-whisper.dll` is missing, or when it appears anywhere other than
+`runtimes\cuda12\win-<arch>`: that folder is the only one whisper.net probes, and a native library in
+the wrong place is skipped without a word.
 
-The second gate is `cudart64_12.dll`: whisper.net loads it by name to decide whether CUDA exists, which
-only searches the app folder, `System32` and `PATH`. A toolkit installed under
-`C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.x\bin` is on none of them, so the app adds that
-folder to the DLL search path at startup (`SetDllDirectory`). Nothing has to be added to `PATH` by
-hand, and `ggml-cuda-whisper.dll` finds its cublas / cudart dependencies the same way.
+### GPU transcription
+
+Three things are needed, in this order:
+
+1. An **NVIDIA driver** — `nvcuda.dll` in `System32`.
+2. A **CUDA 12 toolkit (>= 12.4.1)** — `cudart64_12`, `cublas64_12`, `cublasLt64_12`.
+3. The **CUDA whisper natives**, which the published build already contains as
+   `runtimes\cuda12\win-<arch>\ggml-cuda-whisper.dll` next to its `whisper.dll` companion.
+
+Nothing has to be moved or copied by hand. whisper.net walks its runtime list and loads the first one it
+can, so the CPU natives in `runtimes\win-<arch>` stay as the fallback for machines that fail check 1 or 2.
+
+Two gates decide whether the CUDA runtime is tried at all, and both used to fail silently:
+
+- The natives must be in `runtimes\cuda12\win-<arch>`. That is the only folder the loader probes; a
+  `ggml-cuda-whisper.dll` loose in the app folder is never seen. The build puts the files there and CI
+  fails if they end up anywhere else.
+- `cudart64_12.dll` must be loadable **by name**, which searches the app folder, `System32` and `PATH`.
+  A toolkit installed under `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.x\bin` is on none
+  of them, so the app adds that folder to the DLL search path at start-up (`SetDllDirectory`) without
+  touching your environment variables.
+
+`Use GPU` fails loudly instead of falling back in silence: the checkbox unticks itself and says which of
+the three pieces is missing, `GPU diagnostics…` writes the whole chain to
+`%LocalAppData%\SubtitleForge\gpu-diagnostics.txt`, and a transcription that asked for the GPU and did
+not get it leaves a `GPU requested but not used:` line in `crash.log`.
 
 ### Why did it fall back to the CPU?
 

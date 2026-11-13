@@ -261,9 +261,8 @@ namespace SubtitleForge.Services
             if (misplacedExists && !Directory.Exists(cudaFolder))
             {
                 report.AppendLine("   note: ggml-cuda-whisper.dll sits in the app folder, but the loader never looks there.");
-                report.AppendLine("         SubtitleForge moves it into " + cudaFolder + " on start-up, together with");
-                report.AppendLine("         whisper.dll, ggml-whisper.dll and ggml-base-whisper.dll from runtimes\\win-x64.");
-                report.AppendLine("         If this line is still here after a restart, the move failed — see crash.log.");
+                report.AppendLine("         It belongs in " + cudaFolder + " together with whisper.dll, ggml-whisper.dll");
+                report.AppendLine("         and ggml-base-whisper.dll. The published build already lays them out that way.");
             }
 
             report.AppendLine();

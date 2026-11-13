@@ -210,8 +210,8 @@
                         BorderThickness="1">
                     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <controls:TrackTimeline x:Name="TrackTimelineView"
-                                                GotKeyboardFocus="TracksViewActivated"
-                                                PreviewMouseLeftButtonDown="TracksViewActivated"
+                                                GotKeyboardFocus="TracksViewGotFocus"
+                                                PreviewMouseLeftButtonDown="TracksViewMouseDown"
                                                 TrackMouseDown="TrackTimelineMouseDown"
                                                 SegmentMouseDown="TrackTimelineSegmentMouseDown"
                                                 SegmentDropped="TrackTimelineSegmentDropped"
@@ -243,8 +243,8 @@
                           Grid.Row="1"
                           SelectionMode="Extended"
                           SelectionChanged="CueListSelectionChanged"
-                          GotKeyboardFocus="CuesViewActivated"
-                          PreviewMouseLeftButtonDown="CuesViewActivated"
+                          GotKeyboardFocus="CuesViewGotFocus"
+                          PreviewMouseLeftButtonDown="CuesViewMouseDown"
                           MouseDoubleClick="CueListMouseDoubleClick">
                     <ListView.View>
                         <GridView AllowsColumnReorder="False">

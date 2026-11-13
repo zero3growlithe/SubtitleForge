@@ -21,28 +21,36 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      # One build only. The CUDA 12 whisper natives are a ~560 MB package that the CUDA toolkit
-      # cannot replace, so they are not shipped: whoever wants GPU transcription installs the
-      # Whisper.net CUDA runtime next to the executable (see the README).
+      # The Whisper.net CUDA 12 natives are a NuGet runtime asset, so they land in
+      # runtimes\cuda12\win-<arch> all by themselves — the only layout whisper.net probes. The CPU
+      # natives in runtimes\win-<arch> stay: they are the fallback the loader walks to when CUDA is
+      # not there, so a machine without an NVIDIA card still transcribes.
       - name: Restore
-        run: dotnet restore SubtitleForge/SubtitleForge.csproj -r win-x64 -p:EnableCuda=false
+        run: dotnet restore SubtitleForge/SubtitleForge.csproj -r win-x64 -p:EnableCuda=true
 
       - name: Build
-        run: dotnet build SubtitleForge/SubtitleForge.csproj -c Release -r win-x64 --no-restore -p:EnableCuda=false
+        run: dotnet build SubtitleForge/SubtitleForge.csproj -c Release -r win-x64 --no-restore -p:EnableCuda=true
 
       - name: Publish
-        run: dotnet publish SubtitleForge/SubtitleForge.csproj -c Release -r win-x64 --self-contained false --no-restore -p:EnableCuda=false -o publish
+        run: dotnet publish SubtitleForge/SubtitleForge.csproj -c Release -r win-x64 --self-contained false --no-restore -p:EnableCuda=true -o publish
 
       - name: List publish output
         shell: pwsh
         run: |
           Get-ChildItem -Recurse publish | Measure-Object -Property Length -Sum | ForEach-Object { "files={0} bytes={1}" -f $_.Count, $_.Sum }
           Get-ChildItem -Recurse publish -Filter *.dll | Where-Object { $_.FullName -like "*runtimes*" } | Select-Object FullName
-          if (Get-ChildItem -Recurse publish -Filter ggml-cuda-whisper.dll) { throw "CUDA natives leaked into the build" }
+          $cuda = Get-ChildItem -Recurse publish -Filter ggml-cuda-whisper.dll | ForEach-Object { $_.FullName }
+          if (-not $cuda) { throw "The CUDA 12 natives are missing from the publish output" }
+          $cuda | ForEach-Object { "cuda native: $_" }
+          # whisper.net only loads a runtime from runtimes\<runtime>\win-<arch>, so the CUDA copy has
+          # to sit under cuda12 or GPU transcription stays on the CPU.
+          if (-not ($cuda | Where-Object { $_ -like "*\runtimes\cuda12\win-*" })) { throw "The CUDA natives are not in runtimes\cuda12\win-<arch>" }
 
       - name: Archive
         shell: pwsh
         run: |
+          Get-ChildItem publish -Directory | Select-Object Name
+          Get-ChildItem publish/runtimes -Directory | Select-Object Name
           Compress-Archive -Path publish/* -DestinationPath SubtitleForge-win-x64.zip -Force
           Get-ChildItem SubtitleForge-win-x64.zip | Select-Object Name, Length
 

@@ -6609,12 +6609,24 @@ namespace SubtitleForge
 
         // ── Delete by focused view ─────────────────────────────────────────
 
-        private void CuesViewActivated(object sender, RoutedEventArgs e)
+        // The XAML loader builds the delegates by reflection and does not accept a handler whose
+        // parameter is the base RoutedEventArgs, so each event needs its own exact signature.
+        private void CuesViewGotFocus(object sender, KeyboardFocusChangedEventArgs e)
         {
             lastFocusedView = FocusedView.Cues;
         }
 
-        private void TracksViewActivated(object sender, RoutedEventArgs e)
+        private void CuesViewMouseDown(object sender, MouseButtonEventArgs e)
+        {
+            lastFocusedView = FocusedView.Cues;
+        }
+
+        private void TracksViewGotFocus(object sender, KeyboardFocusChangedEventArgs e)
+        {
+            lastFocusedView = FocusedView.Tracks;
+        }
+
+        private void TracksViewMouseDown(object sender, MouseButtonEventArgs e)
         {
             lastFocusedView = FocusedView.Tracks;
         }

@@ -29,6 +29,16 @@ namespace SubtitleForge
         private readonly ObservableCollection<SubtitleCue> cues = new ObservableCollection<SubtitleCue>();
 
         private bool overlapRefreshPending;
+
+        private bool suppressOverlappingCuesChange;
+
+        /// <summary>
+        /// The overlay at index 0. Everything that only needs "the overlay" — the word index, the idle
+        /// clock, the animation repaint — keeps talking to this one.
+        /// </summary>
+        private SubtitleOverlay SubtitleOverlayView = null!;
+
+        private readonly List<SubtitleOverlay> overlays = new List<SubtitleOverlay>();
         private readonly SpeechTranscriber transcriber = new SpeechTranscriber();
         private readonly DispatcherTimer playbackTimer;
         private readonly List<LanguageOption> languages = new List<LanguageOption>();
@@ -119,6 +129,10 @@ namespace SubtitleForge
         public MainWindow()
         {
             InitializeComponent();
+
+            // The overlay is no longer a single XAML element: one is allocated per cue that shares a
+            // moment, so the preview can stack them the way the export does.
+            InitializeOverlayHost();
 
             PreviewMouseDown += MainWindowPreviewMouseDown;
 
@@ -726,12 +740,12 @@ namespace SubtitleForge
 
         private void UpdateOverlay(TimeSpan position)
         {
-            SubtitleCue? active = null;
+            List<SubtitleCue> active = new List<SubtitleCue>();
             foreach (SubtitleCue cue in cues)
             {
                 if (ShiftedStart(cue) <= position && position <= ShiftedEnd(cue))
                 {
-                    active = cue;
+                    active.Add(cue);
                 }
                 else if (ShiftedStart(cue) > position)
                 {
@@ -741,27 +755,105 @@ namespace SubtitleForge
 
             // The playhead is moved along with the cues so the animations inside the overlay keep
             // exactly the same relationship to the cue.
-            SubtitleOverlayView.PlayheadSeconds = position.TotalSeconds + SubtitleOffsetSeconds;
-            SubtitleOverlayView.IdleSeconds = idleSeconds;
+            double subtitleSeconds = position.TotalSeconds + SubtitleOffsetSeconds;
 
-            if (isPlaying && active != null)
+            if (isPlaying && active.Count > 0)
             {
-                SelectCueFollowingPlayback(active);
+                SelectCueFollowingPlayback(active[0]);
             }
 
-            if (active == null)
+            if (active.Count == 0)
             {
-                if (SubtitleOverlayView.HasContent || SubtitleOverlayView.CueText.Length > 0)
-                {
-                    SubtitleOverlayView.CueText = string.Empty;
-                    SubtitleOverlayView.InvalidateLayout();
-                }
-
+                HideUnusedOverlays(0);
                 return;
             }
 
-            ApplyCueAppearance(active);
-            SubtitleOverlayView.Refresh();
+            // When several cues share one moment the export draws them all, so the preview has to
+            // agree: a line that shows up in the video must not be invisible while editing. Turning
+            // the option off falls back to a single cue, the selected one when it is on screen.
+            List<SubtitleCue> shown = active;
+            if (!ShowOverlappingCuesCheck.IsChecked.GetValueOrDefault(true))
+            {
+                SubtitleCue? selected = CueList.SelectedItem as SubtitleCue;
+                SubtitleCue only = selected != null && active.Contains(selected)
+                    ? selected
+                    : active[active.Count - 1];
+                shown = new List<SubtitleCue>();
+                shown.Add(only);
+            }
+
+            for (int index = 0; index < shown.Count; index++)
+            {
+                SubtitleOverlay overlay = AcquireOverlay(index);
+                ApplyCueAppearance(overlay, shown[index]);
+                overlay.PlayheadSeconds = subtitleSeconds;
+                overlay.IdleSeconds = idleSeconds;
+                overlay.Refresh();
+            }
+
+            HideUnusedOverlays(shown.Count);
+        }
+
+        /// <summary>Blanks and hides every pooled overlay from <paramref name="first"/> upwards.</summary>
+        private void HideUnusedOverlays(int first)
+        {
+            for (int index = Math.Max(0, first); index < overlays.Count; index++)
+            {
+                SubtitleOverlay unused = overlays[index];
+                if (unused.CueText.Length > 0 || unused.HasContent)
+                {
+                    unused.CueText = string.Empty;
+                    unused.InvalidateLayout();
+                }
+
+                unused.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        /// <summary>
+        /// Hands back the overlay at <paramref name="index"/>, creating it the first time a stack of
+        /// cues needs one. The pool never shrinks: the busiest moment sizes it once.
+        /// </summary>
+        private SubtitleOverlay AcquireOverlay(int index)
+        {
+            while (overlays.Count <= index)
+            {
+                SubtitleOverlay created = new SubtitleOverlay();
+                created.IsHitTestVisible = false;
+                created.HorizontalAlignment = HorizontalAlignment.Stretch;
+                created.VerticalAlignment = VerticalAlignment.Stretch;
+                created.Visibility = Visibility.Collapsed;
+                OverlayHost.Children.Add(created);
+                overlays.Add(created);
+            }
+
+            SubtitleOverlay overlay = overlays[index];
+            overlay.Visibility = Visibility.Visible;
+            return overlay;
+        }
+
+        /// <summary>Creates the first overlay and restores the stacking option.</summary>
+        private void InitializeOverlayHost()
+        {
+            OverlayHost.Children.Clear();
+            overlays.Clear();
+            SubtitleOverlayView = AcquireOverlay(0);
+            SubtitleOverlayView.Visibility = Visibility.Collapsed;
+
+            suppressOverlappingCuesChange = true;
+            ShowOverlappingCuesCheck.IsChecked = App.Settings.ShowOverlappingCues;
+            suppressOverlappingCuesChange = false;
+        }
+
+        private void ShowOverlappingCuesChanged(object sender, RoutedEventArgs e)
+        {
+            if (suppressOverlappingCuesChange)
+            {
+                return;
+            }
+
+            App.Settings.ShowOverlappingCues = ShowOverlappingCuesCheck.IsChecked == true;
+            UpdateOverlay(CurrentPosition);
         }
 
         /// <summary>
@@ -792,7 +884,7 @@ namespace SubtitleForge
         }
 
         /// <summary>Points the overlay at the cue's style / idle / pop-in profiles and placement.</summary>
-        private void ApplyCueAppearance(SubtitleCue cue)
+        private void ApplyCueAppearance(SubtitleOverlay overlay, SubtitleCue cue)
         {
             ProfileStore store = App.Profiles;
             StyleProfile style = store.ResolveStyle(cue.StyleProfileId ?? App.Settings.DefaultStyleProfileId);
@@ -802,31 +894,31 @@ namespace SubtitleForge
             double cueStart = ShiftedStart(cue).TotalSeconds;
             double cueEnd = ShiftedEnd(cue).TotalSeconds;
 
-            bool profileChanged = !ReferenceEquals(SubtitleOverlayView.TextStyle, style)
-                || !ReferenceEquals(SubtitleOverlayView.Idle, idle)
-                || !ReferenceEquals(SubtitleOverlayView.PopIn, popIn)
-                || Math.Abs(SubtitleOverlayView.CueStartSeconds - cueStart) > 0.0005
-                || Math.Abs(SubtitleOverlayView.CueEndSeconds - cueEnd) > 0.0005;
+            bool profileChanged = !ReferenceEquals(overlay.TextStyle, style)
+                || !ReferenceEquals(overlay.Idle, idle)
+                || !ReferenceEquals(overlay.PopIn, popIn)
+                || Math.Abs(overlay.CueStartSeconds - cueStart) > 0.0005
+                || Math.Abs(overlay.CueEndSeconds - cueEnd) > 0.0005;
 
-            SubtitleOverlayView.TextStyle = style;
-            SubtitleOverlayView.Idle = idle;
-            SubtitleOverlayView.PopIn = popIn;
-            SubtitleOverlayView.CueStartSeconds = cueStart;
-            SubtitleOverlayView.CueEndSeconds = cueEnd;
-            SubtitleOverlayView.PositionX = cue.PositionX ?? App.Settings.OverlayPositionX;
-            SubtitleOverlayView.PositionY = cue.PositionY ?? App.Settings.OverlayPositionY;
-            SubtitleOverlayView.Scale = cue.Scale ?? App.Settings.OverlayScale;
+            overlay.TextStyle = style;
+            overlay.Idle = idle;
+            overlay.PopIn = popIn;
+            overlay.CueStartSeconds = cueStart;
+            overlay.CueEndSeconds = cueEnd;
+            overlay.PositionX = cue.PositionX ?? App.Settings.OverlayPositionX;
+            overlay.PositionY = cue.PositionY ?? App.Settings.OverlayPositionY;
+            overlay.Scale = cue.Scale ?? App.Settings.OverlayScale;
 
             string text = cue.Text ?? string.Empty;
-            bool textChanged = !string.Equals(SubtitleOverlayView.CueText, text, StringComparison.Ordinal);
+            bool textChanged = !string.Equals(overlay.CueText, text, StringComparison.Ordinal);
             if (textChanged)
             {
-                SubtitleOverlayView.CueText = text;
+                overlay.CueText = text;
             }
 
             if (profileChanged || textChanged)
             {
-                SubtitleOverlayView.InvalidateLayout();
+                overlay.InvalidateLayout();
             }
         }
 
@@ -5116,20 +5208,26 @@ namespace SubtitleForge
                 UpdateOverlay(TimeSpan.FromSeconds(timelineSeconds));
             }
 
-            if (!SubtitleOverlayView.HasContent)
+            // Every visible overlay needs its own idle clock, otherwise a stacked cue sits frozen
+            // while the one under it animates.
+            for (int index = 0; index < overlays.Count; index++)
             {
-                return;
-            }
+                SubtitleOverlay overlay = overlays[index];
+                if (!overlay.HasContent || overlay.Visibility != Visibility.Visible)
+                {
+                    continue;
+                }
 
-            SubtitleOverlayView.IdleSeconds = idleSeconds;
+                overlay.IdleSeconds = idleSeconds;
 
-            // Repaint only when something can actually change: an idle channel, a running entrance
-            // or a new word (the highlight and the words-per-display window both follow the word
-            // index). A static cue on a static style costs nothing.
-            bool wordChanged = SubtitleOverlayView.CurrentWordIndex != SubtitleOverlayView.RenderedWordIndex;
-            if (SubtitleOverlayView.IsAnimating || wordChanged)
-            {
-                SubtitleOverlayView.Refresh();
+                // Repaint only when something can actually change: an idle channel, a running
+                // entrance or a new word (the highlight and the words-per-display window both follow
+                // the word index). A static cue on a static style costs nothing.
+                bool wordChanged = overlay.CurrentWordIndex != overlay.RenderedWordIndex;
+                if (overlay.IsAnimating || wordChanged)
+                {
+                    overlay.Refresh();
+                }
             }
         }
 

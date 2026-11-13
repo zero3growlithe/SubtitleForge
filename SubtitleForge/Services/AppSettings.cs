@@ -57,6 +57,12 @@ namespace SubtitleForge.Services
         /// <summary>Extra scale applied on top of the style's font size.</summary>
         public double OverlayScale { get; set; } = 1.0;
 
+        /// <summary>
+        /// Show every cue that is on screen at the same time, stacked the way the burn-in export
+        /// draws them, instead of only the one the playhead entered last.
+        /// </summary>
+        public bool ShowOverlappingCues { get; set; } = true;
+
         public string BurnPreset { get; set; } = "medium";
 
         public int BurnCrf { get; set; } = 20;

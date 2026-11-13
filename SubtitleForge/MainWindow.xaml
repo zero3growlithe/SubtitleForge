@@ -111,10 +111,9 @@
                                    Foreground="#FF6E6E7A"
                                    HorizontalAlignment="Center"
                                    VerticalAlignment="Center" />
-                        <controls:SubtitleOverlay x:Name="SubtitleOverlayView"
-                                                  IsHitTestVisible="False"
-                                                  HorizontalAlignment="Stretch"
-                                                  VerticalAlignment="Stretch" />
+                        <!-- One overlay per cue that is on screen at once, so a stack of cues looks
+                             exactly like the burned-in export instead of hiding all but one. -->
+                        <Grid x:Name="OverlayHost" IsHitTestVisible="False" />
                     </Grid>
                 </Border>
 
@@ -156,6 +155,13 @@
                     <Button x:Name="TrackColorButton" Content="Colour…" Click="TrackColorClick" />
                     <Button x:Name="UndoTrackButton" Content="Undo" MinWidth="0" Padding="10,4" Click="UndoClick" ToolTip="Ctrl+Z" />
                     <Button x:Name="RedoTrackButton" Content="Redo" MinWidth="0" Padding="10,4" Click="RedoClick" ToolTip="Ctrl+Y" />
+                    <CheckBox x:Name="ShowOverlappingCuesCheck"
+                              Content="Show overlapping cues"
+                              Margin="12,0,0,0"
+                              VerticalAlignment="Center"
+                              ToolTip="Draw every cue that is on screen at the same time, like the burned-in export"
+                              Checked="ShowOverlappingCuesChanged"
+                              Unchecked="ShowOverlappingCuesChanged" />
                 </WrapPanel>
                 </Grid>
 

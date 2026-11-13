@@ -175,8 +175,15 @@ the window's Save button — and `Esc` puts the previous value back.
   millisecond). That is a clean handover, not a problem, so it is marked but not warned about.
 - **Bold with a `*` after the number** — the cue carries its own style, idle or pop-in profile. The
   colour is left to the timing state; weight and the star carry the "not the defaults" meaning, so
-  one row never has to say two things in one channel. Hovering a row draws an outline instead of a
-background, which used to paint over the selection colour and make selected rows look unselected.
+  one row never has to say two things in one channel.
+
+Hovering a row draws an outline instead of a background, which used to paint over the selection
+colour and make selected rows look unselected.
+
+**Stacked cues in the preview.** When several cues cover the same moment the preview draws all of
+them, stacked exactly the way the burn-in export does, so nothing that ends up in the video is
+invisible while editing. `Show overlapping cues` in the track toolbar turns that off and falls back
+to one cue — the selected one when it is on screen. The preference lives in `settings.json`.
 
 **Cue placement is edited as an offset.** The `X` / `Y` fields under the cue editor show how far the
 cue sits from the default subtitle position in percent of the frame — `0` is the default, `-12` is

@@ -39,49 +39,53 @@ jobs:
         run: |
           Get-ChildItem -Recurse publish | Measure-Object -Property Length -Sum | ForEach-Object { "files={0} bytes={1}" -f $_.Count, $_.Sum }
           Get-ChildItem -Recurse publish -Filter *.dll | Where-Object { $_.FullName -like "*runtimes*" } | Select-Object FullName
-          $cuda = Get-ChildItem -Recurse publish -Filter ggml-cuda-whisper.dll | ForEach-Object { $_.FullName }
-          if (-not $cuda) { throw "The CUDA 12 natives are missing from the publish output" }
-          $cuda | ForEach-Object { "cuda native: $_" }
-          # whisper.net only loads a runtime from runtimes\<runtime>\win-<arch>, so the CUDA copy has
-          # to sit under cuda12 or GPU transcription stays on the CPU.
-          if (-not ($cuda | Where-Object { $_ -like "*\runtimes\cuda12\win-*" })) { throw "The CUDA natives are not in runtimes\cuda12\win-<arch>" }
+          # The CUDA natives are stripped in the next step, so what matters here is that the layout
+          # whisper.net probes exists at all and that the CPU fallback is intact.
+          if (-not (Test-Path "publish/runtimes/cuda12")) { throw "runtimes\cuda12 is missing from the publish output" }
+          if (-not (Test-Path "publish/runtimes/win-x64/whisper.dll")) { throw "The CPU runtime is missing from the publish output" }
 
-      # The cuBLAS / cuDNN blobs are hundreds of megabytes and every CUDA toolkit already contains
-      # them, so they are not shipped. The folder and its own native (ggml-cuda-whisper.dll) stay, with
-      # a note inside, so the two or three files can be dropped in by hand if there is no toolkit.
-      - name: Trim the CUDA blobs
+      # ggml-cuda-whisper.dll alone is 538 MB, so it is not shipped. The folder layout stays, empty
+      # except for a note, because runtimes\cuda12\win-<arch> is the only place whisper.net probes:
+      # an empty folder makes it walk on to the CPU runtime, and dropping the files in later turns GPU
+      # transcription on without touching the build.
+      - name: Empty the CUDA folder but keep it
         shell: pwsh
         run: |
           $cudaRoot = Join-Path $PWD "publish/runtimes/cuda12"
           if (-not (Test-Path $cudaRoot)) { throw "runtimes\cuda12 is missing from the publish output" }
 
-          $removed = @()
-          Get-ChildItem -Recurse $cudaRoot -Filter *.dll | ForEach-Object {
-            "{0,10:N1} MB  {1}" -f ($_.Length / 1MB), $_.FullName
-            if ($_.Name -like "cublas*.dll" -or $_.Name -like "cudnn*.dll") {
-              $removed += ("{0} ({1:N1} MB)" -f $_.Name, ($_.Length / 1MB))
-              Remove-Item $_.FullName -Force
-            }
+          $note = @(
+            "The CUDA whisper natives are deliberately not part of this build:",
+            "ggml-cuda-whisper.dll alone is 538 MB.",
+            "",
+            "To turn GPU transcription on, copy the whole folder",
+            "  runtimes\cuda12\win-x64",
+            "from the NuGet package Whisper.net.Runtime.Cuda12.Windows 1.9.1 into this one, so that",
+            "this directory ends up holding:",
+            "  ggml-cuda-whisper.dll  ggml-whisper.dll  ggml-base-whisper.dll",
+            "  ggml-cpu-whisper.dll   whisper.dll",
+            "",
+            "Package: https://www.nuget.org/api/v2/package/Whisper.net.Runtime.Cuda12.Windows/1.9.1",
+            "(it is a plain zip; only its runtimes folder is needed).",
+            "",
+            "The remaining CUDA libraries (cublas64_12, cublasLt64_12, cudart64_12) come from the CUDA 12",
+            "toolkit: SubtitleForge adds the toolkit's bin folder to the DLL search path at start-up.",
+            "GPU diagnostics in the app lists every file it looks for and where."
+          )
+
+          Get-ChildItem -Recurse $cudaRoot -File | ForEach-Object {
+            "{0,10:N1} MB  removing {1}" -f ($_.Length / 1MB), $_.Name
+            Remove-Item $_.FullName -Force
           }
 
-          $note = @(
-            "The large CUDA libraries are deliberately not part of this build.",
-            "",
-            "whisper.cpp loads them at run time from the CUDA toolkit: SubtitleForge adds the",
-            "toolkit's bin folder to the DLL search path when it starts. Install CUDA 12 (>= 12.4.1)",
-            "and nothing has to be copied here.",
-            "",
-            "Without a toolkit, drop cublas64_12.dll, cublasLt64_12.dll and cudart64_12.dll into this",
-            "folder instead - next to ggml-cuda-whisper.dll.",
-            "",
-            "GPU diagnostics in the app lists every file it looked for and where."
-          )
-          foreach ($folder in (Get-ChildItem -Directory $cudaRoot)) {
+          foreach ($folder in (Get-ChildItem -Directory $cudaRoot -Recurse)) {
             Set-Content -Path (Join-Path $folder.FullName "PUT-CUDA-LIBRARIES-HERE.txt") -Value $note -Encoding UTF8
           }
 
-          if ($removed.Count -eq 0) { "trimmed: nothing (the package no longer ships cuBLAS)" }
-          else { "trimmed: " + ($removed -join ", ") }
+          Get-ChildItem -Recurse $cudaRoot | Select-Object FullName
+          $big = Get-ChildItem -Recurse publish -File | Where-Object { $_.Length -gt 40MB }
+          if ($big) { throw ("Oversized files left in the publish output: " + ($big.Name -join ", ")) }
+          if (-not (Test-Path "publish/runtimes/win-x64/whisper.dll")) { throw "The CPU fallback runtime is missing" }
 
       - name: Archive
         shell: pwsh

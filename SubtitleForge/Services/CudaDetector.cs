@@ -83,6 +83,14 @@ namespace SubtitleForge.Services
                 // A settings handler should report the negative case, not throw.
             }
 
+            if (Directory.Exists(runtimeFolder))
+            {
+                details = runtimeFolder + " is empty. The CUDA natives are not part of the download ("
+                    + RuntimeFileName + " alone is 538 MB); copy the package's own runtimes\\cuda12\\win-x64 "
+                    + "contents into that folder to turn GPU transcription on.";
+                return false;
+            }
+
             details = "No " + RuntimeFolderRelative + " folder next to SubtitleForge.exe. Those libraries are "
                 + "not part of the download; unzip the Whisper.net CUDA 12 runtime package into the app folder.";
             return false;

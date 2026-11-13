@@ -333,11 +333,11 @@ Nothing is built locally; GitHub Actions is the build authority
   natives in `runtimes\cuda12\win-<arch>`, so GPU transcription works on a machine with a driver and
   the toolkit, and a machine without one still has the CPU fallback to walk on to.
 
-The multi-hundred-megabyte `cublas64_12` / `cublasLt64_12` / `cudnn` blobs are **not** shipped: every
-CUDA 12 toolkit already contains them and the app resolves them from the toolkit's `bin` folder. The
-`runtimes\cuda12\win-<arch>` folder itself stays in the artifact with a
-`PUT-CUDA-LIBRARIES-HERE.txt` inside, so those files can also be dropped in by hand when there is no
-toolkit.
+The CUDA natives themselves are **not** shipped — `ggml-cuda-whisper.dll` alone is 538 MB. The
+`runtimes\cuda12\win-<arch>` folder stays in the artifact, empty except for a
+`PUT-CUDA-LIBRARIES-HERE.txt` that says exactly which files to copy in. An empty folder is what makes
+whisper.net walk on to the CPU runtime instead of pretending it has CUDA, and dropping the files in
+later turns GPU transcription on without a rebuild.
 
 ```
 dotnet publish SubtitleForge/SubtitleForge.csproj -c Release -r win-x64 --self-contained false -p:EnableCuda=true -o publish
@@ -353,10 +353,12 @@ Three things are needed, in this order:
 
 1. An **NVIDIA driver** — `nvcuda.dll` in `System32`.
 2. A **CUDA 12 toolkit (>= 12.4.1)** — `cudart64_12`, `cublas64_12`, `cublasLt64_12`.
-3. The **CUDA whisper natives**, which the published build already contains as
-   `runtimes\cuda12\win-<arch>\ggml-cuda-whisper.dll` next to its `whisper.dll` companion. The large
-   `cublas` / `cudnn` libraries come from the toolkit; if you would rather not install one, copy
-   `cublas64_12.dll`, `cublasLt64_12.dll` and `cudart64_12.dll` into the same folder.
+3. The **CUDA whisper natives**. The build leaves the folder `runtimes\cuda12\win-<arch>` in place but
+   empty (they weigh 538 MB), so copy the whole `runtimes\cuda12\win-x64` folder out of the package
+   `Whisper.net.Runtime.Cuda12.Windows` 1.9.1 into it — five files:
+   `ggml-cuda-whisper.dll`, `ggml-whisper.dll`, `ggml-base-whisper.dll`, `ggml-cpu-whisper.dll`,
+   `whisper.dll`. The `cublas64_12` / `cudart64_12` libraries come from the toolkit and do not have to
+   be copied anywhere.
 
 Nothing has to be moved or copied by hand. whisper.net walks its runtime list and loads the first one it
 can, so the CPU natives in `runtimes\win-<arch>` stay as the fallback for machines that fail check 1 or 2.

@@ -61,7 +61,8 @@ Everything runs on your machine. No cloud, no API keys, no uploads.
   black frame while the audio keeps running.
 - **Sound comes only from the audio lanes** — the preview itself is always muted, so a video
   clip is heard through its audio lane (and never twice).
-- **Seeking selects the cues under the playhead.** Clicking or dragging the timeline (and any other seek)
+- **Seeking selects the cues under the playhead.** Clicking or dragging either timeline — the tracks view
+or the seek strip under the preview — and any other seek
 selects every cue that is on screen at the new position, so the cue panel always edits exactly what the
 preview draws — several cues when they overlap. Untick `Select cues at playhead` in the timeline toolbar
 to keep the selection untouched while scrubbing.
@@ -109,9 +110,9 @@ to keep the selection untouched while scrubbing.
 - Proxies are cached **per source file** (keyed by path + size + modified time) and built one
   at a time in the background. Moving a clip, splitting it, or loading a project reuses the
   cache; only a genuinely new file is ever encoded, and never the whole timeline again.
-- The **ruler shows proxy readiness** as a blue bar along its bottom edge: solid blue where a
-  clip already plays from its proxy (or needs none), translucent blue while the encode is
-  still filling in, nothing while it has not started.
+- The **ruler paints cue marks** along its bottom edge — the same opaque blue bars the seek strip
+  under the preview draws, accent blue for the selected cues. Proxy progress is reported in the
+  background-task popup instead of on the ruler.
 - **Click the bar in the lower-left corner** to open a popup listing every background job
   (proxy encodes, the audio cache, transcription, exports) with its live percentage; the same
   bar shows how many tasks are running.

@@ -150,8 +150,8 @@ namespace SubtitleForge
             CueList.ItemsSource = cues;
             cues.CollectionChanged += OnCuesCollectionChanged;
 
-            // The ruler paints proxy progress; ask us per clip source.
-            TrackTimelineView.SourceReadyFractionProvider = SourceReadyFraction;
+            // The ruler paints the same cue marks as the seek strip, so a cue can be found in either.
+            TrackTimelineView.CueMarkProvider = BuildCueMarks;
 
             playbackTimer = new DispatcherTimer(DispatcherPriority.Render);
             playbackTimer.Interval = TimeSpan.FromMilliseconds(120);
@@ -390,7 +390,7 @@ namespace SubtitleForge
             videoPath = path;
             RememberDirectory(path);
             durationSeconds = 0.0;
-            EmptyHintText.Visibility = Visibility.Collapsed;
+            UpdateEmptyHint();
 
             if (proxyCancellation != null)
             {
@@ -669,6 +669,7 @@ namespace SubtitleForge
             SafeSeek(position);
             UpdateOverlay(position);
             UpdatePlayhead(position.TotalSeconds);
+            SelectCuesAtPlayhead(position);
         }
 
         private void SafeSeek(TimeSpan position)
@@ -1417,6 +1418,14 @@ namespace SubtitleForge
 
         private void DrawTimeline()
         {
+            // Anything that changes the timeline can make media appear or disappear, so the hint is
+            // refreshed here instead of only on the open-file path (a drag and drop never went there).
+            UpdateEmptyHint();
+
+            // The ruler paints cue marks, and their positions and selection colours change whenever
+            // the cue list does, so the timeline is repainted from here as well.
+            TrackTimelineView.Refresh();
+
             TimelineCanvas.Children.Clear();
             playheadLine = null;
 
@@ -1684,6 +1693,28 @@ namespace SubtitleForge
             UpdateCueAppearanceFromSelection();
             UpdateCommandStates();
             DrawTimeline();
+        }
+
+        /// <summary>
+        /// Shows the "Open a video file to begin" hint only while there is nothing to show: no opened
+        /// file and no clip on any track. A video dropped straight onto the timeline counts too.
+        /// </summary>
+        private void UpdateEmptyHint()
+        {
+            bool hasMedia = !string.IsNullOrEmpty(videoPath);
+            if (!hasMedia)
+            {
+                foreach (TimelineTrack track in tracks)
+                {
+                    if (track.Segments.Count > 0)
+                    {
+                        hasMedia = true;
+                        break;
+                    }
+                }
+            }
+
+            EmptyHintText.Visibility = hasMedia ? Visibility.Collapsed : Visibility.Visible;
         }
 
         private void RefreshCueEditor()
@@ -2718,21 +2749,25 @@ namespace SubtitleForge
             }
         }
 
-        private double SourceReadyFraction(string? sourcePath)
+        /// <summary>
+        /// Cue spans for the timeline ruler, in the same colours the seek strip uses: accent for the
+        /// selected cues, the dark blue for the rest.
+        /// </summary>
+        private IReadOnlyList<TrackTimeline.CueMark> BuildCueMarks()
         {
-            if (string.IsNullOrEmpty(sourcePath))
+            List<TrackTimeline.CueMark> marks = new List<TrackTimeline.CueMark>(cues.Count);
+            List<SubtitleCue> selection = SelectedCueList();
+            HashSet<SubtitleCue> selectedLookup = new HashSet<SubtitleCue>(selection);
+
+            foreach (SubtitleCue cue in cues)
             {
-                return 1.0;
+                marks.Add(new TrackTimeline.CueMark(
+                    ShiftedStart(cue).TotalSeconds,
+                    ShiftedEnd(cue).TotalSeconds,
+                    selectedLookup.Contains(cue)));
             }
 
-            double fraction;
-            if (sourceReadyFractions.TryGetValue(sourcePath, out fraction))
-            {
-                return fraction;
-            }
-
-            // Not tracked: no proxy needed, or one is already cached from an earlier session.
-            return 1.0;
+            return marks;
         }
 
         private void ReportProxyProgress(string sourcePath, double fraction)
@@ -6399,10 +6434,16 @@ namespace SubtitleForge
                     return;
                 }
 
-                if (key == Key.Escape && !(Keyboard.FocusedElement is NumericDragBox))
+                if (key == Key.Escape)
                 {
-                    // Leave the field so the single-key shortcuts work again. A numeric field keeps
-                    // Escape for itself: it puts the previous value back and then moves focus on.
+                    // Leave the field so the single-key shortcuts work again. A numeric field first
+                    // gets its previous value back, and focus goes to the cue list in every case.
+                    NumericDragBox? numeric = Keyboard.FocusedElement as NumericDragBox;
+                    if (numeric != null)
+                    {
+                        numeric.RevertValue();
+                    }
+
                     LeaveField();
                     e.Handled = true;
                 }
@@ -6559,10 +6600,15 @@ namespace SubtitleForge
         /// </summary>
         private void LeaveField()
         {
-            if (!Focus())
+            // Focusing the window itself is not enough: Windows keeps the keyboard focus inside the
+            // text box's scope, so the window never receives another key. The cue list is a real
+            // focusable control, and once it has focus the shortcuts work again.
+            if (CueList.Focus() || TrackTimelineView.Focus())
             {
-                Keyboard.ClearFocus();
+                return;
             }
+
+            Keyboard.ClearFocus();
         }
 
         // ── Cue edge nudging ───────────────────────────────────────────────

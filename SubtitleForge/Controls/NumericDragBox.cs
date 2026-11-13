@@ -226,7 +226,7 @@ namespace SubtitleForge.Controls
 
             if (e.Key == Key.Escape)
             {
-                SetValueSilently(lastValidValue);
+                RevertValue();
                 LeaveField();
                 e.Handled = true;
                 return;
@@ -389,6 +389,12 @@ namespace SubtitleForge.Controls
 
             // Reformat whatever was typed so the field always shows a parsable number.
             SetValueSilently(Value);
+        }
+
+        /// <summary>Puts the last committed value back, undoing whatever was typed.</summary>
+        public void RevertValue()
+        {
+            SetValueSilently(lastValidValue);
         }
 
         /// <summary>

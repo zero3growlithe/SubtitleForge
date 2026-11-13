@@ -141,11 +141,27 @@ namespace SubtitleForge.Controls
         public const double RulerHeight = 22.0;
 
         /// <summary>
-        /// Maps a clip's source file to the fraction of it that already has a playable preview
-        /// proxy (1.0 = finished, or no proxy is needed at all). The ruler paints that progress
-        /// blue, so it is obvious which stretches of video play smoothly right now.
+        /// Supplies the cue marks painted in the ruler. They are the same opaque blue bars the seek
+        /// strip under the video shows, so a cue can be found in either place.
         /// </summary>
-        public Func<string?, double>? SourceReadyFractionProvider { get; set; }
+        public Func<IReadOnlyList<CueMark>>? CueMarkProvider { get; set; }
+
+        /// <summary>One cue as the ruler needs it: a span of time and whether it is selected.</summary>
+        public sealed class CueMark
+        {
+            public CueMark(double startSeconds, double endSeconds, bool selected)
+            {
+                StartSeconds = startSeconds;
+                EndSeconds = endSeconds;
+                Selected = selected;
+            }
+
+            public double StartSeconds { get; }
+
+            public double EndSeconds { get; }
+
+            public bool Selected { get; }
+        }
 
         private static Brush CreateFrozenBrush(Color color)
         {
@@ -169,7 +185,7 @@ namespace SubtitleForge.Controls
         private static readonly Color SelectionColor = Color.FromRgb(0xF2, 0xF6, 0xFC);
         private static readonly Color RulerColor = Color.FromRgb(0x2A, 0x2A, 0x31);
         private static readonly Brush ReadyBandBrush = CreateFrozenBrush(AccentColor);
-        private static readonly Brush BuildingBandBrush = CreateFrozenBrush(Color.FromArgb(0x8C, 0x2F, 0x81, 0xF7));
+        private static readonly Brush CueMarkBrush = CreateFrozenBrush(Color.FromRgb(0x27, 0x56, 0x8F));
         private static readonly Color RulerTextColor = Color.FromRgb(0x9A, 0xA0, 0xAC);
 
         private ObservableCollection<TimelineTrack>? tracks;
@@ -485,67 +501,58 @@ namespace SubtitleForge.Controls
                 seconds += step;
             }
 
-            DrawReadyBand(drawingContext);
+            DrawCueMarks(drawingContext);
         }
 
-        private void DrawReadyBand(DrawingContext drawingContext)
+        private void DrawCueMarks(DrawingContext drawingContext)
         {
-            Func<string?, double>? provider = SourceReadyFractionProvider;
-            if (provider == null || tracks == null || tracks.Count == 0)
+            Func<IReadOnlyList<CueMark>>? provider = CueMarkProvider;
+            if (provider == null)
             {
                 return;
             }
 
-            double bandHeight = 4.0;
-            double bandTop = RulerHeight - bandHeight;
-
-            foreach (TimelineTrack track in tracks)
+            IReadOnlyList<CueMark> marks;
+            try
             {
-                if (track.Kind != TrackKind.Video)
+                marks = provider();
+            }
+            catch (Exception)
+            {
+                return;
+            }
+
+            if (marks == null || marks.Count == 0)
+            {
+                return;
+            }
+
+            double markHeight = 5.0;
+            double markTop = RulerHeight - markHeight - 1.0;
+
+            foreach (CueMark mark in marks)
+            {
+                double left = XForSeconds(mark.StartSeconds);
+                double right = XForSeconds(mark.EndSeconds);
+                if (right - left < 2.0)
+                {
+                    right = left + 2.0;
+                }
+
+                double contentLeft = HeaderWidth;
+                double clipLeft = Math.Max(left, contentLeft);
+                double clipRight = Math.Min(right, ActualWidth);
+                if (clipRight <= clipLeft)
                 {
                     continue;
                 }
 
-                foreach (TimelineSegment segment in track.Segments)
-                {
-                    double fraction = provider(segment.SourcePath);
-                    if (fraction <= 0.0)
-                    {
-                        continue;
-                    }
-
-                    // Ready source range is [0, fraction * sourceDuration]; clip it to the slice
-                    // of the source this segment actually shows.
-                    double beginSource = segment.SourceOffsetSeconds;
-                    double endSource = segment.SourceOffsetSeconds + segment.DurationSeconds;
-
-                    if (fraction < 0.999)
-                    {
-                        double readyEnd = fraction * segment.EffectiveSourceDuration;
-                        if (readyEnd < endSource)
-                        {
-                            endSource = readyEnd;
-                        }
-                    }
-
-                    if (endSource <= beginSource + 0.0005)
-                    {
-                        continue;
-                    }
-
-                    double startTimeline = segment.StartSeconds + (beginSource - segment.SourceOffsetSeconds);
-                    double endTimeline = segment.StartSeconds + (endSource - segment.SourceOffsetSeconds);
-                    double left = XForSeconds(startTimeline);
-                    double right = XForSeconds(endTimeline);
-
-                    if (right <= left)
-                    {
-                        continue;
-                    }
-
-                    Brush brush = fraction >= 0.999 ? ReadyBandBrush : BuildingBandBrush;
-                    drawingContext.DrawRectangle(brush, null, new Rect(left, bandTop, right - left, bandHeight));
-                }
+                // Fully opaque, same as the seek strip: the bars have to read clearly against the ruler.
+                Brush brush = mark.Selected ? ReadyBandBrush : CueMarkBrush;
+                drawingContext.DrawRectangle(
+                    brush,
+                    null,
+                    new Rect(clipLeft, markTop, clipRight - clipLeft, markHeight));
             }
         }
 

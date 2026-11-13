@@ -27,6 +27,16 @@ namespace SubtitleForge
             // DLL search path.
             CudaSearchPath.Apply();
 
+            // whisper.net only probes runtimes\cuda12\win-x64, so a ggml-cuda-whisper.dll that was
+            // unzipped into the app folder itself would never be loaded. Move it where it belongs
+            // before anything touches whisper.net.
+            string layoutReport;
+            CudaRuntimeLayout.EnsureRuntimeFolder(out layoutReport);
+            if (!string.IsNullOrWhiteSpace(layoutReport))
+            {
+                CrashLog.WriteNote("CUDA runtime layout: " + Environment.NewLine + layoutReport.TrimEnd());
+            }
+
             Settings = AppSettings.Load();
             Profiles = ProfileStore.Load();
 

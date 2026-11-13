@@ -345,8 +345,9 @@ runtimes\win-x64\              whisper.dll  ggml-whisper.dll  ggml-base-whisper.
 runtimes\cuda12\win-x64\      whisper.dll  ggml-whisper.dll  ggml-base-whisper.dll  ggml-cuda-whisper.dll
 ```
 
-A `ggml-cuda-whisper.dll` sitting in the app folder root is never loaded; the app says so when the
-`Use GPU` checkbox is ticked.
+A `ggml-cuda-whisper.dll` sitting in the app folder root is never loaded, so on start-up the app moves
+it into `runtimes\cuda12\win-x64` (and logs the move to `crash.log`). The same move can be triggered by
+hand with `Move runtime to runtimes\cuda12` in the GPU diagnostics window.
 
 The second gate is `cudart64_12.dll`: whisper.net loads it by name to decide whether CUDA exists, which
 only searches the app folder, `System32` and `PATH`. A toolkit installed under

@@ -16,6 +16,8 @@ namespace SubtitleForge
         {
             InitializeComponent();
 
+            FixLayoutButton.IsEnabled = CudaRuntimeLayout.NeedsMove();
+
             ReportBox.Text = report;
             SummaryText.Text = gpuUsable
                 ? "CUDA works: the model opened on the GPU. If a transcription still runs slowly, check the model size and the number of threads."
@@ -32,6 +34,30 @@ namespace SubtitleForge
             {
                 ReportBox.ScrollToLine(CountLines(report, failureIndex));
             }
+        }
+
+        private void FixLayoutClick(object sender, RoutedEventArgs e)
+        {
+            string report;
+            bool ready = CudaRuntimeLayout.EnsureRuntimeFolder(out report);
+            FixLayoutButton.IsEnabled = false;
+
+            if (string.IsNullOrEmpty(report))
+            {
+                MessageBox.Show(
+                    "There is nothing to move: no ggml-cuda-whisper.dll was found outside the runtime folder.",
+                    "GPU diagnostics",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
+            ReportBox.Text = "Moving the CUDA runtime" + Environment.NewLine
+                + new string('-', 40) + Environment.NewLine
+                + report + Environment.NewLine
+                + (ready
+                    ? "Restart SubtitleForge, then run the diagnostics again to confirm CUDA is used."
+                    : "The folder is still incomplete; the lines above name what is missing.");
         }
 
         private void CopyClick(object sender, RoutedEventArgs e)

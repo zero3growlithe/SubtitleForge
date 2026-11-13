@@ -73,8 +73,8 @@ namespace SubtitleForge.Services
                 if (File.Exists(misplacedFile))
                 {
                     details = "There is a " + RuntimeFileName + " in the app folder itself, but whisper.net only "
-                        + "looks in " + runtimeFolder + ". Move it (with whisper.dll, ggml-whisper.dll and "
-                        + "ggml-base-whisper.dll) into that folder.";
+                        + "looks in " + runtimeFolder + ". SubtitleForge moves it there on the next start; "
+                        + "restart the app.";
                     return false;
                 }
             }

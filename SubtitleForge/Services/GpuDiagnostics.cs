@@ -5,6 +5,7 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 using Whisper.net;
+using Whisper.net.LibraryLoader;
 
 namespace SubtitleForge.Services
 {

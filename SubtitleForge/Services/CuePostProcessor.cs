@@ -22,6 +22,9 @@ namespace SubtitleForge.Services
     /// </summary>
     public static class CuePostProcessor
     {
+        /// <summary>The shortest edit a start or end drag may leave behind.</summary>
+        private static readonly TimeSpan MinimumCueDuration = TimeSpan.FromMilliseconds(10.0);
+
         public static List<SubtitleCue> Normalize(IEnumerable<SubtitleCue> source, CueSplitOptions options)
         {
             List<SubtitleCue> sorted = new List<SubtitleCue>();
@@ -150,6 +153,45 @@ namespace SubtitleForge.Services
             parts.Add(new SubtitleCue(cue.Start, splitPoint, first.ToString(), cue.Confidence));
             parts.Add(new SubtitleCue(splitPoint, cue.End, second.ToString(), cue.Confidence));
             return parts;
+        }
+
+        /// <summary>
+        /// Moves the start of a cue and leaves the end alone, keeping a tiny minimum duration so the
+        /// cue cannot turn inside out.
+        /// </summary>
+        public static void ShiftCueStart(SubtitleCue cue, TimeSpan delta)
+        {
+            TimeSpan start = cue.Start + delta;
+            if (start < TimeSpan.Zero)
+            {
+                start = TimeSpan.Zero;
+            }
+
+            TimeSpan latestStart = cue.End - MinimumCueDuration;
+            if (start > latestStart)
+            {
+                start = latestStart;
+            }
+
+            if (start < TimeSpan.Zero)
+            {
+                start = TimeSpan.Zero;
+            }
+
+            cue.Start = start;
+        }
+
+        /// <summary>Moves the end of a cue and leaves the start alone.</summary>
+        public static void ShiftCueEnd(SubtitleCue cue, TimeSpan delta)
+        {
+            TimeSpan end = cue.End + delta;
+            TimeSpan earliestEnd = cue.Start + MinimumCueDuration;
+            if (end < earliestEnd)
+            {
+                end = earliestEnd;
+            }
+
+            cue.End = end;
         }
 
         public static void ShiftCue(SubtitleCue cue, TimeSpan delta)

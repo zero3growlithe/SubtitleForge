@@ -13,6 +13,8 @@ namespace SubtitleForge
     /// <summary>Creates and edits the entrance (pop-in) animation profiles.</summary>
     public partial class PopInProfileWindow : Window
     {
+        private const string DefaultPreviewText = "Sample Text";
+
         private const double PreviewLoopSeconds = 2.2;
 
         private readonly ProfileStore store;
@@ -37,7 +39,7 @@ namespace SubtitleForge
             PreviewOverlay.PositionY = 0.58;
             PreviewOverlay.CueStartSeconds = 0.0;
             PreviewOverlay.CueEndSeconds = 1000.0;
-            PreviewOverlay.CueText = "Sample Text";
+            PreviewOverlay.CueText = DefaultPreviewText;
             PreviewSizeBox.SetValueSilently(previewFontSize);
 
             previewTimer = new DispatcherTimer(DispatcherPriority.Render);
@@ -499,6 +501,21 @@ namespace SubtitleForge
         {
             DialogResult = false;
             Close();
+        }
+
+        /// <summary>
+        /// Live preview text. It only affects the preview; the profile keeps no text of its own.
+        /// </summary>
+        private void PreviewTextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (PreviewOverlay == null || PreviewTextBox == null)
+            {
+                // TextChanged also fires while the window is still being built.
+                return;
+            }
+
+            string text = PreviewTextBox.Text ?? string.Empty;
+            PreviewOverlay.CueText = text.Trim().Length == 0 ? DefaultPreviewText : text;
         }
     }
 }

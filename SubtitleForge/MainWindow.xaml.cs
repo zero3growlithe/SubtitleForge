@@ -134,6 +134,11 @@ namespace SubtitleForge
             // moment, so the preview can stack them the way the export does.
             InitializeOverlayHost();
 
+            // A mouse scrub fires ValueChanged on every frame; the undo entry has to cover the whole
+            // drag instead of one per pixel.
+            NumericDragBox.ScrubStarted += NumericScrubStarted;
+            NumericDragBox.ScrubFinished += NumericScrubFinished;
+
             PreviewMouseDown += MainWindowPreviewMouseDown;
 
             // Splitter sizes, the global subtitle offset and a maximised window are remembered.
@@ -1323,7 +1328,6 @@ namespace SubtitleForge
             }
 
             App.Settings.WindowMaximized = WindowState == WindowState.Maximized;
-            App.Settings.SubtitleOffsetSeconds = GlobalTimeOffsetBox.Value;
         }
 
         /// <summary>Puts back the sizes and state remembered by <see cref="RememberLayout"/>.</summary>
@@ -1341,30 +1345,10 @@ namespace SubtitleForge
                 CuePanelColumn.Width = new GridLength(cuePanel);
             }
 
-            GlobalTimeOffsetBox.SetValueSilently(App.Settings.SubtitleOffsetSeconds);
-
             if (App.Settings.WindowMaximized)
             {
                 WindowState = WindowState.Maximized;
             }
-        }
-
-        private void GlobalTimeOffsetChanged(object? sender, EventArgs e)
-        {
-            if (suppressCueAppearanceEvents)
-            {
-                return;
-            }
-
-            App.Settings.SubtitleOffsetSeconds = GlobalTimeOffsetBox.Value;
-            RefreshSubtitleTiming();
-        }
-
-        private void GlobalTimeOffsetCommit(object sender, RoutedEventArgs e)
-        {
-            App.Settings.SubtitleOffsetSeconds = GlobalTimeOffsetBox.Value;
-            App.Settings.Save();
-            RefreshSubtitleTiming();
         }
 
         /// <summary>
@@ -6144,6 +6128,19 @@ namespace SubtitleForge
                 return;
             }
 
+            if (numericScrubActive)
+            {
+                if (numericScrubUndoPushed)
+                {
+                    // One undo step per scrub. The first frame's snapshot already holds the state from
+                    // before the drag, and the redo side captures the final state when it runs, so the
+                    // whole drag unwinds in a single Ctrl+Z.
+                    return;
+                }
+
+                numericScrubUndoPushed = true;
+            }
+
             List<SubtitleCue>? after = null;
             UndoStackPush(
                 description,
@@ -6259,6 +6256,24 @@ namespace SubtitleForge
             PushCueUndoIfChanged("edit cue text", before);
         }
 
+        // ── Scrub-driven value fields ──────────────────────────────────────
+
+        private FocusedView lastFocusedView = FocusedView.None;
+        private bool numericScrubActive;
+        private bool numericScrubUndoPushed;
+
+        private void NumericScrubStarted(object? sender, EventArgs e)
+        {
+            numericScrubActive = true;
+            numericScrubUndoPushed = false;
+        }
+
+        private void NumericScrubFinished(object? sender, EventArgs e)
+        {
+            numericScrubActive = false;
+            numericScrubUndoPushed = false;
+        }
+
         // ── Keyboard shortcuts ─────────────────────────────────────────────
 
         private bool IsTextInputFocused()
@@ -6286,108 +6301,134 @@ namespace SubtitleForge
         {
             bool control = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
             bool shift = (Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift;
+            bool alt = (Keyboard.Modifiers & ModifierKeys.Alt) == ModifierKeys.Alt;
+
+            // With Alt held WPF reports Key.System and puts the real key in SystemKey, so every
+            // Alt combination below has to look at the effective key or it never matches.
+            Key key = e.Key == Key.System ? e.SystemKey : e.Key;
 
             if (IsTextInputFocused())
             {
-                if (control && e.Key == Key.S)
+                if (control && key == Key.S)
                 {
                     SaveProject(shift);
+                    e.Handled = true;
+                    return;
+                }
+
+                if (key == Key.Escape && !(Keyboard.FocusedElement is NumericDragBox))
+                {
+                    // Leave the field so the single-key shortcuts work again. A numeric field keeps
+                    // Escape for itself: it puts the previous value back and then moves focus on.
+                    Keyboard.ClearFocus();
                     e.Handled = true;
                 }
 
                 return;
             }
 
-            if (control && shift && e.Key == Key.D)
+            bool minusKey = key == Key.OemMinus || key == Key.Subtract;
+            bool plusKey = key == Key.OemPlus || key == Key.Add;
+
+            if (control && alt && (minusKey || plusKey))
+            {
+                TimeSpan delta = TimeSpan.FromMilliseconds(plusKey ? 100.0 : -100.0);
+                if (shift)
+                {
+                    ShiftSelectedCueEnds(delta);
+                }
+                else
+                {
+                    ShiftSelectedCueStarts(delta);
+                }
+
+                e.Handled = true;
+                return;
+            }
+
+            if (control && shift && key == Key.D)
             {
                 SplitSelectedSegments();
                 e.Handled = true;
                 return;
             }
 
-            if (control && shift && e.Key == Key.J)
+            if (control && shift && key == Key.J)
             {
                 JoinSelectedSegments();
                 e.Handled = true;
                 return;
             }
 
-            if (control && e.Key == Key.S)
+            if (control && key == Key.S)
             {
                 SaveProject(shift);
                 e.Handled = true;
                 return;
             }
 
-            if (control && !shift && e.Key == Key.Z)
+            if (control && !shift && key == Key.Z)
             {
                 UndoLastAction();
                 e.Handled = true;
                 return;
             }
 
-            if (control && (e.Key == Key.Y || (shift && e.Key == Key.Z)))
+            if (control && (key == Key.Y || (shift && key == Key.Z)))
             {
                 RedoLastAction();
                 e.Handled = true;
                 return;
             }
 
-            if (control && e.Key == Key.Q)
+            if (control && key == Key.Q)
             {
                 AddCueClick(this, new RoutedEventArgs());
                 e.Handled = true;
                 return;
             }
 
-            if (control && !shift && e.Key == Key.R)
+            if (control && !shift && key == Key.R)
             {
                 RecordClick(this, new RoutedEventArgs());
                 e.Handled = true;
                 return;
             }
 
-            if (control && !shift && e.Key == Key.T)
+            if (control && !shift && key == Key.T)
             {
                 AddAudioTrackClick(this, new RoutedEventArgs());
                 e.Handled = true;
                 return;
             }
 
-            if (control && e.Key == Key.OemOpenBrackets)
+            if (control && key == Key.OemOpenBrackets)
             {
                 SetStartClick(this, new RoutedEventArgs());
                 e.Handled = true;
                 return;
             }
 
-            if (control && e.Key == Key.OemCloseBrackets)
+            if (control && key == Key.OemCloseBrackets)
             {
                 SetEndClick(this, new RoutedEventArgs());
                 e.Handled = true;
                 return;
             }
 
-            if (control && (e.Key == Key.OemMinus || e.Key == Key.Subtract))
+            if (control && (minusKey || plusKey))
             {
-                NudgeSelectedAndPlayhead(TimeSpan.FromMilliseconds(-100));
+                NudgeSelectedAndPlayhead(TimeSpan.FromMilliseconds(plusKey ? 100.0 : -100.0));
                 e.Handled = true;
                 return;
             }
 
-            if (control && (e.Key == Key.OemPlus || e.Key == Key.Add))
-            {
-                NudgeSelectedAndPlayhead(TimeSpan.FromMilliseconds(100));
-                e.Handled = true;
-                return;
-            }
-
-            if (control)
+            if (control || alt)
             {
                 return;
             }
 
-            switch (e.Key)
+            switch (key)
             {
                 case Key.Space:
                     if (!shift)
@@ -6398,7 +6439,15 @@ namespace SubtitleForge
 
                     break;
                 case Key.Delete:
-                    DeleteSelection();
+                    DeleteFromFocusedView();
+                    e.Handled = true;
+                    break;
+                case Key.OemOpenBrackets:
+                    JumpToAdjacentCue(-1);
+                    e.Handled = true;
+                    break;
+                case Key.OemCloseBrackets:
+                    JumpToAdjacentCue(1);
                     e.Handled = true;
                     break;
                 case Key.OemComma:
@@ -6420,7 +6469,198 @@ namespace SubtitleForge
             }
         }
 
+        // ── Cue edge nudging ───────────────────────────────────────────────
+
+        /// <summary>Ctrl+Alt+-/+: moves only the start of every selected cue.</summary>
+        private void ShiftSelectedCueStarts(TimeSpan delta)
+        {
+            List<SubtitleCue> selection = SelectedCueList();
+            if (selection.Count == 0)
+            {
+                SetStatus("Select a cue to move its start time.");
+                return;
+            }
+
+            List<SubtitleCue> before = CaptureCueSnapshot();
+            foreach (SubtitleCue cue in selection)
+            {
+                CuePostProcessor.ShiftCueStart(cue, delta);
+            }
+
+            PushCueUndoIfChanged("move cue start", before);
+            RefreshCueEditor();
+            DrawTimeline();
+            UpdateOverlay(CurrentPosition);
+            SetStatus("Start of "
+                + DescribeCueCount(selection.Count)
+                + " moved by "
+                + DescribeMilliseconds(delta)
+                + ".");
+        }
+
+        /// <summary>Ctrl+Alt+Shift+-/+: moves only the end of every selected cue.</summary>
+        private void ShiftSelectedCueEnds(TimeSpan delta)
+        {
+            List<SubtitleCue> selection = SelectedCueList();
+            if (selection.Count == 0)
+            {
+                SetStatus("Select a cue to move its end time.");
+                return;
+            }
+
+            List<SubtitleCue> before = CaptureCueSnapshot();
+            foreach (SubtitleCue cue in selection)
+            {
+                CuePostProcessor.ShiftCueEnd(cue, delta);
+            }
+
+            PushCueUndoIfChanged("move cue end", before);
+            RefreshCueEditor();
+            DrawTimeline();
+            UpdateOverlay(CurrentPosition);
+            SetStatus("End of "
+                + DescribeCueCount(selection.Count)
+                + " moved by "
+                + DescribeMilliseconds(delta)
+                + ".");
+        }
+
+        private static string DescribeCueCount(int count)
+        {
+            if (count == 1)
+            {
+                return "the cue";
+            }
+
+            return count.ToString(CultureInfo.InvariantCulture) + " cues";
+        }
+
+        private static string DescribeMilliseconds(TimeSpan delta)
+        {
+            double milliseconds = delta.TotalMilliseconds;
+            string sign = milliseconds >= 0.0 ? "+" : "-";
+            return sign + Math.Abs(milliseconds).ToString("0", CultureInfo.InvariantCulture) + " ms";
+        }
+
+        // ── Cue navigation ─────────────────────────────────────────────────
+
+        /// <summary>
+        /// [ and ]: jumps to the previous or next cue's start and puts the playhead there, so the
+        /// preview shows the cue that was just selected.
+        /// </summary>
+        private void JumpToAdjacentCue(int direction)
+        {
+            if (cues.Count == 0)
+            {
+                SetStatus("There are no cues to jump to.");
+                return;
+            }
+
+            List<SubtitleCue> ordered = new List<SubtitleCue>(cues);
+            ordered.Sort(delegate (SubtitleCue left, SubtitleCue right)
+            {
+                return left.Start.CompareTo(right.Start);
+            });
+
+            // A cue whose start is exactly under the playhead counts as behind it, otherwise ]
+            // would appear to do nothing at that position.
+            TimeSpan tolerance = TimeSpan.FromMilliseconds(10.0);
+            TimeSpan playhead = CurrentPosition;
+
+            SubtitleCue? target = null;
+            if (direction > 0)
+            {
+                foreach (SubtitleCue cue in ordered)
+                {
+                    if (cue.Start > playhead + tolerance)
+                    {
+                        target = cue;
+                        break;
+                    }
+                }
+            }
+            else
+            {
+                for (int index = ordered.Count - 1; index >= 0; index--)
+                {
+                    if (ordered[index].Start < playhead - tolerance)
+                    {
+                        target = ordered[index];
+                        break;
+                    }
+                }
+            }
+
+            if (target == null)
+            {
+                SetStatus(direction > 0 ? "This is the last cue." : "This is the first cue.");
+                return;
+            }
+
+            CueList.SelectedItem = target;
+            CueList.ScrollIntoView(target);
+            SeekToSeconds(target.Start.TotalSeconds);
+            SetStatus("Cue "
+                + target.Number.ToString(CultureInfo.InvariantCulture)
+                + " at "
+                + target.Start.ToString(@"h\:mm\:ss\.fff", CultureInfo.InvariantCulture)
+                + ".");
+        }
+
+        // ── Delete by focused view ─────────────────────────────────────────
+
+        private void CuesViewActivated(object sender, RoutedEventArgs e)
+        {
+            lastFocusedView = FocusedView.Cues;
+        }
+
+        private void TracksViewActivated(object sender, RoutedEventArgs e)
+        {
+            lastFocusedView = FocusedView.Tracks;
+        }
+
+        /// <summary>
+        /// Delete acts on whichever view the user touched last: the cue list removes cues, the
+        /// timeline removes the selected tracks or clips.
+        /// </summary>
+        private void DeleteFromFocusedView()
+        {
+            if (lastFocusedView == FocusedView.Cues)
+            {
+                if (SelectedCueList().Count == 0)
+                {
+                    SetStatus("Select a cue to delete it.");
+                    return;
+                }
+
+                DeleteCueClickCore(this, new RoutedEventArgs());
+                return;
+            }
+
+            if (lastFocusedView == FocusedView.Tracks)
+            {
+                DeleteSelection();
+                return;
+            }
+
+            // Nothing touched yet: behave like the older build and use whichever view has a selection.
+            if (SelectedCueList().Count > 0)
+            {
+                DeleteCueClickCore(this, new RoutedEventArgs());
+                return;
+            }
+
+            DeleteSelection();
+        }
+
         // ── Nested state types ─────────────────────────────────────────────
+
+        private enum FocusedView
+        {
+            None,
+            Cues,
+            Tracks
+        }
 
         private class SegmentSnapshot
         {

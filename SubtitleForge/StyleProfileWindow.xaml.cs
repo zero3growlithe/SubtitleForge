@@ -21,6 +21,8 @@ namespace SubtitleForge
 
         private const string SampleText = "Sample Text";
 
+        private const string DefaultPreviewText = SampleText;
+
         private StyleProfile draft = new StyleProfile();
         private bool suppress;
 
@@ -958,6 +960,21 @@ namespace SubtitleForge
         {
             DialogResult = false;
             Close();
+        }
+
+        /// <summary>
+        /// Live preview text. It only affects the preview; the profile keeps no text of its own.
+        /// </summary>
+        private void PreviewTextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (PreviewOverlay == null || PreviewTextBox == null)
+            {
+                // TextChanged also fires while the window is still being built.
+                return;
+            }
+
+            string text = PreviewTextBox.Text ?? string.Empty;
+            PreviewOverlay.CueText = text.Trim().Length == 0 ? DefaultPreviewText : text;
         }
     }
 }

@@ -210,6 +210,8 @@
                         BorderThickness="1">
                     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <controls:TrackTimeline x:Name="TrackTimelineView"
+                                                GotKeyboardFocus="TracksViewActivated"
+                                                PreviewMouseLeftButtonDown="TracksViewActivated"
                                                 TrackMouseDown="TrackTimelineMouseDown"
                                                 SegmentMouseDown="TrackTimelineSegmentMouseDown"
                                                 SegmentDropped="TrackTimelineSegmentDropped"
@@ -237,28 +239,12 @@
                     <TextBlock x:Name="CueCountText" Text="0 cues" HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="{StaticResource SubtleTextBrush}" />
                 </Grid>
 
-                <!-- Global time offset: every cue plays and exports this many seconds away from
-                     the times shown in the list. -->
-                <WrapPanel Grid.Row="3" Orientation="Horizontal" Margin="0,6,0,0">
-                    <TextBlock Text="Time offset" Style="{StaticResource SectionLabelStyle}"
-                               ToolTip="Shifts every cue on the timeline and in every export. The times in the list stay untouched." />
-                    <controls:NumericDragBox x:Name="GlobalTimeOffsetBox"
-                                             Width="72"
-                                             Margin="0,0,6,0"
-                                             Minimum="-600"
-                                             Maximum="600"
-                                             DragStep="0.01"
-                                             Format="0.##"
-                                             ToolTip="Seconds added to every cue when playing and exporting. Negative values make the subtitles earlier."
-                                             ValueChanged="GlobalTimeOffsetChanged"
-                                             LostFocus="GlobalTimeOffsetCommit" />
-                    <TextBlock Text="s" Style="{StaticResource SectionLabelStyle}" />
-                </WrapPanel>
-
                 <ListView x:Name="CueList"
                           Grid.Row="1"
                           SelectionMode="Extended"
                           SelectionChanged="CueListSelectionChanged"
+                          GotKeyboardFocus="CuesViewActivated"
+                          PreviewMouseLeftButtonDown="CuesViewActivated"
                           MouseDoubleClick="CueListMouseDoubleClick">
                     <ListView.View>
                         <GridView AllowsColumnReorder="False">

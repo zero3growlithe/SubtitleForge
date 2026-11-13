@@ -14,6 +14,8 @@ namespace SubtitleForge
     /// <summary>Creates and edits idle animation profiles (shake, sine drift, pulse, wiggle, spin).</summary>
     public partial class IdleProfileWindow : Window
     {
+        private const string DefaultPreviewText = "Sample Text";
+
         private readonly ProfileStore store;
         private readonly Dictionary<string, IdleChannelEditor> editors = new Dictionary<string, IdleChannelEditor>();
         private readonly DispatcherTimer previewTimer;
@@ -39,7 +41,7 @@ namespace SubtitleForge
             PreviewOverlay.PositionY = 0.55;
             PreviewOverlay.CueStartSeconds = 0.0;
             PreviewOverlay.CueEndSeconds = 1000.0;
-            PreviewOverlay.CueText = "Sample Text";
+            PreviewOverlay.CueText = DefaultPreviewText;
             PreviewOverlay.PlayheadSeconds = 5.0;
             PreviewSizeBox.SetValueSilently(previewFontSize);
 
@@ -493,6 +495,21 @@ namespace SubtitleForge
         {
             DialogResult = false;
             Close();
+        }
+
+        /// <summary>
+        /// Live preview text. It only affects the preview; the profile keeps no text of its own.
+        /// </summary>
+        private void PreviewTextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (PreviewOverlay == null || PreviewTextBox == null)
+            {
+                // TextChanged also fires while the window is still being built.
+                return;
+            }
+
+            string text = PreviewTextBox.Text ?? string.Empty;
+            PreviewOverlay.CueText = text.Trim().Length == 0 ? DefaultPreviewText : text;
         }
     }
 }

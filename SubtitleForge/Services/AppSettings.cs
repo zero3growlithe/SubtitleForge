@@ -68,9 +68,9 @@ namespace SubtitleForge.Services
         public int BurnCrf { get; set; } = 20;
 
         /// <summary>
-        /// Seconds added to every cue when the preview plays or when anything is exported. The
-        /// times stored on the cues stay relative to zero, so this can be adjusted at any time
-        /// without losing the transcription's timing.
+        /// Retired: the global time offset field was removed from the cue panel, so this always
+        /// reads zero. Kept so old settings files still deserialise, and forced back to zero on
+        /// load so a value saved earlier cannot silently shift every subtitle with no way to fix it.
         /// </summary>
         public double SubtitleOffsetSeconds { get; set; }
 
@@ -145,6 +145,10 @@ namespace SubtitleForge.Services
 
         private void Sanitize()
         {
+            // No UI sets this any more; a stale value from an older settings file would move every
+            // cue with nothing on screen to explain it.
+            SubtitleOffsetSeconds = 0.0;
+
             if (string.IsNullOrWhiteSpace(ModelFileName))
             {
                 ModelFileName = "ggml-small.bin";

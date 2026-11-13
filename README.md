@@ -160,7 +160,13 @@ the subtitles rendered at that same resolution.
 Colours are picked with a real colour picker — a saturation/value square, hue and alpha ramps,
 preset swatches and an optional hex field (`#RRGGBB` or `#AARRGGBB`) — so the swatches in the
 editor are the only thing you click. Every numeric field is scrubbable Unity-style: drag left or
-right to change the value (`Shift` = fine, `Ctrl` = coarse) or click once to type it.
+right to change the value (`Shift` = fine, `Ctrl` = coarse) or click once to type it. A whole drag is
+one undo step — the history records the value from before the button went down, not one entry per
+frame — and `Esc` in any text or value field gives up focus so the single-key shortcuts work again.
+
+Every creator's live preview has a **Preview text** field of its own, so a long line, an awkward
+letter pair or a word with descenders can be checked before saving; the text lives with the preview
+and never touches the profile. Leave it empty and the preview falls back to `Sample Text`.
 
 Every creator has a **Duplicate** button next to `New` / `Delete`, and switching profiles inside a
 creator saves the edits of the profile you were just in, so the picker doubles as a commit. `Enter`
@@ -190,11 +196,11 @@ cue sits from the default subtitle position in percent of the frame — `0` is t
 twelve percent to the left (or up). `Scale` starts at `1`, which means the size from the text style
 profile. Multi-selection shows a `—` for any field the selected cues disagree on.
 
-**Global subtitle time offset.** `Time offset` in the cue panel shifts every cue by that many
-seconds (negative = earlier) when the preview plays it, on the cue strip, and in every export — SRT,
-VTT, ASS and the burned-in video. The times listed on the cues stay untouched, so the transcription
-timing is never destroyed by trying an offset, and `= playhead`, `+ New cue` and the arrow nudges
-keep landing where you see them.
+**No global time offset.** The offset field is gone: cue times are the times that play and export, so
+nothing can silently shift the whole subtitle track. Shifting a whole track is done by selecting every
+cue (`Ctrl+A` in the list) and nudging it with `Ctrl+-` / `Ctrl++`, or by moving single edges with
+`Ctrl+Alt+-` / `Ctrl+Alt+Shift+-`. Any value an older settings file still carries is forced back to
+zero when it is loaded.
 
 The **splitter sizes and the maximised state are remembered**: the height of the multitrack timeline,
 the width of the cue panel and whether the window was maximised come back on the next launch (they
@@ -255,7 +261,8 @@ stays a few kilobytes.
 - `Space` — play / pause
 - `,` / `.` — step one frame back / forward (frame rate read from the file)
 - `←` / `→` — seek one second; `Shift`+`←` / `Shift`+`→` — seek ten seconds
-- `Del` — delete the selected track(s), clip(s) or cue(s)
+- `Del` — deletes from the view touched last: cue(s) when the cue list was last used, track(s) or
+  clip(s) when the timeline was
 - `Ctrl+Shift+D` — split every selected clip at the playhead
 - `Ctrl+Shift+J` — join the selected neighbouring clips (also in a track's right-click menu)
 - `Ctrl+Z` — undo the last edit (move, add, delete, split, join, reorder, rename, recolour,
@@ -265,6 +272,10 @@ stays a few kilobytes.
 - `Ctrl+R` — start / stop recording; `Ctrl+T` — add an audio track
 - `Ctrl+[` / `Ctrl+]` — set the selected cue's start / end to the playhead
 - `Ctrl+-` / `Ctrl++` — move the selected cue(s) by 100 ms and drag the playhead along with it
+- `Ctrl+Alt+-` / `Ctrl+Alt++` — move only the start of the selected cue(s) by 100 ms
+- `Ctrl+Alt+Shift+-` / `Ctrl+Alt+Shift++` — move only the end of the selected cue(s) by 100 ms
+- `[` / `]` — jump to the previous / next cue, selecting it and putting the playhead on its start
+- `Esc` — while a text or value field has focus, leaves the field so the single-key shortcuts work again
 - `Ctrl+S` — save the project; `Ctrl+Shift+S` — save as…
 - double-click a track header — rename it; right-click a track — colour / split / delete
 

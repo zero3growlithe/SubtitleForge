@@ -191,6 +191,13 @@ ValueChanged="FieldChanged"
                            FontSize="11"
                            VerticalAlignment="Center"
                            Foreground="{StaticResource SubtleTextBrush}" />
+                <TextBlock Text="Preview text" Style="{StaticResource SectionLabelStyle}" Margin="16,0,0,0" />
+                <TextBox x:Name="PreviewTextBox"
+                         Width="180"
+                         Margin="0,0,8,0"
+                         Text="Sample Text"
+                         TextChanged="PreviewTextChanged"
+                         ToolTip="Text shown in this preview only — it never touches the profile" />
             </WrapPanel>
 
             <Border Grid.Row="1" Height="250" Background="#FF14141A" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1">

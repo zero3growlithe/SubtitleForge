@@ -36,6 +36,22 @@ namespace SubtitleForge.Controls
         /// <summary>Raised whenever the value changes, whether by dragging or by typing.</summary>
         public event EventHandler? ValueChanged;
 
+        /// <summary>
+        /// Raised when a field starts scrubbing with the mouse. Static because numeric fields also
+        /// live inside data templates, and a scrub started anywhere still has to collapse the undo
+        /// entries it produces into one.
+        /// </summary>
+        public static event EventHandler? ScrubStarted;
+
+        /// <summary>Raised when a scrub ends, whether the button was released or the drag was lost.</summary>
+        public static event EventHandler? ScrubFinished;
+
+        /// <summary>True while the pointer is scrubbing this field.</summary>
+        public bool IsScrubbing
+        {
+            get { return dragging; }
+        }
+
         public double Minimum { get; set; }
 
         public double Maximum { get; set; }
@@ -267,6 +283,8 @@ namespace SubtitleForge.Controls
                 {
                     CaptureMouse();
                 }
+
+                ScrubStarted?.Invoke(this, EventArgs.Empty);
             }
 
             double pixels = Math.Abs(deltaX) >= Math.Abs(deltaY) ? deltaX : deltaY;
@@ -311,7 +329,22 @@ namespace SubtitleForge.Controls
 
             if (wasDragging)
             {
+                ScrubFinished?.Invoke(this, EventArgs.Empty);
                 e.Handled = true;
+            }
+        }
+
+        protected override void OnLostMouseCapture(MouseEventArgs e)
+        {
+            base.OnLostMouseCapture(e);
+
+            if (dragging)
+            {
+                // Capture can be stolen (window deactivated, another control grabbed it). The scrub is
+                // over either way, otherwise every later edit would be folded into the same undo step.
+                dragging = false;
+                dragCandidate = false;
+                ScrubFinished?.Invoke(this, EventArgs.Empty);
             }
         }
 

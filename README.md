@@ -126,9 +126,8 @@ to keep the selection untouched while scrubbing.
   Whisper's timing drifts and starts looping; one model load covers all the windows.
 - **Whisper is asked for token timestamps**, so it reports the time each word was spoken. Every
   word becomes its own cue with that exact timing, and the cue you see is a *group* of those
-  words: neighbouring words are glued together while the result still fits **Max chars** and
-  **Max sec**, no pause longer than 0.35 s comes between them and the previous line did not end
-  on a full stop. That is what makes "two to four words per subtitle" track fast speech — the
+  words: neighbouring words are glued together while the result still fits **Max chars**, no
+  pause longer than 0.35 s comes between them and the previous line did not end on a full stop. That is what makes "two to four words per subtitle" track fast speech — the
   timings come from the words, not from dividing a phrase's duration by character count.
 - **Parts** in the transcription toolbar decides how many of those windows are decoded at the
   same time (1–4). Each parallel part owns its own Whisper decoder — the model weights are
@@ -138,10 +137,12 @@ to keep the selection untouched while scrubbing.
   arithmetic. CUDA always decodes one part at a time, because splitting one device between
   decoders buys nothing and needs a slice of VRAM for each. Cues from parallel windows are
   stitched back together in timeline order.
-  **Max chars** is the character budget of one cue (spaces included) and **Max sec** the longest
-  a cue may stay up; a cue is also cut when only one of the two is exceeded. A cue that is still
-  shorter than the minimum on-screen time is held a little longer, but only into the silence that
-  follows it, so it never pushes the next cue late.
+  **Max chars** is the only limit and it is a budget for text, not for time. There is no minimum
+  cue duration and no maximum either: a cue lasts exactly as long as its words were spoken, however
+  brief or drawn out that is, because any rule that lengthens or clamps a cue is a rule that can put
+  two subtitles on screen at the same time. The one adjustment left is at the end of the pipeline —
+  an end that reaches past the next cue's start is pulled back to it (by a single millisecond), so
+  overlaps cannot happen, and no start is ever moved and no cue is ever lengthened.
   Only when whisper returns no token timings at all does the old fallback apply: the whole segment
   becomes one cue and its text is split by hand, with the pieces distributed inside the segment's
   own time range so a run of small cues cannot drift past the end of the phrase it came from.

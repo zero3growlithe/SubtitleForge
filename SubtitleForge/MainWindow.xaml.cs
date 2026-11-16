@@ -315,7 +315,6 @@ namespace SubtitleForge
             RefreshCudaDeviceCombo();
 
             MaxCharactersTextBox.Text = settings.MaximumCharactersPerCue.ToString(CultureInfo.InvariantCulture);
-            MaxDurationTextBox.Text = settings.MaximumCueDurationSeconds.ToString("0.#", CultureInfo.InvariantCulture);
 
             RuntimeText.Text = "Runtime: unknown";
             RefreshCueAppearanceCombos();
@@ -346,12 +345,6 @@ namespace SubtitleForge
             if (int.TryParse(MaxCharactersTextBox.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out characters))
             {
                 settings.MaximumCharactersPerCue = characters;
-            }
-
-            double seconds;
-            if (double.TryParse(MaxDurationTextBox.Text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out seconds))
-            {
-                settings.MaximumCueDurationSeconds = seconds;
             }
 
             DrawTimeline();
@@ -2929,9 +2922,6 @@ namespace SubtitleForge
                 SetStatus("Cleaning up cues…");
                 CueSplitOptions options = new CueSplitOptions();
                 options.MaximumCharactersPerCue = App.Settings.MaximumCharactersPerCue;
-                options.MaximumCueDurationSeconds = App.Settings.MaximumCueDurationSeconds;
-                options.MinimumCueDurationSeconds = App.Settings.MinimumCueDurationSeconds;
-                options.MinimumGapSeconds = App.Settings.MinimumGapSeconds;
 
                 List<SubtitleCue> normalized = CuePostProcessor.Normalize(combined, options);
 

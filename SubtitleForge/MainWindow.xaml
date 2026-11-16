@@ -80,9 +80,8 @@
             <Button x:Name="ExportButton" Content="Export…" MinWidth="84" Click="ExportClick" />
             <Rectangle Width="1" Margin="6,2,12,2" Fill="{StaticResource PanelBorderBrush}" />
             <TextBlock Text="Max chars" Style="{StaticResource SectionLabelStyle}" />
-            <TextBox x:Name="MaxCharactersTextBox" Width="46" Margin="0,0,12,0" />
-            <TextBlock Text="Max sec" Style="{StaticResource SectionLabelStyle}" />
-            <TextBox x:Name="MaxDurationTextBox" Width="46" Margin="0,0,12,0" />
+            <TextBox x:Name="MaxCharactersTextBox" Width="46" Margin="0,0,12,0"
+                     ToolTip="The character budget of one cue, spaces included. It is the only limit: a cue lasts exactly as long as its words were spoken, so cues never overlap." />
             <Rectangle Width="1" Margin="0,2,12,2" Fill="{StaticResource PanelBorderBrush}" />
             <Button x:Name="TextStyleButton" Content="Text style…" MinWidth="0" Padding="10,4" Margin="0,0,6,0" Click="TextStyleClick" />
             <Button x:Name="IdleProfileButton" Content="Idle anim…" MinWidth="0" Padding="10,4" Margin="0,0,6,0" Click="IdleProfileClick" />

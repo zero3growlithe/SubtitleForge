@@ -33,12 +33,6 @@ namespace SubtitleForge.Services
 
         public int MaximumCharactersPerCue { get; set; } = 48;
 
-        public double MaximumCueDurationSeconds { get; set; } = 7.0;
-
-        public double MinimumCueDurationSeconds { get; set; } = 0.6;
-
-        public double MinimumGapSeconds { get; set; } = 0.04;
-
         public string? FfmpegDirectory { get; set; }
 
         public string FontName { get; set; } = "Segoe UI";
@@ -209,39 +203,14 @@ namespace SubtitleForge.Services
                 CudaDeviceIndex = 15;
             }
 
-            if (MaximumCharactersPerCue < 16)
+            if (MaximumCharactersPerCue < 8)
             {
-                MaximumCharactersPerCue = 16;
+                MaximumCharactersPerCue = 8;
             }
 
             if (MaximumCharactersPerCue > 200)
             {
                 MaximumCharactersPerCue = 200;
-            }
-
-            if (MaximumCueDurationSeconds < 1.0)
-            {
-                MaximumCueDurationSeconds = 1.0;
-            }
-
-            if (MaximumCueDurationSeconds > 30.0)
-            {
-                MaximumCueDurationSeconds = 30.0;
-            }
-
-            if (MinimumCueDurationSeconds < 0.2)
-            {
-                MinimumCueDurationSeconds = 0.2;
-            }
-
-            if (MinimumCueDurationSeconds > MaximumCueDurationSeconds)
-            {
-                MinimumCueDurationSeconds = MaximumCueDurationSeconds;
-            }
-
-            if (MinimumGapSeconds < 0.0)
-            {
-                MinimumGapSeconds = 0.0;
             }
 
             if (FontSize < 8)

@@ -7,27 +7,34 @@ namespace SubtitleForge.Services
 {
     public class CueSplitOptions
     {
+        /// <summary>
+        /// The one thing that shapes a cue. There is deliberately no minimum or maximum duration
+        /// here: a cue lasts exactly as long as its words were spoken, so no rule can stretch a line
+        /// into its neighbour and leave two subtitles on screen at once.
+        /// </summary>
         public int MaximumCharactersPerCue { get; set; } = 48;
-
-        public double MaximumCueDurationSeconds { get; set; } = 7.0;
-
-        public double MinimumCueDurationSeconds { get; set; } = 0.6;
-
-        public double MinimumGapSeconds { get; set; } = 0.04;
     }
 
     /// <summary>
     /// Turns what Whisper produced into readable cues. Whisper hands back either one segment per
-    /// phrase or one cue per word (when it gave token timestamps), and this class is what makes
-    /// both look the same: anything longer than the character or second budget is cut into pieces
-    /// that stay inside its own time range, neighbouring pieces are glued back together while they
-    /// still fit, a very short cue is held a little longer into the silence that follows it, and
-    /// overlaps are trimmed at the end.
+    /// phrase or one cue per word (when it gave token timestamps), and this class makes both look
+    /// the same: text longer than the character budget is cut into pieces that share the cue's own
+    /// time range by character count, and neighbouring words are glued back together while they
+    /// still fit and no pause or full stop comes between them. Nothing here invents time — a cue is
+    /// exactly the span its words were spoken over, short or long, and the final pass only trims an
+    /// end so two cues can never share the screen.
     /// </summary>
     public static class CuePostProcessor
     {
         /// <summary>The shortest edit a start or end drag may leave behind.</summary>
         private static readonly TimeSpan MinimumCueDuration = TimeSpan.FromMilliseconds(10.0);
+
+        /// <summary>
+        /// The overlap guard: one millisecond is shorter than a frame, so trimming an end by it can
+        /// never make two cues share a visible moment, and it is not a minimum duration because
+        /// nothing is ever lengthened to reach it.
+        /// </summary>
+        private const double OverlapGuardSeconds = 0.001;
 
         /// <summary>
         /// Silence longer than this starts a new cue instead of extending the one on screen, so a
@@ -66,43 +73,26 @@ namespace SubtitleForge.Services
             }
 
             List<SubtitleCue> result = GroupPieces(pieces, options);
-            HoldShortCues(result, options);
-            RemoveOverlaps(result, options.MinimumGapSeconds);
+            TrimOverlaps(result);
             Renumber(result);
             return result;
         }
 
         /// <summary>
-        /// Appends one cue, or the pieces it has to be cut into, to <paramref name="destination"/>.
-        /// The pieces share the cue's time range by character count and never leave it: stretching
-        /// each piece to the minimum duration is what used to push a run of short cues past the end
-        /// of the phrase they came from, so everything after it started late and the subtitles fell
-        /// further behind the speech the more pieces there were.
+        /// Appends one cue, or the pieces its text has to be cut into. The pieces share the cue's
+        /// own time range in proportion to how much of the line each one carries, so the last piece
+        /// lands exactly on the cue's own end and no piece is ever stretched or clamped. A piece
+        /// that would get no time at all is not shortened, it is carried by the next piece instead,
+        /// because dropping or lengthening a piece is how cues used to end up on top of each other.
         /// </summary>
         private static void SplitIntoPieces(SubtitleCue cue, CueSplitOptions options, List<SubtitleCue> destination)
         {
             string text = cue.Text.Trim();
-            double duration = cue.Duration.TotalSeconds;
+            double startSeconds = cue.Start.TotalSeconds;
+            double endSeconds = cue.End.TotalSeconds;
             List<string> chunks = WrapIntoChunks(text, options.MaximumCharactersPerCue);
 
-            bool tooMuchText = text.Length > options.MaximumCharactersPerCue || chunks.Count > 1;
-            bool onScreenTooLong = duration > options.MaximumCueDurationSeconds;
-
-            // Text that already fits the character budget can still be on screen for too long: a
-            // short line over seven seconds is one line nobody needs. It is then cut by words so
-            // "Max sec" means what it says instead of only applying to text that wraps anyway.
-            if (!tooMuchText && onScreenTooLong)
-            {
-                List<string> byWords = SplitByWords(text, duration, options.MaximumCueDurationSeconds);
-                if (byWords.Count > 1)
-                {
-                    chunks = byWords;
-                }
-            }
-
-            bool needsSplit = chunks.Count > 1 && (tooMuchText || onScreenTooLong);
-
-            if (!needsSplit || duration <= 0.0)
+            if (chunks.Count <= 1 || endSeconds - startSeconds <= 0.0)
             {
                 destination.Add(new SubtitleCue(cue.Start, cue.End, text, cue.Confidence));
                 return;
@@ -114,126 +104,47 @@ namespace SubtitleForge.Services
                 totalCharacters += Math.Max(1, chunk.Length);
             }
 
-            double perChunkBudget = duration / chunks.Count;
-            double minimum = Math.Min(options.MinimumCueDurationSeconds, perChunkBudget);
+            double duration = endSeconds - startSeconds;
+            double cursor = startSeconds;
+            StringBuilder pending = new StringBuilder();
 
-            double[] shares = new double[chunks.Count];
-            double sum = 0.0;
             for (int index = 0; index < chunks.Count; index++)
             {
+                if (pending.Length > 0)
+                {
+                    pending.Append(' ');
+                }
+
+                pending.Append(chunks[index]);
+
                 double share = duration * (Math.Max(1, chunks[index].Length) / (double)totalCharacters);
-                if (share < minimum)
+                double pieceEnd = index == chunks.Count - 1 ? endSeconds : cursor + share;
+                if (pieceEnd > endSeconds)
                 {
-                    share = minimum;
+                    pieceEnd = endSeconds;
                 }
 
-                shares[index] = share;
-                sum += share;
-            }
-
-            // Renormalised so the last piece lands exactly on the end of the cue it came from.
-            double scale = sum > 0.0001 ? duration / sum : 1.0;
-            double cursor = cue.Start.TotalSeconds;
-            double end = cue.End.TotalSeconds;
-
-            for (int index = 0; index < chunks.Count; index++)
-            {
-                double remaining = end - cursor;
-                if (remaining <= 0.0005)
+                if (pieceEnd <= cursor)
                 {
-                    break;
-                }
-
-                double chunkDuration = Math.Min(shares[index] * scale, options.MaximumCueDurationSeconds);
-                if (chunkDuration > remaining)
-                {
-                    chunkDuration = remaining;
-                }
-
-                if (chunkDuration < 0.05)
-                {
-                    chunkDuration = Math.Min(0.05, remaining);
+                    continue;
                 }
 
                 destination.Add(new SubtitleCue(
                     TimeSpan.FromSeconds(cursor),
-                    TimeSpan.FromSeconds(cursor + chunkDuration),
-                    chunks[index],
+                    TimeSpan.FromSeconds(pieceEnd),
+                    pending.ToString(),
                     cue.Confidence));
-                cursor += chunkDuration;
+                pending.Clear();
+                cursor = pieceEnd;
             }
-        }
 
-        /// <summary>
-        /// Cuts a line that has little text but sits on screen far too long into word groups, as
-        /// many as the duration needs to stay under the maximum. Returns an empty list when the line
-        /// has a single word and there is nothing to cut.
-        /// </summary>
-        private static List<string> SplitByWords(string text, double duration, double maximumSeconds)
-        {
-            List<string> groups = new List<string>();
-            string[] words = text.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-            if (words.Length < 2 || maximumSeconds <= 0.0)
+            if (pending.Length > 0 && destination.Count > 0)
             {
-                return groups;
+                // Only reachable when the phrase was shorter than the number of pieces it needs:
+                // the leftover words join the last piece so no text is thrown away.
+                SubtitleCue last = destination[destination.Count - 1];
+                last.Text = last.Text + " " + pending.ToString();
             }
-
-            int wanted = (int)Math.Ceiling(duration / maximumSeconds);
-            if (wanted < 2)
-            {
-                wanted = 2;
-            }
-
-            if (wanted > words.Length)
-            {
-                wanted = words.Length;
-            }
-
-            int perGroup = Math.Max(1, (int)Math.Ceiling(words.Length / (double)wanted));
-            StringBuilder current = new StringBuilder();
-            int wordIndex = 0;
-            for (int group = 0; group < wanted; group++)
-            {
-                current.Clear();
-                for (int taken = 0; taken < perGroup && wordIndex < words.Length; taken++)
-                {
-                    if (current.Length > 0)
-                    {
-                        current.Append(' ');
-                    }
-
-                    current.Append(words[wordIndex]);
-                    wordIndex++;
-                }
-
-                if (current.Length > 0)
-                {
-                    groups.Add(current.ToString());
-                }
-            }
-
-            if (wordIndex < words.Length)
-            {
-                // Anything left over joins the last group rather than being dropped.
-                if (groups.Count == 0)
-                {
-                    groups.Add(text);
-                }
-                else
-                {
-                    StringBuilder rest = new StringBuilder(groups[groups.Count - 1]);
-                    while (wordIndex < words.Length)
-                    {
-                        rest.Append(' ');
-                        rest.Append(words[wordIndex]);
-                        wordIndex++;
-                    }
-
-                    groups[groups.Count - 1] = rest.ToString();
-                }
-            }
-
-            return groups;
         }
 
         /// <summary>
@@ -261,11 +172,12 @@ namespace SubtitleForge.Services
                 }
 
                 string joined = current.Text + " " + text;
-                double mergedSeconds = (piece.End - current.Start).TotalSeconds;
                 double gapSeconds = (piece.Start - current.End).TotalSeconds;
 
+                // The character budget, a real pause and a full stop are the only reasons to break.
+                // Time on screen is never one of them: a line that fits the budget stays whole even
+                // when the speaker drew it out.
                 bool joinable = joined.Length <= options.MaximumCharactersPerCue
-                    && mergedSeconds <= options.MaximumCueDurationSeconds
                     && gapSeconds <= WordGroupingGapSeconds
                     && !EndsSentence(current.Text);
 
@@ -310,37 +222,6 @@ namespace SubtitleForge.Services
             }
 
             return false;
-        }
-
-        /// <summary>
-        /// Holds a cue that is shorter than the minimum on screen a little longer, but only into the
-        /// silence that follows it: it never pushes the next cue's start.
-        /// </summary>
-        private static void HoldShortCues(List<SubtitleCue> cues, CueSplitOptions options)
-        {
-            for (int index = 0; index < cues.Count; index++)
-            {
-                SubtitleCue cue = cues[index];
-                if (cue.Duration.TotalSeconds >= options.MinimumCueDurationSeconds)
-                {
-                    continue;
-                }
-
-                double limit = cue.Start.TotalSeconds + options.MinimumCueDurationSeconds;
-                if (index + 1 < cues.Count)
-                {
-                    double nextStart = cues[index + 1].Start.TotalSeconds - options.MinimumGapSeconds;
-                    if (limit > nextStart)
-                    {
-                        limit = nextStart;
-                    }
-                }
-
-                if (limit > cue.End.TotalSeconds)
-                {
-                    cue.End = TimeSpan.FromSeconds(limit);
-                }
-            }
         }
 
         public static void Renumber(IList<SubtitleCue> cues)
@@ -482,40 +363,33 @@ namespace SubtitleForge.Services
             return new SubtitleCue(start, end, text, confidence);
         }
 
-        private static void RemoveOverlaps(List<SubtitleCue> cues, double minimumGapSeconds)
+        /// <summary>
+        /// Guarantees that no two cues are on screen at the same moment. Cues are sorted by start,
+        /// so one pass is enough: an end that reaches past the next start is pulled back to it. The
+        /// guard is a single millisecond so a boundary frame cannot light up both cues, and nothing
+        /// else about the times is touched — starts are never moved and no cue is lengthened.
+        /// </summary>
+        private static void TrimOverlaps(List<SubtitleCue> cues)
         {
             for (int index = 0; index < cues.Count - 1; index++)
             {
                 SubtitleCue current = cues[index];
                 SubtitleCue next = cues[index + 1];
-                double limit = next.Start.TotalSeconds - minimumGapSeconds;
-
-                if (current.End.TotalSeconds <= limit)
+                if (current.End <= next.Start)
                 {
                     continue;
                 }
 
-                double proposedEnd = Math.Max(current.Start.TotalSeconds + 0.2, limit);
-                if (proposedEnd > current.Start.TotalSeconds)
+                double end = next.Start.TotalSeconds - OverlapGuardSeconds;
+                if (end < current.Start.TotalSeconds + OverlapGuardSeconds)
                 {
-                    current.End = TimeSpan.FromSeconds(proposedEnd);
+                    // A cue the next one covers completely keeps a sliver of its own, because the
+                    // text still has to be readable somewhere. A millisecond of overlap is below a
+                    // single frame and stays invisible.
+                    end = current.Start.TotalSeconds + OverlapGuardSeconds;
                 }
-                else
-                {
-                    double newStart = current.End.TotalSeconds + minimumGapSeconds;
-                    if (newStart > next.Start.TotalSeconds || current.End > next.Start)
-                    {
-                        next.Start = TimeSpan.FromSeconds(newStart);
-                    }
-                }
-            }
 
-            foreach (SubtitleCue cue in cues)
-            {
-                if (cue.End <= cue.Start)
-                {
-                    cue.End = cue.Start + TimeSpan.FromMilliseconds(100);
-                }
+                current.End = TimeSpan.FromSeconds(end);
             }
         }
 

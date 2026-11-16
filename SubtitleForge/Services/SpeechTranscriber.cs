@@ -364,28 +364,33 @@ namespace SubtitleForge.Services
         /// share the same text, the same length and no audible gap between them becomes a single cue:
         /// the first start is kept and the end is stretched to where the last duplicate ended.
         /// </summary>
+        /// <summary>Whisper reports token times in 10 ms steps.</summary>
+        private const double CentisecondSeconds = 0.01;
+
         /// <summary>
         /// One cue per spoken word, timed from whisper's token timestamps. Whisper hands back
         /// sub-word pieces (" She", "llo"), so they are glued back into words between the first
-        /// token's start and the last token's end.
+        /// token's start and the last token's end. An empty list means whisper gave no usable
+        /// timings and the caller has to fall back to the whole segment.
         /// </summary>
         private static List<SubtitleCue> BuildWordCues(SegmentData segment, double windowOffset, double skipBefore)
         {
             List<SubtitleCue> wordCues = new List<SubtitleCue>();
-            IReadOnlyList<TokenData>? tokens = segment.Tokens;
-            if (tokens == null || tokens.Count == 0)
+            WhisperToken[]? tokens = segment.Tokens;
+            if (tokens == null || tokens.Length == 0)
             {
                 return wordCues;
             }
 
             StringBuilder text = new StringBuilder();
-            TimeSpan wordStart = TimeSpan.Zero;
-            TimeSpan wordEnd = TimeSpan.Zero;
+            long wordStart = 0;
+            long wordEnd = 0;
             bool open = false;
+            bool anyTiming = false;
 
-            for (int index = 0; index < tokens.Count; index++)
+            for (int index = 0; index < tokens.Length; index++)
             {
-                TokenData token = tokens[index];
+                WhisperToken token = tokens[index];
                 string piece = token.Text ?? string.Empty;
                 if (piece.Length == 0 || piece[0] == '[')
                 {
@@ -408,6 +413,11 @@ namespace SubtitleForge.Services
                 }
 
                 wordEnd = token.End;
+                if (token.End > token.Start)
+                {
+                    anyTiming = true;
+                }
+
                 text.Append(startsWord ? piece.TrimStart() : piece);
             }
 
@@ -416,14 +426,21 @@ namespace SubtitleForge.Services
                 AddWord(wordCues, text, wordStart, wordEnd, segment.Probability, windowOffset, skipBefore);
             }
 
+            // Timestamps are only filled in when whisper was asked for them; without them every
+            // word would land on the same instant, which is worse than one honest segment cue.
+            if (!anyTiming || wordCues.Count == 0)
+            {
+                wordCues.Clear();
+            }
+
             return wordCues;
         }
 
         private static void AddWord(
             List<SubtitleCue> destination,
             StringBuilder text,
-            TimeSpan start,
-            TimeSpan end,
+            long startCentiseconds,
+            long endCentiseconds,
             float probability,
             double windowOffset,
             double skipBefore)
@@ -434,21 +451,21 @@ namespace SubtitleForge.Services
                 return;
             }
 
-            if (start.TotalSeconds + 0.0005 < skipBefore)
+            double localStart = startCentiseconds * CentisecondSeconds;
+            double localEnd = endCentiseconds * CentisecondSeconds;
+            if (localStart + 0.0005 < skipBefore)
             {
                 return;
             }
 
-            double startSeconds = start.TotalSeconds + windowOffset;
-            double endSeconds = end.TotalSeconds + windowOffset;
-            if (endSeconds <= startSeconds)
+            if (localEnd <= localStart)
             {
-                endSeconds = startSeconds + 0.05;
+                localEnd = localStart + 0.05;
             }
 
             destination.Add(new SubtitleCue(
-                TimeSpan.FromSeconds(startSeconds),
-                TimeSpan.FromSeconds(endSeconds),
+                TimeSpan.FromSeconds(localStart + windowOffset),
+                TimeSpan.FromSeconds(localEnd + windowOffset),
                 word,
                 probability));
         }

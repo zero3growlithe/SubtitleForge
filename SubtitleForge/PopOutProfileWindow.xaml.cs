@@ -16,7 +16,8 @@ namespace SubtitleForge
         private const string DefaultPreviewText = "Sample Text";
 
         /// <summary>Length of one preview loop. The cue ends before the loop does, so the exit plays.</summary>
-        private const double PreviewLoopSeconds = 2.6;
+        /// <summary>Breathing room after the exit, so the loop does not wrap on its last frame.</summary>
+        private const double PreviewTailPaddingSeconds = 0.55;
 
         /// <summary>Where the preview cue ends: the exit is anchored there, so it plays before the loop wraps.</summary>
         private const double PreviewCueEndSeconds = 2.0;
@@ -86,8 +87,15 @@ namespace SubtitleForge
         private void OnPreviewTick(object? sender, EventArgs e)
         {
             double seconds = previewClock.Elapsed.TotalSeconds;
+
+            // An exit that plays outside the cue runs after the cue's end, so the loop has to be long
+            // enough to hold it — otherwise the preview would wrap in the middle of the exit.
+            double tail = draft == null
+                ? 0.0
+                : draft.SpanSeconds(PopTiming.GroupCount(draft.PerCharacter, draft.StaggerGrouping, PreviewOverlay.CueText));
+
             PreviewOverlay.IdleSeconds = seconds;
-            PreviewOverlay.PlayheadSeconds = seconds % PreviewLoopSeconds;
+            PreviewOverlay.PlayheadSeconds = seconds % (PreviewCueEndSeconds + tail + PreviewTailPaddingSeconds);
             PreviewOverlay.Refresh();
         }
 
@@ -151,6 +159,7 @@ namespace SubtitleForge
                 SelectTag(SpinAxisCombo, draft.SpinAxis);
                 SelectTag(OriginCombo, draft.Origin);
                 SelectTag(StaggerGroupingCombo, draft.StaggerGrouping);
+                SelectTag(TimingCombo, draft.Timing);
                 DurationBox.SetValueSilently(draft.DurationSeconds);
                 EaseBox.SetValueSilently(draft.EasePower);
                 PerCharacterCheck.IsChecked = draft.PerCharacter;
@@ -244,6 +253,7 @@ namespace SubtitleForge
             draft.Direction = SelectedTag(DirectionCombo, PopInDirection.Bottom);
             draft.SpinAxis = SelectedTag(SpinAxisCombo, PopOutAxis.Y);
             draft.Origin = SelectedTag(OriginCombo, PopOutOrigin.LeftToRight);
+            draft.Timing = SelectedTag(TimingCombo, PopTiming.OutsideCue);
             draft.DurationSeconds = DurationBox.Value;
             draft.EasePower = EaseBox.Value;
             draft.PerCharacter = PerCharacterCheck.IsChecked == true;

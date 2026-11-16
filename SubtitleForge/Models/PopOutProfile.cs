@@ -53,9 +53,10 @@ namespace SubtitleForge.Models
     }
 
     /// <summary>
-    /// How a cue disappears. The exit is timed against the end of the cue: it finishes exactly when
-    /// the cue ends, so nothing lingers on screen after a subtitle's own end time — the stagger and
-    /// the duration are compressed when the cue is too short to hold them.
+    /// How a cue disappears. With <see cref="PopTiming.OutsideCue"/> (the default) the exit starts on
+    /// the cue's end, so it plays where the cue's time is already over and does not eat into the time
+    /// the line is on screen. With <see cref="PopTiming.InsideCue"/> it finishes exactly when the cue
+    /// ends, and the stagger and the duration are compressed when the cue is too short to hold them.
     /// </summary>
     public sealed class PopOutProfile
     {
@@ -67,6 +68,13 @@ namespace SubtitleForge.Models
 
         /// <summary>Length of the exit in seconds.</summary>
         public double DurationSeconds { get; set; } = 0.30;
+
+        /// <summary>
+        /// Where the exit plays: <see cref="PopTiming.OutsideCue"/> begins it on the cue's end so the
+        /// line is still on screen when its time is up, <see cref="PopTiming.InsideCue"/> finishes it
+        /// on the cue's end.
+        /// </summary>
+        public string Timing { get; set; } = PopTiming.OutsideCue;
 
         /// <summary>Staggers the exit across characters or words, exactly like the entrance does.</summary>
         public bool PerCharacter { get; set; }
@@ -161,6 +169,21 @@ namespace SubtitleForge.Models
             }
         }
 
+        /// <summary>
+        /// How long the whole exit needs for a stagger over this many groups: the length of one
+        /// glyph's exit plus the time the last glyph waits for its turn.
+        /// </summary>
+        public double SpanSeconds(int groupCount)
+        {
+            double span = DurationSeconds <= 0.0 ? 0.01 : DurationSeconds;
+            if (PerCharacter && !string.Equals(StaggerGrouping, StaggerGroupings.Cue, StringComparison.OrdinalIgnoreCase))
+            {
+                span += Math.Max(0.0, CharacterDelaySeconds) * Math.Max(0, groupCount - 1);
+            }
+
+            return span;
+        }
+
         public PopOutProfile Clone()
         {
             PopOutProfile copy = new PopOutProfile();
@@ -168,6 +191,7 @@ namespace SubtitleForge.Models
             copy.Name = Name;
             copy.Kind = Kind;
             copy.DurationSeconds = DurationSeconds;
+            copy.Timing = Timing;
             copy.PerCharacter = PerCharacter;
             copy.StaggerGrouping = StaggerGrouping;
             copy.CharacterDelaySeconds = CharacterDelaySeconds;

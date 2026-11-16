@@ -74,6 +74,16 @@
                                              DragStep="0.005"
                                              Format="0.###"
                                              ValueChanged="FieldChanged" />
+                    <TextBlock Text="Plays" Style="{StaticResource SectionLabelStyle}" />
+                    <ComboBox x:Name="TimingCombo"
+                              Width="176"
+                              Height="24"
+                              Margin="0,0,16,0"
+                              SelectionChanged="FieldChanged"
+                              ToolTip="Before the cue = the entrance finishes exactly on the cue's start time, so the line is already fully in when it is due. Inside the cue = the entrance begins on the cue's start time.">
+                        <ComboBoxItem Content="before the cue" Tag="OutsideCue" />
+                        <ComboBoxItem Content="inside the cue" Tag="InsideCue" />
+                    </ComboBox>
                     <CheckBox x:Name="PerCharacterCheck"
                               Content="Stagger the entrance"
                               Margin="0,0,10,0"

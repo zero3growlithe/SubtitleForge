@@ -864,15 +864,47 @@ namespace SubtitleForge
         private void UpdateOverlay(TimeSpan position)
         {
             List<SubtitleCue> active = new List<SubtitleCue>();
+            double positionSeconds = position.TotalSeconds;
+
+            // An animation that plays outside its cue makes a cue visible before its start and after
+            // its end. The two bounds say how far that can possibly reach, so the list can be walked
+            // with plain comparisons and only the cues next to the playhead need their profile
+            // resolved.
+            double maximumLead = App.Profiles.MaximumPopInLeadSeconds();
+            double maximumTail = App.Profiles.MaximumPopOutTailSeconds();
+
             foreach (SubtitleCue cue in cues)
             {
-                if (ShiftedStart(cue) <= position && position <= ShiftedEnd(cue))
+                double startSeconds = ShiftedStart(cue).TotalSeconds;
+                double endSeconds = ShiftedEnd(cue).TotalSeconds;
+
+                if (positionSeconds < startSeconds)
+                {
+                    // Nothing later in the list can be running its entrance by now, because every
+                    // later cue starts later still.
+                    if (startSeconds - maximumLead > positionSeconds)
+                    {
+                        break;
+                    }
+
+                    if (positionSeconds >= startSeconds - CueEntranceLeadSeconds(cue))
+                    {
+                        active.Add(cue);
+                    }
+
+                    continue;
+                }
+
+                if (positionSeconds <= endSeconds)
                 {
                     active.Add(cue);
+                    continue;
                 }
-                else if (ShiftedStart(cue) > position)
+
+                if (positionSeconds <= endSeconds + maximumTail
+                    && positionSeconds <= endSeconds + CueExitTailSeconds(cue))
                 {
-                    break;
+                    active.Add(cue);
                 }
             }
 
@@ -1022,6 +1054,36 @@ namespace SubtitleForge
 
             CueList.SelectedItem = active;
             CueList.ScrollIntoView(active);
+        }
+
+        /// <summary>
+        /// How long before its start a cue's entrance needs. Zero unless the profile asks for an
+        /// entrance that plays outside the cue.
+        /// </summary>
+        private double CueEntranceLeadSeconds(SubtitleCue cue)
+        {
+            ProfileStore store = App.Profiles;
+            PopInProfile popIn = store.ResolvePopIn(cue.PopInProfileId ?? App.Settings.DefaultPopInProfileId);
+            if (!PopTiming.IsOutside(popIn.Timing)
+                || string.Equals(popIn.Kind, PopInKind.None, StringComparison.OrdinalIgnoreCase))
+            {
+                return 0.0;
+            }
+
+            return popIn.SpanSeconds(PopTiming.GroupCount(popIn.PerCharacter, popIn.StaggerGrouping, cue.Text));
+        }
+
+        /// <summary>How long after its end a cue's exit needs. Zero unless it plays outside the cue.</summary>
+        private double CueExitTailSeconds(SubtitleCue cue)
+        {
+            ProfileStore store = App.Profiles;
+            PopOutProfile popOut = store.ResolvePopOut(cue.PopOutProfileId ?? App.Settings.DefaultPopOutProfileId);
+            if (!PopTiming.IsOutside(popOut.Timing) || !popOut.HasExit)
+            {
+                return 0.0;
+            }
+
+            return popOut.SpanSeconds(PopTiming.GroupCount(popOut.PerCharacter, popOut.StaggerGrouping, cue.Text));
         }
 
         /// <summary>Points the overlay at the cue's style / idle / pop-in profiles and placement.</summary>

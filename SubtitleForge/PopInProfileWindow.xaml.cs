@@ -15,7 +15,11 @@ namespace SubtitleForge
     {
         private const string DefaultPreviewText = "Sample Text";
 
-        private const double PreviewLoopSeconds = 2.2;
+        /// <summary>How long the cue stays fully in place before the loop starts over.</summary>
+        private const double PreviewHoldSeconds = 1.6;
+
+        /// <summary>Breathing room before the cue starts, so the first frame is not the animation's first.</summary>
+        private const double PreviewLeadPaddingSeconds = 0.35;
 
         private readonly ProfileStore store;
         private readonly DispatcherTimer previewTimer;
@@ -82,8 +86,21 @@ namespace SubtitleForge
         private void OnPreviewTick(object? sender, EventArgs e)
         {
             double seconds = previewClock.Elapsed.TotalSeconds;
+
+            // An entrance that plays outside the cue happens before the cue's start, so the preview
+            // cue is moved that far into the loop; otherwise the animation would run off the left edge
+            // of the preview and the first frames would be missing.
+            double lead = draft == null
+                ? 0.0
+                : draft.SpanSeconds(PopTiming.GroupCount(draft.PerCharacter, draft.StaggerGrouping, PreviewOverlay.CueText));
+            double cueStart = lead + PreviewLeadPaddingSeconds;
+            if (Math.Abs(PreviewOverlay.CueStartSeconds - cueStart) > 0.005)
+            {
+                PreviewOverlay.CueStartSeconds = cueStart;
+            }
+
             PreviewOverlay.IdleSeconds = seconds;
-            PreviewOverlay.PlayheadSeconds = seconds % PreviewLoopSeconds;
+            PreviewOverlay.PlayheadSeconds = seconds % (cueStart + PreviewHoldSeconds);
             PreviewOverlay.Refresh();
         }
 
@@ -144,6 +161,7 @@ namespace SubtitleForge
                 NameBox.Text = draft.Name;
                 SelectTag(KindCombo, draft.Kind);
                 SelectTag(DirectionCombo, draft.Direction);
+                SelectTag(TimingCombo, draft.Timing);
                 DurationBox.SetValueSilently(draft.DurationSeconds);
                 PerCharacterCheck.IsChecked = draft.PerCharacter;
                 CharacterDelayBox.SetValueSilently(draft.CharacterDelaySeconds);
@@ -199,6 +217,7 @@ namespace SubtitleForge
             draft.Name = NameBox.Text;
             draft.Kind = SelectedTag(KindCombo, PopInKind.FadeIn);
             draft.Direction = SelectedTag(DirectionCombo, PopInDirection.Bottom);
+            draft.Timing = SelectedTag(TimingCombo, PopTiming.OutsideCue);
             draft.DurationSeconds = DurationBox.Value;
             draft.PerCharacter = PerCharacterCheck.IsChecked == true;
             draft.StaggerGrouping = SelectedTag(StaggerGroupingCombo, StaggerGroupings.Character);
@@ -255,6 +274,7 @@ namespace SubtitleForge
             draft.Name = NameBox.Text;
             draft.Kind = SelectedTag(KindCombo, PopInKind.FadeIn);
             draft.Direction = SelectedTag(DirectionCombo, PopInDirection.Bottom);
+            draft.Timing = SelectedTag(TimingCombo, PopTiming.OutsideCue);
             draft.DurationSeconds = DurationBox.Value;
             draft.PerCharacter = PerCharacterCheck.IsChecked == true;
             draft.StaggerGrouping = SelectedTag(StaggerGroupingCombo, StaggerGroupings.Character);

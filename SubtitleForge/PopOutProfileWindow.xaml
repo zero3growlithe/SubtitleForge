@@ -72,6 +72,16 @@
                                              DragStep="0.005"
                                              Format="0.###"
                                              ValueChanged="FieldChanged" />
+                    <TextBlock Text="Plays" Style="{StaticResource SectionLabelStyle}" />
+                    <ComboBox x:Name="TimingCombo"
+                              Width="176"
+                              Height="24"
+                              Margin="0,0,16,0"
+                              SelectionChanged="FieldChanged"
+                              ToolTip="After the cue = the exit begins exactly on the cue's end time, so the line stays put for its whole cue and only then leaves. Inside the cue = the exit is finished by the cue's end.">
+                        <ComboBoxItem Content="after the cue" Tag="OutsideCue" />
+                        <ComboBoxItem Content="inside the cue" Tag="InsideCue" />
+                    </ComboBox>
                     <TextBlock Text="Ease (1 linear, 2 accelerates)" Style="{StaticResource SectionLabelStyle}" />
                     <controls:NumericDragBox x:Name="EaseBox"
                                              Width="62"

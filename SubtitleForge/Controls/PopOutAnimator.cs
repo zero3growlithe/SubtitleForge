@@ -45,13 +45,26 @@ namespace SubtitleForge.Controls
 
             double groups = Math.Max(1.0, groupCount);
             double rawSpan = duration + (step * (groups - 1.0));
-            double cueLength = Math.Max(0.02, cueEndSeconds - cueStartSeconds);
-
-            // The exit may use at most nine tenths of the cue: a subtitle that starts disappearing on
-            // the frame it appeared would read as a mistake.
-            double compress = rawSpan > cueLength * 0.9 ? (cueLength * 0.9) / rawSpan : 1.0;
 
             schedule.Active = true;
+
+            if (PopTiming.IsOutside(profile.Timing))
+            {
+                // The exit starts the moment the cue's time is up, so the words stay on screen for
+                // their whole cue and only then begin to leave. Nothing to compress: the cue length
+                // does not bound the animation any more.
+                schedule.Duration = duration;
+                schedule.Step = step;
+                schedule.Begin = cueEndSeconds;
+                return schedule;
+            }
+
+            double cueLength = Math.Max(0.02, cueEndSeconds - cueStartSeconds);
+
+            // Inside the cue the exit may use at most nine tenths of it: a subtitle that starts
+            // disappearing on the frame it appeared would read as a mistake.
+            double compress = rawSpan > cueLength * 0.9 ? (cueLength * 0.9) / rawSpan : 1.0;
+
             schedule.Duration = duration * compress;
             schedule.Step = step * compress;
             schedule.Begin = cueEndSeconds - (rawSpan * compress);

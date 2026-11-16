@@ -191,6 +191,11 @@ its own. Three kinds of named profile drive it:
 - **Pop-in animation** — slide in from any side with a damped spring, scale in with jelly
   wobble (separate X/Y amplitude, frequency and falloff), or fade in. Either the whole text
   enters at once or the characters enter one by one with an adjustable delay.
+  **`Plays: before the cue`** (the default) moves the whole entrance in front of the cue's start,
+  so the last character settles exactly on the moment the line is due and the subtitle is already
+  fully in place when its time comes — the animation costs the viewer no reading time, and a
+  staggered entrance runs entirely in the gap before the cue. `inside the cue` keeps the old
+  behaviour: the first character starts on the cue's own start.
 - **Pop-out animation** — what happens when the line leaves: `Fade out`, `Move out` (slide off in
   any direction), `Scale out` (shrink away, blow up, with jelly wobble), `Spin out` around X, Y or
   Z, `Dissolve` (the glyph breaks into noise-eaten pieces), or `Turn to dust` (the pieces fly off
@@ -199,9 +204,14 @@ its own. Three kinds of named profile drive it:
   dissolve or a crumble starts — the same directions the gradient fills use, plus `From the centre`
   and `No order (noise only)`. The noise is a seeded lattice noise written for this, so the same
   `Seed` gives the identical pattern in the preview and in the exported video, frame for frame.
-  The exit is anchored to the **end of the cue**: the first group starts before it and the last
-  piece finishes exactly on it, and a stagger too long for the cue is compressed instead of
-  hanging over the cut.
+  **`Plays: after the cue`** (the default) starts the exit on the cue's **end**, so the words stay
+  put for their whole cue and only begin to leave once the line's time is up; the pieces are
+  allowed to hang over the cut, which is what keeps a dissolve or a crumble from eating into the
+  time the line is readable. `inside the cue` anchors the exit to the end instead: the first group
+  starts before it and the last piece finishes exactly on it, and a stagger too long for the cue is
+  compressed rather than hanging over the cut. The editor preview and the exported video agree on
+  both, and a cue whose animation plays outside its window is drawn for as long as that animation
+  runs — the burn-in even extends the clip when the last line's exit needs the room.
 
 Outlines and shadows share **one effect stack**: a single list, a single `Add effect` button, and
 a **Type** dropdown (`Outline` / `Shadow`) in the properties that shows only the fields that matter

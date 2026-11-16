@@ -50,6 +50,13 @@ namespace SubtitleForge.Models
         /// <summary>Total length of the entrance in seconds.</summary>
         public double DurationSeconds { get; set; } = 0.35;
 
+        /// <summary>
+        /// Where the entrance plays: <see cref="PopTiming.OutsideCue"/> finishes it on the cue's start
+        /// so the line is already in place when it is due, <see cref="PopTiming.InsideCue"/> runs it
+        /// from the cue's start.
+        /// </summary>
+        public string Timing { get; set; } = PopTiming.OutsideCue;
+
         public bool PerCharacter { get; set; }
 
         /// <summary>Delay between neighbouring characters in per-character mode.</summary>
@@ -60,6 +67,21 @@ namespace SubtitleForge.Models
         /// out of phase, or a single block for the entire cue.
         /// </summary>
         public string StaggerGrouping { get; set; } = StaggerGroupings.Character;
+
+        /// <summary>
+        /// How long the whole entrance needs for a stagger over this many groups: the length of one
+        /// glyph's animation plus the time the last glyph waits for its turn.
+        /// </summary>
+        public double SpanSeconds(int groupCount)
+        {
+            double span = DurationSeconds <= 0.0 ? 0.01 : DurationSeconds;
+            if (PerCharacter && !string.Equals(StaggerGrouping, StaggerGroupings.Cue, StringComparison.OrdinalIgnoreCase))
+            {
+                span += Math.Max(0.0, CharacterDelaySeconds) * Math.Max(0, groupCount - 1);
+            }
+
+            return span;
+        }
 
         public PopInProfile Clone()
         {
@@ -76,6 +98,7 @@ namespace SubtitleForge.Models
             copy.JellyFrequency = JellyFrequency;
             copy.JellyFalloff = JellyFalloff;
             copy.DurationSeconds = DurationSeconds;
+            copy.Timing = Timing;
             copy.PerCharacter = PerCharacter;
             copy.CharacterDelaySeconds = CharacterDelaySeconds;
             copy.StaggerGrouping = StaggerGrouping;

@@ -42,6 +42,16 @@ namespace SubtitleForge.Controls
 
             /// <summary>Glyph index inside the cue, spaces excluded.</summary>
             public int Index;
+
+            /// <summary>
+            /// The moment this glyph's page would start without any entrance animation: the cue's
+            /// start, or the word's start while the text is paged by word.
+            /// </summary>
+            public double AppearBase;
+
+            /// <summary>How long this glyph waits for its turn in the stagger.</summary>
+            public double EnterStagger;
+
             public double AppearSeconds;
 
             /// <summary>Transform worked out in the measuring pass, reused by the draw pass.</summary>
@@ -123,13 +133,12 @@ namespace SubtitleForge.Controls
                 if (popIn != null && !string.Equals(popIn.Kind, PopInKind.None, StringComparison.OrdinalIgnoreCase))
                 {
                     double elapsed = PlayheadSeconds - CueStartSeconds;
-                    double span = Math.Max(0.01, popIn.DurationSeconds);
-                    if (popIn.PerCharacter && !string.Equals(popIn.StaggerGrouping, StaggerGroupings.Cue, StringComparison.OrdinalIgnoreCase))
-                    {
-                        span += Math.Max(0.0, popIn.CharacterDelaySeconds) * Math.Max(1, (CueText ?? string.Empty).Length);
-                    }
+                    double span = popIn.SpanSeconds(
+                        PopTiming.GroupCount(popIn.PerCharacter, popIn.StaggerGrouping, CueText));
 
-                    if (elapsed < span + 0.1)
+                    // The lower bound matters now that an entrance can run before its cue: the host
+                    // keeps repainting from the lead up to the end of the stagger.
+                    if (elapsed > -span - 0.1 && elapsed < span + 0.1)
                     {
                         return true;
                     }
@@ -139,7 +148,12 @@ namespace SubtitleForge.Controls
                 if (popOut != null && popOut.HasExit)
                 {
                     PopOutSchedule exit = BuildSchedule(popOut);
-                    if (exit.Active && PlayheadSeconds >= exit.Begin - 0.05 && PlayheadSeconds <= CueEndSeconds + 0.05)
+                    double tail = PopTiming.IsOutside(popOut.Timing)
+                        ? popOut.SpanSeconds(PopTiming.GroupCount(popOut.PerCharacter, popOut.StaggerGrouping, CueText))
+                        : 0.0;
+
+                    if (exit.Active && PlayheadSeconds >= exit.Begin - 0.05
+                        && PlayheadSeconds <= CueEndSeconds + tail + 0.05)
                     {
                         return true;
                     }
@@ -183,32 +197,117 @@ namespace SubtitleForge.Controls
         }
 
         /// <summary>
+        /// Moves the whole entrance in front of the cue, so the last glyph of a page settles exactly on
+        /// the moment that page is due. Glyphs of one page share an appear base and move by the same
+        /// amount, keeping their stagger.
+        /// </summary>
+        private void ApplyEntranceBeforeCue(double duration)
+        {
+            if (glyphs.Count == 0)
+            {
+                return;
+            }
+
+            Dictionary<double, double> lastStagger = new Dictionary<double, double>();
+            foreach (GlyphBox glyph in glyphs)
+            {
+                double known;
+                if (!lastStagger.TryGetValue(glyph.AppearBase, out known) || glyph.EnterStagger > known)
+                {
+                    lastStagger[glyph.AppearBase] = glyph.EnterStagger;
+                }
+            }
+
+            foreach (GlyphBox glyph in glyphs)
+            {
+                double staggerSpan;
+                if (lastStagger.TryGetValue(glyph.AppearBase, out staggerSpan))
+                {
+                    glyph.AppearSeconds = glyph.AppearBase - duration - staggerSpan + glyph.EnterStagger;
+                }
+            }
+        }
+
+        /// <summary>How many groups a stagger walks over, from the laid-out glyphs when there are any.</summary>
+        private int CountGroups(bool perCharacter, string? grouping)
+        {
+            if (!perCharacter
+                || string.Equals(grouping, StaggerGroupings.Cue, StringComparison.OrdinalIgnoreCase))
+            {
+                return 1;
+            }
+
+            bool perWord = string.Equals(grouping, StaggerGroupings.Word, StringComparison.OrdinalIgnoreCase);
+            if (glyphs.Count == 0)
+            {
+                return PopTiming.GroupCount(perCharacter, grouping, CueText);
+            }
+
+            int count = 0;
+            foreach (GlyphBox glyph in glyphs)
+            {
+                count = perWord ? Math.Max(count, glyph.WordIndex + 1) : Math.Max(count, glyph.Index + 1);
+            }
+
+            return Math.Max(1, count);
+        }
+
+        /// <summary>
+        /// How long before the cue's start the entrance runs. Zero when the entrance plays inside the
+        /// cue, which is the case that needs no extra room on the timeline.
+        /// </summary>
+        public double EntranceLeadSeconds()
+        {
+            PopInProfile? popIn = PopIn;
+            if (popIn == null || string.Equals(popIn.Kind, PopInKind.None, StringComparison.OrdinalIgnoreCase))
+            {
+                return 0.0;
+            }
+
+            if (!PopTiming.IsOutside(popIn.Timing))
+            {
+                return 0.0;
+            }
+
+            return popIn.SpanSeconds(CountGroups(popIn.PerCharacter, popIn.StaggerGrouping));
+        }
+
+        /// <summary>How long after the cue's end the exit runs. Zero when the exit plays inside the cue.</summary>
+        public double ExitTailSeconds()
+        {
+            PopOutProfile? popOut = PopOut;
+            if (popOut == null || !popOut.HasExit)
+            {
+                return 0.0;
+            }
+
+            if (!PopTiming.IsOutside(popOut.Timing))
+            {
+                return 0.0;
+            }
+
+            return popOut.SpanSeconds(CountGroups(popOut.PerCharacter, popOut.StaggerGrouping));
+        }
+
+        /// <summary>
+        /// True when this cue has any business on screen at that moment, which includes the animations
+        /// that deliberately play outside the cue's own time window.
+        /// </summary>
+        public bool IsRunningAt(double seconds)
+        {
+            return seconds >= CueStartSeconds - EntranceLeadSeconds() - 0.001
+                && seconds <= CueEndSeconds + ExitTailSeconds() + 0.001;
+        }
+
+        /// <summary>
         /// When the exit starts and how long one group takes. Glyph counts come from the laid-out
         /// text when there is one, so a word stagger uses words and not characters.
         /// </summary>
         private PopOutSchedule BuildSchedule(PopOutProfile? profile)
         {
-            int groups = 1;
-            if (profile != null
-                && profile.PerCharacter
-                && !string.Equals(profile.StaggerGrouping, StaggerGroupings.Cue, StringComparison.OrdinalIgnoreCase))
-            {
-                bool perWord = string.Equals(profile.StaggerGrouping, StaggerGroupings.Word, StringComparison.OrdinalIgnoreCase);
-                if (glyphs.Count > 0)
-                {
-                    int count = perWord ? 1 : 0;
-                    foreach (GlyphBox glyph in glyphs)
-                    {
-                        count = perWord ? Math.Max(count, glyph.WordIndex + 1) : Math.Max(count, glyph.Index + 1);
-                    }
-
-                    groups = Math.Max(1, count);
-                }
-                else
-                {
-                    groups = Math.Max(1, (CueText ?? string.Empty).Length);
-                }
-            }
+            int groups = profile == null
+                ? 1
+                : CountGroups(profile.PerCharacter, profile.StaggerGrouping);
 
             return PopOutSchedule.Create(profile, CueStartSeconds, CueEndSeconds, groups);
         }
@@ -885,7 +984,11 @@ namespace SubtitleForge.Controls
                 "|",
                 style.CharacterSpacing.ToString("0.###", CultureInfo.InvariantCulture),
                 "|",
-                style.WordSpacing.ToString("0.###", CultureInfo.InvariantCulture));
+                style.WordSpacing.ToString("0.###", CultureInfo.InvariantCulture),
+                "|",
+                // The entrance anchor depends on where the entrance plays, so a profile edited from
+                // "inside the cue" to "before the cue" has to rebuild the layout.
+                popIn == null ? "-" : popIn.Timing);
 
             if (string.Equals(key, layoutKey, StringComparison.Ordinal))
             {
@@ -984,6 +1087,8 @@ namespace SubtitleForge.Controls
                                 enterStagger = staggerIndex * characterDelay;
                             }
 
+                            box.AppearBase = appearBase;
+                            box.EnterStagger = enterStagger;
                             box.AppearSeconds = appearBase + enterStagger;
                             glyphs.Add(box);
                             union = union.IsEmpty ? bounds : Rect.Union(union, bounds);
@@ -1020,6 +1125,15 @@ namespace SubtitleForge.Controls
             {
                 glyphs.Clear();
                 return;
+            }
+
+            // An entrance that plays outside the cue has to be finished when the cue's own time
+            // starts, so every page of glyphs moves back by its own length. This is the one place
+            // where that can be done exactly: the stagger of the page is known once it is built.
+            if (enterAnimation && PopTiming.IsOutside(popIn!.Timing))
+            {
+                double enterDuration = popIn!.DurationSeconds <= 0.0 ? 0.01 : popIn!.DurationSeconds;
+                ApplyEntranceBeforeCue(enterDuration);
             }
 
             textBounds = new Rect(0.0, union.Y, cursorX, Math.Max(union.Height, lineHeight));

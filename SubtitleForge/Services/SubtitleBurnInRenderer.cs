@@ -250,19 +250,6 @@ namespace SubtitleForge.Services
         {
             double fps = frameRate > 1.0 && frameRate < 240.0 ? frameRate : 30.0;
             double seconds = durationSeconds;
-            foreach (BurnInCue cue in cues)
-            {
-                if (cue.EndSeconds > seconds)
-                {
-                    seconds = cue.EndSeconds;
-                }
-            }
-
-            long totalFrames = (long)Math.Ceiling(seconds * fps);
-            if (totalFrames < 1)
-            {
-                totalFrames = 1;
-            }
 
             List<Slot> slots = new List<Slot>();
             foreach (BurnInCue cue in cues)
@@ -280,7 +267,24 @@ namespace SubtitleForge.Services
                 overlay.PositionY = cue.PositionY;
                 overlay.Scale = cue.Scale;
                 overlay.CueText = string.Empty;
-                slots.Add(new Slot(cue, overlay));
+                Slot slot = new Slot(cue, overlay);
+                slot.LeadSeconds = EntranceLeadSeconds(cue);
+                slot.TailSeconds = ExitTailSeconds(cue);
+                slots.Add(slot);
+
+                // An exit that plays outside its cue runs past the cue's end, so the clip has to be
+                // long enough to hold it — otherwise the last line disappears by being cut off.
+                double cueEnd = cue.EndSeconds + slot.TailSeconds;
+                if (cueEnd > seconds)
+                {
+                    seconds = cueEnd;
+                }
+            }
+
+            long totalFrames = (long)Math.Ceiling(seconds * fps);
+            if (totalFrames < 1)
+            {
+                totalFrames = 1;
             }
 
             RenderTargetBitmap bitmap = new RenderTargetBitmap(width, height, 96.0, 96.0, PixelFormats.Pbgra32);
@@ -301,7 +305,8 @@ namespace SubtitleForge.Services
 
                 foreach (Slot slot in slots)
                 {
-                    bool visible = time >= slot.Cue.StartSeconds && time < slot.Cue.EndSeconds;
+                    bool visible = time >= slot.Cue.StartSeconds - slot.LeadSeconds
+                        && time < slot.Cue.EndSeconds + slot.TailSeconds;
                     slot.Visible = visible;
                     if (!visible)
                     {
@@ -532,6 +537,32 @@ namespace SubtitleForge.Services
             }
         }
 
+        /// <summary>How long before its start the cue's entrance runs when it plays outside the cue.</summary>
+        private static double EntranceLeadSeconds(BurnInCue cue)
+        {
+            PopInProfile? popIn = cue.PopIn;
+            if (popIn == null
+                || !PopTiming.IsOutside(popIn.Timing)
+                || string.Equals(popIn.Kind, PopInKind.None, StringComparison.OrdinalIgnoreCase))
+            {
+                return 0.0;
+            }
+
+            return popIn.SpanSeconds(PopTiming.GroupCount(popIn.PerCharacter, popIn.StaggerGrouping, cue.Text));
+        }
+
+        /// <summary>How long after its end the cue's exit runs when it plays outside the cue.</summary>
+        private static double ExitTailSeconds(BurnInCue cue)
+        {
+            PopOutProfile? popOut = cue.PopOut;
+            if (popOut == null || !PopTiming.IsOutside(popOut.Timing) || !popOut.HasExit)
+            {
+                return 0.0;
+            }
+
+            return popOut.SpanSeconds(PopTiming.GroupCount(popOut.PerCharacter, popOut.StaggerGrouping, cue.Text));
+        }
+
         private sealed class Slot
         {
             public Slot(BurnInCue cue, SubtitleOverlay element)
@@ -541,6 +572,12 @@ namespace SubtitleForge.Services
             }
 
             public BurnInCue Cue { get; }
+
+            /// <summary>Seconds of entrance before the cue's start.</summary>
+            public double LeadSeconds { get; set; }
+
+            /// <summary>Seconds of exit after the cue's end.</summary>
+            public double TailSeconds { get; set; }
 
             /// <summary>Whether the cue covers the frame currently being drawn.</summary>
             public bool Visible { get; set; }

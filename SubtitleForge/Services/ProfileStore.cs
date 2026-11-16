@@ -207,6 +207,56 @@ namespace SubtitleForge.Services
             return PopOuts[0];
         }
 
+        /// <summary>
+        /// The longest entrance any pop-in profile can need before its cue starts. Used to bound a scan
+        /// of the cue list: past this point in the timeline nothing can be on screen through an
+        /// entrance that plays outside its cue.
+        /// </summary>
+        public double MaximumPopInLeadSeconds()
+        {
+            double maximum = 0.0;
+            foreach (PopInProfile profile in PopIns)
+            {
+                if (!PopTiming.IsOutside(profile.Timing)
+                    || string.Equals(profile.Kind, PopInKind.None, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                double lead = profile.SpanSeconds(PopTiming.MaximumGroups);
+                if (lead > maximum)
+                {
+                    maximum = lead;
+                }
+            }
+
+            return maximum;
+        }
+
+        /// <summary>
+        /// The longest exit any pop-out profile can need after its cue ends. Used so a scan of the cue
+        /// list only has to resolve profiles for the cues that could still be leaving the screen.
+        /// </summary>
+        public double MaximumPopOutTailSeconds()
+        {
+            double maximum = 0.0;
+            foreach (PopOutProfile profile in PopOuts)
+            {
+                if (!PopTiming.IsOutside(profile.Timing) || !profile.HasExit)
+                {
+                    continue;
+                }
+
+                double tail = profile.SpanSeconds(PopTiming.MaximumGroups);
+                if (tail > maximum)
+                {
+                    maximum = tail;
+                }
+            }
+
+            return maximum;
+        }
+
         public PopInProfile ResolvePopIn(string? id)
         {
             foreach (PopInProfile profile in PopIns)

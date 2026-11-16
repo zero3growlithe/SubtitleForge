@@ -290,16 +290,6 @@ namespace SubtitleForge.Controls
         }
 
         /// <summary>
-        /// True when this cue has any business on screen at that moment, which includes the animations
-        /// that deliberately play outside the cue's own time window.
-        /// </summary>
-        public bool IsRunningAt(double seconds)
-        {
-            return seconds >= CueStartSeconds - EntranceLeadSeconds() - 0.001
-                && seconds <= CueEndSeconds + ExitTailSeconds() + 0.001;
-        }
-
-        /// <summary>
         /// When the exit starts and how long one group takes. Glyph counts come from the laid-out
         /// text when there is one, so a word stagger uses words and not characters.
         /// </summary>

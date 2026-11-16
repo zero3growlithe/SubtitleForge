@@ -74,11 +74,7 @@
             <TextBlock Text="Max chars" Style="{StaticResource SectionLabelStyle}" />
             <TextBox x:Name="MaxCharactersTextBox" Width="46" Margin="0,0,12,0" />
             <TextBlock Text="Max sec" Style="{StaticResource SectionLabelStyle}" />
-            <TextBox x:Name="MaxDurationTextBox" Width="46" Margin="0,0,12,0" />
-            <TextBlock Text="Font size" Style="{StaticResource SectionLabelStyle}" />
-            <TextBox x:Name="FontSizeTextBox" Width="42" Margin="0,0,12,0" />
-            <TextBlock Text="Margin" Style="{StaticResource SectionLabelStyle}" />
-            <TextBox x:Name="MarginTextBox" Width="46" Margin="0,0,0,0" />
+            <TextBox x:Name="MaxDurationTextBox" Width="46" Margin="0,0,0,0" />
         </StackPanel>
 
         <!-- ── Main content ──────────────────────────────────────────────── -->

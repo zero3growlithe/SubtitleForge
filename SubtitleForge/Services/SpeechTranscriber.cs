@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using SubtitleForge.Models;
@@ -116,6 +117,7 @@ namespace SubtitleForge.Services
             TranscriptionResult result = new TranscriptionResult();
             List<SubtitleCue> cues = new List<SubtitleCue>();
             string detectedLanguage = string.Empty;
+            bool usedWordTimings = false;
 
             string cudaReason = string.Empty;
             bool gpuRequested = request.UseGpu && WhisperRuntimeProbe.IsCudaAvailable(out cudaReason);
@@ -162,6 +164,10 @@ namespace SubtitleForge.Services
                     .WithNoContext()
                     .WithLanguage(string.IsNullOrWhiteSpace(request.Language) ? "auto" : request.Language)
                     .SplitOnWord()
+                    // Token timestamps are what make a two-word cue land on the two words that were
+                    // actually spoken. Without them the only timing whisper gives is the whole
+                    // segment, and splitting long text has to guess where each piece starts.
+                    .WithTokenTimestamps()
                     .WithProgressHandler(delegate (int percent)
                     {
                         if (progress != null)
@@ -248,6 +254,24 @@ namespace SubtitleForge.Services
                                             continue;
                                         }
 
+                                        if (detectedLanguage.Length == 0 && !string.IsNullOrWhiteSpace(segment.Language))
+                                        {
+                                            detectedLanguage = segment.Language;
+                                        }
+
+                                        // Whisper gives the words and the time each one was spoken, so
+                                        // every word becomes its own cue here and the "two to four
+                                        // words per subtitle" part is decided later against the
+                                        // character budget. A segment with no usable token timings is
+                                        // still handled the old way: one cue, cut by hand afterwards.
+                                        List<SubtitleCue> wordCues = BuildWordCues(segment, windowOffset, skipBefore);
+                                        if (wordCues.Count > 0)
+                                        {
+                                            cues.AddRange(wordCues);
+                                            usedWordTimings = true;
+                                            continue;
+                                        }
+
                                         TimeSpan start = segment.Start + TimeSpan.FromSeconds(windowOffset);
                                         TimeSpan end = segment.End + TimeSpan.FromSeconds(windowOffset);
                                         if (end <= start)
@@ -257,11 +281,6 @@ namespace SubtitleForge.Services
                                         }
 
                                         cues.Add(new SubtitleCue(start, end, text, segment.Probability));
-
-                                        if (detectedLanguage.Length == 0 && !string.IsNullOrWhiteSpace(segment.Language))
-                                        {
-                                            detectedLanguage = segment.Language;
-                                        }
                                     }
                                 },
                                 cancellationToken).ConfigureAwait(false);
@@ -285,7 +304,10 @@ namespace SubtitleForge.Services
             }
 
             stopwatch.Stop();
-            result.Cues = CollapseRepeatedCues(cues);
+            // The repeated-line cleanup exists for whisper looping on one sentence, which only
+            // happens on whole segments. Word cues are left alone: "no no no" is a real thing to
+            // say, and collapsing it would drop two of the three.
+            result.Cues = usedWordTimings ? cues : CollapseRepeatedCues(cues);
             result.DetectedLanguage = detectedLanguage;
             result.Elapsed = stopwatch.Elapsed;
             progress?.Report(1.0);
@@ -342,6 +364,95 @@ namespace SubtitleForge.Services
         /// share the same text, the same length and no audible gap between them becomes a single cue:
         /// the first start is kept and the end is stretched to where the last duplicate ended.
         /// </summary>
+        /// <summary>
+        /// One cue per spoken word, timed from whisper's token timestamps. Whisper hands back
+        /// sub-word pieces (" She", "llo"), so they are glued back into words between the first
+        /// token's start and the last token's end.
+        /// </summary>
+        private static List<SubtitleCue> BuildWordCues(SegmentData segment, double windowOffset, double skipBefore)
+        {
+            List<SubtitleCue> wordCues = new List<SubtitleCue>();
+            IReadOnlyList<TokenData>? tokens = segment.Tokens;
+            if (tokens == null || tokens.Count == 0)
+            {
+                return wordCues;
+            }
+
+            StringBuilder text = new StringBuilder();
+            TimeSpan wordStart = TimeSpan.Zero;
+            TimeSpan wordEnd = TimeSpan.Zero;
+            bool open = false;
+
+            for (int index = 0; index < tokens.Count; index++)
+            {
+                TokenData token = tokens[index];
+                string piece = token.Text ?? string.Empty;
+                if (piece.Length == 0 || piece[0] == '[')
+                {
+                    // Special markers such as [_BEG_] and [_TT_120] are not spoken words.
+                    continue;
+                }
+
+                bool startsWord = !open || piece[0] == ' ';
+                if (open && startsWord)
+                {
+                    AddWord(wordCues, text, wordStart, wordEnd, segment.Probability, windowOffset, skipBefore);
+                    text.Clear();
+                    open = false;
+                }
+
+                if (!open)
+                {
+                    wordStart = token.Start;
+                    open = true;
+                }
+
+                wordEnd = token.End;
+                text.Append(startsWord ? piece.TrimStart() : piece);
+            }
+
+            if (open)
+            {
+                AddWord(wordCues, text, wordStart, wordEnd, segment.Probability, windowOffset, skipBefore);
+            }
+
+            return wordCues;
+        }
+
+        private static void AddWord(
+            List<SubtitleCue> destination,
+            StringBuilder text,
+            TimeSpan start,
+            TimeSpan end,
+            float probability,
+            double windowOffset,
+            double skipBefore)
+        {
+            string word = text.ToString().Trim();
+            if (word.Length == 0)
+            {
+                return;
+            }
+
+            if (start.TotalSeconds + 0.0005 < skipBefore)
+            {
+                return;
+            }
+
+            double startSeconds = start.TotalSeconds + windowOffset;
+            double endSeconds = end.TotalSeconds + windowOffset;
+            if (endSeconds <= startSeconds)
+            {
+                endSeconds = startSeconds + 0.05;
+            }
+
+            destination.Add(new SubtitleCue(
+                TimeSpan.FromSeconds(startSeconds),
+                TimeSpan.FromSeconds(endSeconds),
+                word,
+                probability));
+        }
+
         private static List<SubtitleCue> CollapseRepeatedCues(List<SubtitleCue> cues)
         {
             if (cues.Count < 2)

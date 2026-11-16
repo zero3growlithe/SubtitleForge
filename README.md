@@ -103,6 +103,19 @@ to keep the selection untouched while scrubbing.
   independent **150-second windows** (with a half-second overlap that is trimmed afterwards)
   before it reaches Whisper, because a single pass over many minutes of audio is where
   Whisper's timing drifts and starts looping; one model load covers all the windows.
+- **Whisper is asked for token timestamps**, so it reports the time each word was spoken. Every
+  word becomes its own cue with that exact timing, and the cue you see is a *group* of those
+  words: neighbouring words are glued together while the result still fits **Max chars** and
+  **Max sec**, no pause longer than 0.35 s comes between them and the previous line did not end
+  on a full stop. That is what makes "two to four words per subtitle" track fast speech — the
+  timings come from the words, not from dividing a phrase's duration by character count.
+  **Max chars** is the character budget of one cue (spaces included) and **Max sec** the longest
+  a cue may stay up; a cue is also cut when only one of the two is exceeded. A cue that is still
+  shorter than the minimum on-screen time is held a little longer, but only into the silence that
+  follows it, so it never pushes the next cue late.
+  Only when whisper returns no token timings at all does the old fallback apply: the whole segment
+  becomes one cue and its text is split by hand, with the pieces distributed inside the segment's
+  own time range so a run of small cues cannot drift past the end of the phrase it came from.
 - `Ctrl+S` (or `Save project`) saves the project; `Open project…` loads one.
 
 ### Performance

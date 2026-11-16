@@ -272,8 +272,6 @@ namespace SubtitleForge
 
             MaxCharactersTextBox.Text = settings.MaximumCharactersPerCue.ToString(CultureInfo.InvariantCulture);
             MaxDurationTextBox.Text = settings.MaximumCueDurationSeconds.ToString("0.#", CultureInfo.InvariantCulture);
-            FontSizeTextBox.Text = settings.FontSize.ToString(CultureInfo.InvariantCulture);
-            MarginTextBox.Text = settings.MarginVertical.ToString(CultureInfo.InvariantCulture);
 
             RuntimeText.Text = "Runtime: unknown";
             RefreshCueAppearanceCombos();
@@ -308,18 +306,6 @@ namespace SubtitleForge
             if (double.TryParse(MaxDurationTextBox.Text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out seconds))
             {
                 settings.MaximumCueDurationSeconds = seconds;
-            }
-
-            int fontSize;
-            if (int.TryParse(FontSizeTextBox.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out fontSize))
-            {
-                settings.FontSize = fontSize;
-            }
-
-            int margin;
-            if (int.TryParse(MarginTextBox.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out margin))
-            {
-                settings.MarginVertical = margin;
             }
 
             DrawTimeline();

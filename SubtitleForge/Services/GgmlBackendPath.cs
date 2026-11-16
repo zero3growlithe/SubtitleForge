@@ -35,16 +35,19 @@ namespace SubtitleForge.Services
         /// </summary>
         public static string Apply()
         {
-            string existing = Environment.GetEnvironmentVariable(VariableName) ?? string.Empty;
-            if (existing.Length > 0)
-            {
-                return "already set to " + existing;
-            }
-
             string module = FindCudaModule(out string folder);
             if (module.Length == 0)
             {
                 return "no CUDA backend module found next to the app (" + folder + ")";
+            }
+
+            string existing = Environment.GetEnvironmentVariable(VariableName) ?? string.Empty;
+            if (existing.Length > 0)
+            {
+                // Still make sure the link exists: the variable alone does nothing in builds that do
+                // not read it, and a run must not depend on which call came first.
+                return "already set to " + existing + "; "
+                    + EnsureModuleNextToExecutable(module);
             }
 
             string note;
@@ -101,6 +104,65 @@ namespace SubtitleForge.Services
             }
 
             return "linked " + fileName + " next to the exe";
+        }
+
+        /// <summary>
+        /// Tries to load the backend module by absolute path and looks for the exports ggml needs.
+        ///
+        /// This is the test that separates the two ways CUDA can fail: a module that will not load
+        /// (a dependency it cannot find — the Win32 error says which) and a module that loads but
+        /// has no registration entry point (a stub or a build from another version). whisper.cpp
+        /// reports both as the same "no GPU found", and in a release build ggml does not even log it.
+        /// </summary>
+        public static string TestModuleLoad(string modulePath)
+        {
+            if (modulePath.Length == 0)
+            {
+                return "no module to test";
+            }
+
+            IntPtr module;
+            try
+            {
+                // The altered search path makes the module's own folder the first place its
+                // dependencies are looked for, which is what the CUDA folder needs.
+                module = LoadLibraryEx(modulePath, IntPtr.Zero, LoadWithAlteredSearchPath);
+            }
+            catch (Exception exception)
+            {
+                return "could not even ask to load it: " + exception.Message;
+            }
+
+            if (module == IntPtr.Zero)
+            {
+                int error = Marshal.GetLastWin32Error();
+                return "will NOT load (Win32 error " + error.ToString(CultureInfo.InvariantCulture)
+                    + ": " + DescribeWin32Error(error) + ")";
+            }
+
+            IntPtr register = GetProcAddress(module, "ggml_backend_cuda_reg");
+            IntPtr score = GetProcAddress(module, "ggml_backend_score");
+            string exports = "ggml_backend_cuda_reg: " + (register != IntPtr.Zero ? "found" : "MISSING")
+                + ", ggml_backend_score: " + (score != IntPtr.Zero ? "found" : "MISSING");
+
+            return "loads fine (" + exports + ")";
+        }
+
+        private static string DescribeWin32Error(int error)
+        {
+            switch (error)
+            {
+                case 126:
+                    return "the module or one of its dependencies was not found";
+                case 127:
+                    return "a procedure a dependency should export was not found (version mismatch)";
+                case 193:
+                    return "not a valid Win32 image (32-bit file in a 64-bit process, or the reverse)";
+                case 998:
+                    return "invalid access to memory";
+                default:
+                    return "see Win32 error " + error.ToString(CultureInfo.InvariantCulture);
+            }
         }
 
         /// <summary>
@@ -170,6 +232,14 @@ namespace SubtitleForge.Services
         }
 
         private static readonly object FolderGate = new object();
+
+        private const int LoadWithAlteredSearchPath = 0x00000008;
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern IntPtr LoadLibraryEx(string fileName, IntPtr file, int flags);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Ansi, SetLastError = true)]
+        private static extern IntPtr GetProcAddress(IntPtr module, string procedureName);
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern bool CreateHardLink(

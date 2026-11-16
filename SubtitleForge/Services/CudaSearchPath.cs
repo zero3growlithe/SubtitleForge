@@ -37,8 +37,33 @@ namespace SubtitleForge.Services
         private const int LoadLibrarySearchDefaultDirectories = 0x00001000;
         private const int LoadLibrarySearchUserDirectories = 0x00000400;
 
+        private static readonly string[] LibrariesToPreload = new string[]
+        {
+            "cudart64_12.dll",
+            "cublas64_12.dll",
+            "cublasLt64_12.dll"
+        };
+
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        private static extern IntPtr LoadLibrary(string fileName);
+
+        private static readonly List<string> preloaded = new List<string>();
+
         private static bool applied;
         private static string? appliedFolder;
+
+        /// <summary>
+        /// The CUDA runtime libraries this process already has open, newest toolkit first.
+        ///
+        /// They are loaded by absolute path before anything else asks for them by name, so every
+        /// consumer — whisper.net's CUDA probe and ggml-cuda's own imports — ends up on the same
+        /// version. A machine with v12.0 and v12.4 installed otherwise mixes them, and a cublas that
+        /// does not export what ggml-cuda expects makes the backend module fail to load.
+        /// </summary>
+        public static List<string> PreloadedLibraries
+        {
+            get { return new List<string>(preloaded); }
+        }
 
         /// <summary>The folder that was added to the search path, or null when none was usable.</summary>
         public static string? AppliedFolder
@@ -72,6 +97,7 @@ namespace SubtitleForge.Services
                 if (SetDllDirectory(folder))
                 {
                     appliedFolder = folder;
+                    PreloadRuntimeLibraries(folder);
                     return;
                 }
 
@@ -80,6 +106,7 @@ namespace SubtitleForge.Services
                 if (AddDllDirectory(folder) != IntPtr.Zero)
                 {
                     appliedFolder = folder;
+                    PreloadRuntimeLibraries(folder);
                     return;
                 }
 
@@ -147,6 +174,34 @@ namespace SubtitleForge.Services
             }
 
             return null;
+        }
+
+        private static void PreloadRuntimeLibraries(string folder)
+        {
+            foreach (string name in LibrariesToPreload)
+            {
+                string path = Path.Combine(folder, name);
+                try
+                {
+                    if (!File.Exists(path))
+                    {
+                        continue;
+                    }
+
+                    if (LoadLibrary(path) == IntPtr.Zero)
+                    {
+                        CrashLog.WriteNote("Preloading " + path + " failed (error "
+                            + Marshal.GetLastWin32Error().ToString(System.Globalization.CultureInfo.InvariantCulture) + ").");
+                        continue;
+                    }
+
+                    preloaded.Add(path);
+                }
+                catch (Exception exception)
+                {
+                    CrashLog.Write(exception, "CudaSearchPath.Preload");
+                }
+            }
         }
 
         public static bool HasRuntimeLibraries(string folder)

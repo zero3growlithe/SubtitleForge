@@ -84,6 +84,28 @@ namespace SubtitleForge.Services
             return string.Empty;
         }
 
+        /// <summary>Everything that was logged, for when the filtered lines say nothing useful.</summary>
+        public string DescribeRaw(int maximum)
+        {
+            StringBuilder text = new StringBuilder();
+            lock (gate)
+            {
+                int limit = Math.Min(maximum, lines.Count);
+                for (int index = 0; index < limit; index++)
+                {
+                    text.AppendLine("     " + lines[index]);
+                }
+
+                if (lines.Count > limit)
+                {
+                    text.AppendLine("     … " + (lines.Count - limit).ToString(CultureInfo.InvariantCulture)
+                        + " more line(s)");
+                }
+            }
+
+            return text.ToString().TrimEnd();
+        }
+
         /// <summary>The interesting lines only, for a diagnostics report.</summary>
         public string DescribeEvidence()
         {

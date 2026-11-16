@@ -440,6 +440,24 @@ which is when ggml scans for backends. GPU diagnostics prints all three: the var
 the folder, and then reads whisper's own verdict, so a failure always names the step that did not
 work.
 
+Two more things are reported because they are the ones with no trace in any log:
+
+- **Does the CUDA set belong to the same release as the CPU set?** A CUDA
+  `ggml-cuda-whisper.dll` from another whisper.net version is rejected by ggml on an API-version
+  check, and a release build does not log the rejection — whisper simply says `no GPU found`. Both
+  sets share `ggml-base-whisper.dll`, which does not depend on CUDA, so in a matching install the two
+  copies are byte for byte identical. The report compares their SHA-256 and says outright when the
+  folder came from another release.
+- **Can the module be loaded at all?** It is loaded by absolute path and asked for
+  `ggml_backend_cuda_reg`, `ggml_backend_score` and `ggml_backend_init` — a Win32 error there names
+  the missing dependency (126), a version clash (127) or a 32/64-bit mismatch (193), none of which
+  whisper's own log distinguishes.
+
+The CUDA runtime libraries (`cudart64_12`, `cublas64_12`, `cublasLt64_12`) are **preloaded by absolute
+path from the newest CUDA 12 toolkit** before anything asks for them by name. A machine with several
+toolkits installed (v12.0 and v12.4 here) otherwise mixes them, and a `cublas64_12` that does not
+export what `ggml-cuda` expects makes the backend module fail to load.
+
 **Which card is used.** CUDA only enumerates NVIDIA adapters, so an integrated AMD or Intel GPU is not a
 CUDA device and never takes index 0: a single NVIDIA card — on the PCIe bus, in an M.2 slot over Oculink,
 or on a riser — *is* device 0 and needs no configuration. On a machine with more than one NVIDIA adapter

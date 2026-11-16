@@ -171,6 +171,18 @@ namespace SubtitleForge.Services
             else
             {
                 report.AppendLine("   search path: added " + applied + " to the DLL search path");
+            List<string> preloaded = CudaSearchPath.PreloadedLibraries;
+            if (preloaded.Count == 0)
+            {
+                report.AppendLine("   preloaded:    none");
+            }
+            else
+            {
+                foreach (string library in preloaded)
+                {
+                    report.AppendLine("   preloaded:    " + library);
+                }
+            }
             }
 
             report.AppendLine("   PATH entries mentioning CUDA or NVIDIA:");
@@ -226,6 +238,7 @@ namespace SubtitleForge.Services
         private static void AppendLoaderSearchPaths(StringBuilder report)
         {
             report.AppendLine("4. Where whisper.net looks for the runtime");
+            report.AppendLine("   Whisper.net.dll version: " + DescribeManagedVersion());
             report.AppendLine("   library path override: "
                 + (string.IsNullOrEmpty(RuntimeOptions.LibraryPath) ? "(none)" : RuntimeOptions.LibraryPath));
             report.AppendLine("   app folder:            " + AppContext.BaseDirectory);
@@ -237,6 +250,9 @@ namespace SubtitleForge.Services
             }
 
             string cudaFolder = Path.Combine(AppContext.BaseDirectory, "runtimes", "cuda12", "win-x64");
+            report.AppendLine("   does the CUDA set belong to the same release as the CPU set?");
+            report.AppendLine("   " + CompareNativeSets());
+
             report.AppendLine("   files the CUDA folder must contain:");
             foreach (string required in new string[] { "whisper.dll", "ggml-whisper.dll", "ggml-base-whisper.dll", "ggml-cuda-whisper.dll" })
             {
@@ -419,6 +435,18 @@ namespace SubtitleForge.Services
             report.AppendLine("   CUDA devices:");
             report.AppendLine(CudaDevices.DescribeSelection(App.Settings.CudaDeviceIndex));
 
+            string moduleFolders;
+            string modulePath = GgmlBackendPath.FindCudaModule(out moduleFolders);
+            if (modulePath.Length == 0)
+            {
+                report.AppendLine("   module as ggml would load it: none found in " + moduleFolders);
+            }
+            else
+            {
+                report.AppendLine("   module as ggml would load it: " + modulePath);
+                report.AppendLine("   direct load test: " + GgmlBackendPath.TestModuleLoad(modulePath));
+            }
+
             if (string.IsNullOrEmpty(modelPath) || !File.Exists(modelPath))
             {
                 report.AppendLine("   skipped: no model file to open");
@@ -431,11 +459,11 @@ namespace SubtitleForge.Services
                 wavPath = WriteSilentWave();
 
                 RuntimeOptions.RuntimeLibraryOrder = WhisperRuntimeProbe.AutoOrder;
+                using (WhisperBackendVerification verification = new WhisperBackendVerification())
                 using (WhisperFactory factory = GgmlBackendPath.WithBackendFolder(delegate
                 {
                     return WhisperFactory.FromPath(modelPath, new WhisperFactoryOptions { UseGpu = true });
                 }))
-                using (WhisperBackendVerification verification = new WhisperBackendVerification())
                 {
                     WhisperProcessor processor = factory.CreateBuilder()
                         .WithThreads(2)
@@ -518,14 +546,16 @@ namespace SubtitleForge.Services
                         report.AppendLine("        Whisper.net.dll, or the CUDA libraries are the wrong major version (CUDA 12)");
                         report.AppendLine("   Whisper's own log lines:");
                         report.AppendLine(verification.DescribeEvidence());
+                        report.AppendLine("   Everything else the log said (first 60 lines):");
+                        report.AppendLine(verification.DescribeRaw(60));
                         gpuUsable = false;
                     }
                     else
                     {
                         report.AppendLine("   inconclusive: whisper logged nothing about its backend.");
-                        report.AppendLine("   Log lines seen:");
-                        string evidence = verification.DescribeEvidence();
-                        report.AppendLine(evidence.Length > 0 ? evidence : "     (none)");
+                        report.AppendLine("   Everything the log said (first 60 lines):");
+                        string raw = verification.DescribeRaw(60);
+                        report.AppendLine(raw.Length > 0 ? raw : "     (none)");
                     }
                 }
             }
@@ -607,6 +637,85 @@ namespace SubtitleForge.Services
             }
 
             return megabytes.ToString("0", CultureInfo.InvariantCulture) + " MB";
+        }
+
+        private static string DescribeManagedVersion()
+        {
+            try
+            {
+                Version? version = typeof(WhisperFactory).Assembly.GetName().Version;
+                return version != null ? version.ToString() : "unknown";
+            }
+            catch (Exception)
+            {
+                return "unknown";
+            }
+        }
+
+        /// <summary>
+        /// A CUDA set from another whisper.net release is the one failure that leaves no trace:
+        /// ggml rejects a backend whose API version differs, and a release build does not log it, so
+        /// whisper just says "no GPU found". The two sets share ggml-base-whisper.dll, which does not
+        /// depend on CUDA at all, so in a matching install the two copies are byte for byte the same
+        /// file. When they differ, the folder came from another release.
+        /// </summary>
+        private static string CompareNativeSets()
+        {
+            string cpuBase = Path.Combine(AppContext.BaseDirectory, "runtimes", "win-x64", "ggml-base-whisper.dll");
+            string cudaBase = Path.Combine(AppContext.BaseDirectory, "runtimes", "cuda12", "win-x64", "ggml-base-whisper.dll");
+
+            string cpuHash = HashFile(cpuBase);
+            string cudaHash = HashFile(cudaBase);
+
+            if (cpuHash.Length == 0)
+            {
+                return "cannot tell: the CPU ggml-base-whisper.dll is missing (" + cpuBase + ")";
+            }
+
+            if (cudaHash.Length == 0)
+            {
+                return "cannot tell: the CUDA ggml-base-whisper.dll is missing (" + cudaBase + ")";
+            }
+
+            if (string.Equals(cpuHash, cudaHash, StringComparison.OrdinalIgnoreCase))
+            {
+                return "yes: the CUDA ggml-base-whisper.dll is identical to the CPU one (" + cpuHash.Substring(0, 16) + "…)";
+            }
+
+            return "NO: the CUDA set is from another release — ggml-base-whisper.dll differs from the"
+                + " CPU copy (CUDA " + cudaHash.Substring(0, 16) + "… vs CPU " + cpuHash.Substring(0, 16)
+                + "…). Copy the whole runtimes\\cuda12\\win-x64 folder out of Whisper.net.Runtime.Cuda12.Windows "
+                + DescribeManagedVersion() + " again.";
+        }
+
+        private static string HashFile(string path)
+        {
+            try
+            {
+                if (!File.Exists(path))
+                {
+                    return string.Empty;
+                }
+
+                using (FileStream stream = File.OpenRead(path))
+                {
+                    using (System.Security.Cryptography.SHA256 sha = System.Security.Cryptography.SHA256.Create())
+                    {
+                        byte[] hash = sha.ComputeHash(stream);
+                        StringBuilder text = new StringBuilder(hash.Length * 2);
+                        for (int index = 0; index < hash.Length; index++)
+                        {
+                            text.Append(hash[index].ToString("x2", CultureInfo.InvariantCulture));
+                        }
+
+                        return text.ToString();
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                return string.Empty;
+            }
         }
 
         private static string DescribeFolder(string folder)

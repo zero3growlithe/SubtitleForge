@@ -27,7 +27,15 @@ namespace SubtitleForge
             // DLL search path.
             CudaSearchPath.Apply();
 
+            // ggml only scans the executable folder and the current directory for its backend
+            // modules, so the CUDA natives whisper.net loads out of runtimes\cuda12\win-x64 are
+            // never registered and whisper.cpp reports "no GPU found". This hands ggml the module.
+            GgmlBackendPath.Apply();
+
             Settings = AppSettings.Load();
+
+            // Has to happen before the first CUDA call, which is the first model that is opened.
+            CudaDevices.ApplySelection(Settings.CudaDeviceIndex);
             Profiles = ProfileStore.Load();
 
             DispatcherUnhandledException += OnDispatcherUnhandledException;

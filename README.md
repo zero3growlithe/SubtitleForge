@@ -410,6 +410,24 @@ Three things are needed, in this order:
 Nothing has to be moved or copied by hand. whisper.net walks its runtime list and loads the first one it
 can, so the CPU natives in `runtimes\win-<arch>` stay as the fallback for machines that fail check 1 or 2.
 
+**The CUDA module has to be registered with ggml.** whisper.net opens
+`runtimes\cuda12\win-x64\ggml-cuda-whisper.dll` by absolute path, which is enough for the loader to
+report CUDA and for the file to sit in memory — but ggml's own backend registry only scans the
+**executable folder and the current directory** for `ggml-<backend>-*.dll`. The natives live in a
+subfolder, so the registry stayed CPU-only and whisper.cpp answered `whisper_backend_init_gpu: no GPU
+found` while every file was present and the driver was healthy. At start-up the app therefore points
+`GGML_BACKEND_PATH` at that module, which is ggml's documented way of registering an out-of-tree
+backend. Nothing to configure: the first CUDA module found in `runtimes\cuda\win-x64` or
+`runtimes\cuda12\win-x64` is used, and a module placed next to the exe is found by ggml on its own.
+
+**Which card is used.** CUDA only enumerates NVIDIA adapters, so an integrated AMD or Intel GPU is not a
+CUDA device and never takes index 0: a single NVIDIA card — on the PCIe bus, in an M.2 slot over Oculink,
+or on a riser — *is* device 0 and needs no configuration. On a machine with more than one NVIDIA adapter
+the first one is used unless `CudaDeviceIndex` in `settings.json` says otherwise; the app then sets
+`CUDA_VISIBLE_DEVICES` and `CUDA_DEVICE_ORDER=PCI_BUS_ID` before the first CUDA call, so the number in
+the picker means the number nvidia-smi prints. GPU diagnostics lists every device with its memory and
+driver and marks the one that will be used.
+
 Two gates decide whether the CUDA runtime is tried at all, and both used to fail silently:
 
 - The natives must be in `runtimes\cuda12\win-<arch>`. That is the only folder the loader probes; a

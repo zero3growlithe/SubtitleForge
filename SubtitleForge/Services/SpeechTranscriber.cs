@@ -145,6 +145,12 @@ namespace SubtitleForge.Services
                 status?.Report("GPU not used (" + cudaReason + ") — running on CPU.");
             }
 
+            if (gpuRequested)
+            {
+                // Idempotent: the app shell already did this, but a run must not depend on that.
+                GgmlBackendPath.Apply();
+            }
+
             // The loader's answer is a claim: a CUDA build of whisper.dll can be loaded and then run
             // the CPU backend when its ggml-cuda companion is missing or will not initialise. Whisper's
             // own native log is the only witness to what the decoder really used, so it is caught for

@@ -138,6 +138,8 @@ namespace SubtitleForge.Services
         {
             report.AppendLine("3. CUDA libraries whisper.cpp links against");
             report.AppendLine("   loadable = Windows can open it by name right now, which is the only thing that counts");
+            report.AppendLine("   cuBLAS and the CUDA runtime are what ggml-cuda needs; cuDNN is listed because the"
+                + " toolkit installs it, not because whisper.cpp uses it");
 
             foreach (string library in CudaLibraries)
             {
@@ -155,8 +157,10 @@ namespace SubtitleForge.Services
                     loadable = "NO (error " + loadError + ")";
                 }
 
+                bool optional = library.StartsWith("cudnn", StringComparison.OrdinalIgnoreCase);
                 report.AppendLine("   " + library.PadRight(18) + "loadable: " + loadable.PadRight(16)
-                    + (found.Length == 0 ? "not installed" : found));
+                    + (found.Length == 0 ? "not installed" : found)
+                    + (optional && !canLoad ? "  (optional)" : string.Empty));
             }
 
             string? applied = CudaSearchPath.AppliedFolder;
@@ -404,7 +408,16 @@ namespace SubtitleForge.Services
         {
             report.AppendLine();
             report.AppendLine("6. Decoding one second of audio to see which backend whisper really uses");
-            report.AppendLine("   adapters per nvidia-smi: " + NvidiaSmiProbe.DescribeAdapters());
+
+            // ggml finds backends by scanning the executable folder and the current directory, so a
+            // module that lives in runtimes\cuda12\win-x64 has to be registered through this variable
+            // or whisper.cpp never sees it.
+            string backendPath = GgmlBackendPath.Apply();
+            report.AppendLine("   backend module handed to ggml: " + backendPath);
+            report.AppendLine("   " + GgmlBackendPath.VariableName + " = "
+                + (GgmlBackendPath.CurrentValue().Length > 0 ? GgmlBackendPath.CurrentValue() : "(not set)"));
+            report.AppendLine("   CUDA devices:");
+            report.AppendLine(CudaDevices.DescribeSelection(App.Settings.CudaDeviceIndex));
 
             if (string.IsNullOrEmpty(modelPath) || !File.Exists(modelPath))
             {
@@ -493,11 +506,13 @@ namespace SubtitleForge.Services
                         report.AppendLine("   FAILED: the CUDA build loaded but whisper initialised the CPU backend.");
                         report.AppendLine("   whisper said: " + verification.Evidence);
                         report.AppendLine("   The usual reasons, cheapest to check first:");
-                        report.AppendLine("     a) ggml-cuda-whisper.dll is missing from runtimes\\cuda12\\win-x64, so whisper.dll");
-                        report.AppendLine("        there has no CUDA backend to use (section 4 lists what is in the folder)");
-                        report.AppendLine("     b) the files in that folder come from a different whisper.net version than");
-                        report.AppendLine("        Whiser.net.dll, so the CUDA backend refused to load");
-                        report.AppendLine("     c) the CUDA libraries are the wrong major version (needs CUDA 12, cudnn 9)");
+                        report.AppendLine("     a) the CUDA backend module was never registered with ggml: it only scans the");
+                        report.AppendLine("        app folder and the current directory, which is why GGML_BACKEND_PATH above");
+                        report.AppendLine("        has to point at runtimes\\cuda12\\win-x64\\ggml-cuda-whisper.dll");
+                        report.AppendLine("     b) ggml-cuda-whisper.dll is missing from runtimes\\cuda12\\win-x64 (section 4 lists");
+                        report.AppendLine("        what is in the folder)");
+                        report.AppendLine("     c) the files in that folder come from a different whisper.net version than");
+                        report.AppendLine("        Whisper.net.dll, or the CUDA libraries are the wrong major version (CUDA 12)");
                         report.AppendLine("   Whisper's own log lines:");
                         report.AppendLine(verification.DescribeEvidence());
                         gpuUsable = false;

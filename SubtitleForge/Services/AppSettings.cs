@@ -22,6 +22,13 @@ namespace SubtitleForge.Services
         /// <summary>How many audio parts are decoded at the same time. 1 keeps it sequential.</summary>
         public int TranscriptionWorkers { get; set; } = 1;
 
+        /// <summary>
+        /// Index of the CUDA device to use, -1 for the first one. Only matters on a machine with more
+        /// than one NVIDIA adapter: CUDA never enumerates an integrated AMD or Intel GPU, so a single
+        /// NVIDIA card is device 0 whether it sits on the bus or behind an Oculink cable.
+        /// </summary>
+        public int CudaDeviceIndex { get; set; } = -1;
+
         public bool SkipNonSpeech { get; set; } = true;
 
         public int MaximumCharactersPerCue { get; set; } = 48;
@@ -190,6 +197,16 @@ namespace SubtitleForge.Services
             if (TranscriptionWorkers > 4)
             {
                 TranscriptionWorkers = 4;
+            }
+
+            if (CudaDeviceIndex < -1)
+            {
+                CudaDeviceIndex = -1;
+            }
+
+            if (CudaDeviceIndex > 15)
+            {
+                CudaDeviceIndex = 15;
             }
 
             if (MaximumCharactersPerCue < 16)

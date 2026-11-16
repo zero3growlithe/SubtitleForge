@@ -48,6 +48,9 @@ namespace SubtitleForge.Services
         /// <summary>Pop-in animation profile used by every cue that does not override it.</summary>
         public string? DefaultPopInProfileId { get; set; }
 
+        /// <summary>Pop-out animation profile used by every cue that does not override it.</summary>
+        public string? DefaultPopOutProfileId { get; set; }
+
         /// <summary>Horizontal anchor of the subtitle text centre, 0-1 of the frame.</summary>
         public double OverlayPositionX { get; set; } = 0.5;
 

@@ -34,6 +34,8 @@ namespace SubtitleForge.Services
 
         public PopInProfile? PopIn { get; set; }
 
+        public PopOutProfile? PopOut { get; set; }
+
         public double PositionX { get; set; } = 0.5;
 
         public double PositionY { get; set; } = 0.86;
@@ -271,6 +273,7 @@ namespace SubtitleForge.Services
                 overlay.TextStyle = cue.Style;
                 overlay.Idle = cue.Idle;
                 overlay.PopIn = cue.PopIn;
+                overlay.PopOut = cue.PopOut;
                 overlay.CueStartSeconds = cue.StartSeconds;
                 overlay.CueEndSeconds = cue.EndSeconds;
                 overlay.PositionX = cue.PositionX;

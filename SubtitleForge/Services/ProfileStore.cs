@@ -26,6 +26,9 @@ namespace SubtitleForge.Services
 
         public List<PopInProfile> PopIns { get; set; } = new List<PopInProfile>();
 
+        /// <summary>How cues leave the screen.</summary>
+        public List<PopOutProfile> PopOuts { get; set; } = new List<PopOutProfile>();
+
         public static string Folder
         {
             get
@@ -52,12 +55,18 @@ namespace SubtitleForge.Services
             get { return Path.Combine(Folder, "popin.json"); }
         }
 
+        public static string PopOutsPath
+        {
+            get { return Path.Combine(Folder, "popout.json"); }
+        }
+
         public static ProfileStore Load()
         {
             ProfileStore store = new ProfileStore();
             store.Styles = LoadList<StyleProfile>(StylesPath);
             store.Idle = LoadList<IdleAnimationProfile>(IdlePath);
             store.PopIns = LoadList<PopInProfile>(PopInsPath);
+            store.PopOuts = LoadList<PopOutProfile>(PopOutsPath);
 
             // A styles.json written before outlines and shadows became one stack still has the two
             // old arrays; fold them into the single list so the rest of the program only ever sees
@@ -107,6 +116,12 @@ namespace SubtitleForge.Services
             {
                 PopIns.Add(PopInProfile.CreateSoftFade());
             }
+
+            if (PopOuts.Count == 0)
+            {
+                PopOuts.Add(PopOutProfile.CreateFade());
+                PopOuts.Add(PopOutProfile.CreateDust());
+            }
         }
 
         public static StyleProfile CreateDefaultStyle()
@@ -129,6 +144,7 @@ namespace SubtitleForge.Services
             SaveList(StylesPath, Styles);
             SaveList(IdlePath, Idle);
             SaveList(PopInsPath, PopIns);
+            SaveList(PopOutsPath, PopOuts);
         }
 
         private static void SaveList<T>(string path, List<T> items)
@@ -176,6 +192,19 @@ namespace SubtitleForge.Services
             }
 
             return Idle[0];
+        }
+
+        public PopOutProfile ResolvePopOut(string? id)
+        {
+            foreach (PopOutProfile profile in PopOuts)
+            {
+                if (string.Equals(profile.Id, id, StringComparison.Ordinal))
+                {
+                    return profile;
+                }
+            }
+
+            return PopOuts[0];
         }
 
         public PopInProfile ResolvePopIn(string? id)
@@ -302,6 +331,51 @@ namespace SubtitleForge.Services
             return -1;
         }
 
+        /// <summary>Copies every setting of one pop-out profile onto another, keeping the target's id.</summary>
+        public bool CopyPopOutSettings(string sourceId, string targetId)
+        {
+            if (string.Equals(sourceId, targetId, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            PopOutProfile? source = FindPopOut(sourceId);
+            if (source == null)
+            {
+                return false;
+            }
+
+            for (int index = 0; index < PopOuts.Count; index++)
+            {
+                if (!string.Equals(PopOuts[index].Id, targetId, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                PopOutProfile copy = source.Clone();
+                copy.Id = PopOuts[index].Id;
+                copy.Name = PopOuts[index].Name;
+                PopOuts[index] = copy;
+                Save();
+                return true;
+            }
+
+            return false;
+        }
+
+        private PopOutProfile? FindPopOut(string id)
+        {
+            foreach (PopOutProfile profile in PopOuts)
+            {
+                if (string.Equals(profile.Id, id, StringComparison.Ordinal))
+                {
+                    return profile;
+                }
+            }
+
+            return null;
+        }
+
         private IdleAnimationProfile? FindIdle(string id)
         {
             foreach (IdleAnimationProfile profile in Idle)
@@ -340,6 +414,20 @@ namespace SubtitleForge.Services
             }
 
             Styles.Add(profile);
+        }
+
+        public void UpsertPopOut(PopOutProfile profile)
+        {
+            for (int index = 0; index < PopOuts.Count; index++)
+            {
+                if (string.Equals(PopOuts[index].Id, profile.Id, StringComparison.Ordinal))
+                {
+                    PopOuts[index] = profile;
+                    return;
+                }
+            }
+
+            PopOuts.Add(profile);
         }
 
         public void UpsertIdle(IdleAnimationProfile profile)

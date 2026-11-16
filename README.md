@@ -136,6 +136,17 @@ its own. Three kinds of named profile drive it:
 - **Pop-in animation** — slide in from any side with a damped spring, scale in with jelly
   wobble (separate X/Y amplitude, frequency and falloff), or fade in. Either the whole text
   enters at once or the characters enter one by one with an adjustable delay.
+- **Pop-out animation** — what happens when the line leaves: `Fade out`, `Move out` (slide off in
+  any direction), `Scale out` (shrink away, blow up, with jelly wobble), `Spin out` around X, Y or
+  Z, `Dissolve` (the glyph breaks into noise-eaten pieces), or `Turn to dust` (the pieces fly off
+  with a wind: direction, force, spread, piece size, piece count and piece spin). Every one of them
+  can stagger per character, per word, or play on the whole cue, and `Origin` decides where a
+  dissolve or a crumble starts — the same directions the gradient fills use, plus `From the centre`
+  and `No order (noise only)`. The noise is a seeded lattice noise written for this, so the same
+  `Seed` gives the identical pattern in the preview and in the exported video, frame for frame.
+  The exit is anchored to the **end of the cue**: the first group starts before it and the last
+  piece finishes exactly on it, and a stagger too long for the cue is compressed instead of
+  hanging over the cut.
 
 Outlines and shadows share **one effect stack**: a single list, a single `Add effect` button, and
 a **Type** dropdown (`Outline` / `Shadow`) in the properties that shows only the fields that matter
@@ -223,12 +234,12 @@ stuttering, robotic loop.
 In the main window a click outside a text field drops keyboard focus, so the transport and editing
 shortcuts work again without having to focus another field first.
 
-Both animation creators have a **per character / word / whole cue** switch next to the
+All three animation creators have a **per character / word / whole cue** switch next to the
 per-character toggle, so a sine wave can travel through the letters, move whole words out of
 phase, or animate the entire line as one block.
 
-Three buttons in the toolbar open one creator per kind — **Text style…**, **Idle anim…** and
-**Pop-in…**. Each one lists the saved profiles of that kind with `New`, `Delete` and
+Four buttons in the toolbar open one creator per kind — **Text style…**, **Idle anim…**,
+**Pop-in…** and **Pop-out…**. Each one lists the saved profiles of that kind with `New`, `Delete` and
 `Set as default`, edits every field with numeric inputs and colour/gradient pickers, and shows a
 live preview that loops the animation so you can judge it before saving. The preview has its own
 **preview size** field, and it is a *scale*, not a font-size override: the overlay multiplies the
@@ -237,17 +248,17 @@ the finished video and an outline that looks right in the editor looks right on 
 you have not touched the field it follows the profile's own font size.
 
 A **multi-selection** in the cue list can be edited as one: every field in the cue editor — text,
-start, end, style, idle, pop-in, X, Y and scale — shows a dash `—` while the selected cues
+start, end, style, idle, pop-in, pop-out, X, Y and scale — shows a dash `—` while the selected cues
 disagree, and whatever you then choose or type is written to all of them. Setting the start while
 several cues are selected keeps each cue's own length. While the video plays, the cue list follows
 the spoken cue so the editor always shows the line that is on screen.
 
 Profiles live in `%AppData%\SubtitleForge\profiles` (`styles.json`, `idle.json`,
-`popin.json`) and are plain JSON, so they can be shared or hand-edited. A `styles.json` written
+`popin.json`, `popout.json`) and are plain JSON, so they can be shared or hand-edited. A `styles.json` written
 before the effect stacks were merged still loads: its `Outlines` and `Shadows` arrays are folded
 into the single `Effects` list on read, shadows first so the old look is preserved. Every cue uses the
 default profile of its kind unless it overrides one in the Cues view, where each cue has its own
-**Style / Idle / Pop-in** pickers (default entries marked `(default …)`) plus **X / Y / Scale**
+**Style / Idle / Pop-in / Pop-out** pickers (default entries marked `(default …)`) plus **X / Y / Scale**
 boxes and `Reset placement` — X and Y are fractions of the frame (`0.5, 0.86` places the cue at
 the bottom centre), so a cue can sit anywhere at any size. All of it — profile choices
 included — is saved in the `.sfproj` project.
@@ -256,7 +267,7 @@ included — is saved in the `.sfproj` project.
 
 Closing the window with unsaved edits asks whether to save the project first.
 
-`.sfproj` files are JSON and carry the per-cue style/idle/pop-in overrides plus the cue
+`.sfproj` files are JSON and carry the per-cue style/idle/pop-in/pop-out overrides plus the cue
 placement. Media is only **referenced** — the video path and any imported
 audio path — while microphone takes are exported next to the project as
 `<project>-track<n>-clip<m>.wav` clips and referenced by name, so the project file itself
@@ -299,7 +310,8 @@ stays a few kilobytes.
 
 ## Typical workflow
 
-1. `Open video…`
+1. `Open video…` — or, while no video is loaded, drag one onto the window: a dropped file goes
+   through the very same extension filter and the very same load path as the button.
 2. Pick a model — `small` is a good default, `large-v3-turbo` is the best quality/speed
    trade-off on a GPU, `base` is for quick rough drafts.
 3. Pick the language (or leave `auto (detect)`), press `Transcribe`.

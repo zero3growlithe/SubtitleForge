@@ -56,6 +56,8 @@ namespace SubtitleForge.Services
 
         public string? PopInProfileId { get; set; }
 
+        public string? PopOutProfileId { get; set; }
+
         public double? PositionX { get; set; }
 
         public double? PositionY { get; set; }

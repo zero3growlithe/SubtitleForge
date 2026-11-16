@@ -23,6 +23,9 @@ namespace SubtitleForge.Controls
 
         private readonly List<GlyphBox> glyphs = new List<GlyphBox>();
 
+        /// <summary>Pieces every glyph breaks into for a dissolve or a dust exit, cached per layout.</summary>
+        private readonly PopOutPieceCache popOutPieces = new PopOutPieceCache();
+
         private string layoutKey = string.Empty;
         private Rect textBounds = Rect.Empty;
         private int activeWordIndex = -1;
@@ -48,6 +51,15 @@ namespace SubtitleForge.Controls
 
             /// <summary>False when the glyph is hidden or not due yet.</summary>
             public bool Drawn;
+
+            /// <summary>Exit mask worked out in the measuring pass (dissolve and dust only).</summary>
+            public Geometry? DrawClip;
+
+            /// <summary>Dust pieces for this glyph, drawn once the mask has been released.</summary>
+            public PopOutPiecePlan? DrawDust;
+
+            /// <summary>How far through the exit this glyph was in the measuring pass.</summary>
+            public double DrawExitProgress;
         }
 
         public StyleProfile? TextStyle { get; set; }
@@ -55,6 +67,9 @@ namespace SubtitleForge.Controls
         public IdleAnimationProfile? Idle { get; set; }
 
         public PopInProfile? PopIn { get; set; }
+
+        /// <summary>How the cue leaves the screen. Null or a None profile means it simply disappears.</summary>
+        public PopOutProfile? PopOut { get; set; }
 
         public string CueText { get; set; } = string.Empty;
 
@@ -105,19 +120,32 @@ namespace SubtitleForge.Controls
                 }
 
                 PopInProfile? popIn = PopIn;
-                if (popIn == null || string.Equals(popIn.Kind, PopInKind.None, StringComparison.OrdinalIgnoreCase))
+                if (popIn != null && !string.Equals(popIn.Kind, PopInKind.None, StringComparison.OrdinalIgnoreCase))
                 {
-                    return false;
+                    double elapsed = PlayheadSeconds - CueStartSeconds;
+                    double span = Math.Max(0.01, popIn.DurationSeconds);
+                    if (popIn.PerCharacter && !string.Equals(popIn.StaggerGrouping, StaggerGroupings.Cue, StringComparison.OrdinalIgnoreCase))
+                    {
+                        span += Math.Max(0.0, popIn.CharacterDelaySeconds) * Math.Max(1, (CueText ?? string.Empty).Length);
+                    }
+
+                    if (elapsed < span + 0.1)
+                    {
+                        return true;
+                    }
                 }
 
-                double elapsed = PlayheadSeconds - CueStartSeconds;
-                double span = Math.Max(0.01, popIn.DurationSeconds);
-                if (popIn.PerCharacter && !string.Equals(popIn.StaggerGrouping, StaggerGroupings.Cue, StringComparison.OrdinalIgnoreCase))
+                PopOutProfile? popOut = PopOut;
+                if (popOut != null && popOut.HasExit)
                 {
-                    span += Math.Max(0.0, popIn.CharacterDelaySeconds) * Math.Max(1, (CueText ?? string.Empty).Length);
+                    PopOutSchedule exit = BuildSchedule(popOut);
+                    if (exit.Active && PlayheadSeconds >= exit.Begin - 0.05 && PlayheadSeconds <= CueEndSeconds + 0.05)
+                    {
+                        return true;
+                    }
                 }
 
-                return elapsed < span + 0.1;
+                return false;
             }
         }
 
@@ -150,7 +178,53 @@ namespace SubtitleForge.Controls
         public void InvalidateLayout()
         {
             layoutKey = string.Empty;
+            popOutPieces.Reset();
             InvalidateVisual();
+        }
+
+        /// <summary>
+        /// When the exit starts and how long one group takes. Glyph counts come from the laid-out
+        /// text when there is one, so a word stagger uses words and not characters.
+        /// </summary>
+        private PopOutSchedule BuildSchedule(PopOutProfile? profile)
+        {
+            int groups = 1;
+            if (profile != null
+                && profile.PerCharacter
+                && !string.Equals(profile.StaggerGrouping, StaggerGroupings.Cue, StringComparison.OrdinalIgnoreCase))
+            {
+                bool perWord = string.Equals(profile.StaggerGrouping, StaggerGroupings.Word, StringComparison.OrdinalIgnoreCase);
+                if (glyphs.Count > 0)
+                {
+                    int count = perWord ? 1 : 0;
+                    foreach (GlyphBox glyph in glyphs)
+                    {
+                        count = perWord ? Math.Max(count, glyph.WordIndex + 1) : Math.Max(count, glyph.Index + 1);
+                    }
+
+                    groups = Math.Max(1, count);
+                }
+                else
+                {
+                    groups = Math.Max(1, (CueText ?? string.Empty).Length);
+                }
+            }
+
+            return PopOutSchedule.Create(profile, CueStartSeconds, CueEndSeconds, groups);
+        }
+
+        /// <summary>Which stagger group a glyph belongs to: its own, its word's, or the whole cue.</summary>
+        private static double ExitGroupIndex(PopOutProfile profile, GlyphBox glyph)
+        {
+            if (!profile.PerCharacter
+                || string.Equals(profile.StaggerGrouping, StaggerGroupings.Cue, StringComparison.OrdinalIgnoreCase))
+            {
+                return 0.0;
+            }
+
+            return string.Equals(profile.StaggerGrouping, StaggerGroupings.Word, StringComparison.OrdinalIgnoreCase)
+                ? glyph.WordIndex
+                : glyph.Index;
         }
 
         protected override Size MeasureOverride(Size availableSize)
@@ -207,6 +281,12 @@ namespace SubtitleForge.Controls
             IdleAnimationProfile? idle = Idle;
             PopInProfile? popIn = PopIn;
             double popDuration = popIn == null ? 0.0 : Math.Max(0.01, popIn.DurationSeconds);
+
+            // The exit is timed against the end of the cue; a glyph that has finished leaving is not
+            // drawn at all, so the last frame of a cue is already empty.
+            PopOutProfile? popOut = PopOut;
+            PopOutSchedule exitSchedule = BuildSchedule(popOut);
+            bool breakingPieces = exitSchedule.Active && popOut != null && popOut.BreaksPieces;
             double transformScale = canvasScale * Math.Max(0.05, Scale);
 
             // Gradients are resolved in the same space the geometry is drawn in (the glyph space,
@@ -231,6 +311,9 @@ namespace SubtitleForge.Controls
             {
                 GlyphBox glyph = glyphs[index];
                 glyph.Drawn = false;
+                glyph.DrawClip = null;
+                glyph.DrawDust = null;
+                glyph.DrawExitProgress = 0.0;
                 if (glyph.Geometry.IsEmpty())
                 {
                     continue;
@@ -370,6 +453,40 @@ namespace SubtitleForge.Controls
                     }
                 }
 
+                double exitProgress = 0.0;
+                Geometry? glyphClip = null;
+                PopOutPiecePlan? dustPlan = null;
+                if (exitSchedule.Active && popOut != null)
+                {
+                    exitProgress = exitSchedule.ProgressFor(PlayheadSeconds, ExitGroupIndex(popOut, glyph));
+                    if (exitProgress >= 1.0)
+                    {
+                        // Gone: the exit finished on the cue's own end time.
+                        continue;
+                    }
+
+                    if (exitProgress > 0.0)
+                    {
+                        PopOutGlyphState exitState = PopOutPieceCache.ComputeGlyphState(popOut, exitProgress, fontSize);
+                        opacity *= exitState.Opacity;
+                        offsetX += exitState.OffsetX;
+                        offsetY += exitState.OffsetY;
+                        scaleX *= exitState.ScaleX;
+                        scaleY *= exitState.ScaleY;
+                        rotation += exitState.Rotation;
+
+                        if (exitState.PieceClip && breakingPieces)
+                        {
+                            PopOutPiecePlan plan = popOutPieces.GetPlan(glyph.Index, glyph.Bounds, popOut, fontSize);
+                            glyphClip = popOutPieces.GetClip(glyph.Index, plan, exitProgress);
+                            if (string.Equals(popOut.Kind, PopOutKind.Dust, StringComparison.OrdinalIgnoreCase))
+                            {
+                                dustPlan = plan;
+                            }
+                        }
+                    }
+                }
+
                 if (opacity <= 0.001)
                 {
                     continue;
@@ -408,13 +525,27 @@ namespace SubtitleForge.Controls
 
                 glyph.DrawMatrix = matrix;
                 glyph.DrawOpacity = opacity;
+                glyph.DrawClip = glyphClip;
+                glyph.DrawDust = dustPlan;
+                glyph.DrawExitProgress = exitProgress;
                 glyph.Drawn = true;
 
                 if (composition != null)
                 {
-                    composition.Children.Add(matrix.IsIdentity
+                    Geometry shape = matrix.IsIdentity
                         ? glyph.Geometry
-                        : TransformedCopy(glyph.Geometry, matrix));
+                        : TransformedCopy(glyph.Geometry, matrix);
+                    if (glyphClip != null)
+                    {
+                        // An outline wrapped around the whole block must break apart with the glyph,
+                        // otherwise the ring survives while the fill crumbles away.
+                        Geometry pieces = matrix.IsIdentity
+                            ? glyphClip
+                            : TransformedCopy(glyphClip, matrix);
+                        shape = Geometry.Combine(shape, pieces, GeometryCombineMode.Intersect, null);
+                    }
+
+                    composition.Children.Add(shape);
                 }
             }
 
@@ -437,6 +568,11 @@ namespace SubtitleForge.Controls
                     drawingContext.PushTransform(new MatrixTransform(glyph.DrawMatrix));
                 }
 
+                if (glyph.DrawClip != null)
+                {
+                    drawingContext.PushClip(glyph.DrawClip);
+                }
+
                 DrawEffects(drawingContext, glyph.Geometry, style, paint, EffectTarget.Font);
 
                 bool highlighted = style.HighlightSpokenWord && glyph.WordIndex == highlightWordIndex;
@@ -444,6 +580,23 @@ namespace SubtitleForge.Controls
                 if (brush != null)
                 {
                     drawingContext.DrawGeometry(brush, null, glyph.Geometry);
+                }
+
+                if (glyph.DrawClip != null)
+                {
+                    drawingContext.Pop();
+                }
+
+                if (glyph.DrawDust != null && popOut != null)
+                {
+                    // The pieces fly outside the glyph, so they are drawn after the mask is gone.
+                    PopOutPieceCache.DrawParticles(
+                        drawingContext,
+                        glyph.DrawDust,
+                        popOut,
+                        glyph.DrawExitProgress,
+                        fontSize,
+                        paint.Fill);
                 }
 
                 if (!glyph.DrawMatrix.IsIdentity)
@@ -725,6 +878,9 @@ namespace SubtitleForge.Controls
             layoutKey = key;
             layoutFontSize = fontSize;
             glyphs.Clear();
+
+            // The cached pieces hold glyph bounds from the layout that is being thrown away.
+            popOutPieces.Reset();
             textBounds = Rect.Empty;
 
             if (string.IsNullOrEmpty(display) || visible.Count == 0)

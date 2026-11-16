@@ -24,6 +24,7 @@ namespace SubtitleForge.Models
         private string? styleProfileId;
         private string? idleProfileId;
         private string? popInProfileId;
+        private string? popOutProfileId;
         private double? positionX;
         private double? positionY;
         private double? scale;
@@ -167,6 +168,24 @@ namespace SubtitleForge.Models
             }
         }
 
+        /// <summary>Overrides the default pop-out animation for this cue only (null = default).</summary>
+        public string? PopOutProfileId
+        {
+            get { return popOutProfileId; }
+            set
+            {
+                if (popOutProfileId != value)
+                {
+                    popOutProfileId = value;
+                    OnPropertyChanged();
+                    OnPropertyChanged(nameof(HasCustomLook));
+                    OnPropertyChanged(nameof(LabelBrush));
+                    OnPropertyChanged(nameof(NumberDisplay));
+                    OnPropertyChanged(nameof(LabelWeight));
+                }
+            }
+        }
+
         /// <summary>Horizontal anchor override, 0-1 of the frame width (null = default).</summary>
         public double? PositionX
         {
@@ -210,8 +229,8 @@ namespace SubtitleForge.Models
         }
 
         /// <summary>
-        /// True when the cue does not simply use the defaults: it carries its own style, idle or
-        /// pop-in profile. The cue list colours these rows so overridden cues stand out.
+        /// True when the cue does not simply use the defaults: it carries its own style, idle,
+        /// pop-in or pop-out profile. The cue list colours these rows so overridden cues stand out.
         /// </summary>
         public bool HasCustomLook
         {
@@ -219,7 +238,8 @@ namespace SubtitleForge.Models
             {
                 return !string.IsNullOrEmpty(styleProfileId)
                     || !string.IsNullOrEmpty(idleProfileId)
-                    || !string.IsNullOrEmpty(popInProfileId);
+                    || !string.IsNullOrEmpty(popInProfileId)
+                    || !string.IsNullOrEmpty(popOutProfileId);
             }
         }
 
@@ -356,6 +376,7 @@ namespace SubtitleForge.Models
             copy.StyleProfileId = styleProfileId;
             copy.IdleProfileId = idleProfileId;
             copy.PopInProfileId = popInProfileId;
+            copy.PopOutProfileId = popOutProfileId;
             copy.PositionX = positionX;
             copy.PositionY = positionY;
             copy.Scale = scale;

@@ -380,6 +380,90 @@ namespace SubtitleForge
             LoadVideo(dialog.FileName);
         }
 
+        /// <summary>
+        /// Extensions the Open dialog accepts. A drop is allowed to do the same thing, so both lists
+        /// are kept in step here.
+        /// </summary>
+        private static readonly HashSet<string> MediaExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v", ".wmv", ".ts", ".mts",
+            ".mp3", ".wav", ".m4a", ".flac", ".ogg"
+        };
+
+        /// <summary>True when the project already has something to show.</summary>
+        private bool HasAnyMedia()
+        {
+            if (!string.IsNullOrEmpty(videoPath))
+            {
+                return true;
+            }
+
+            foreach (TimelineTrack track in tracks)
+            {
+                if (track.Segments.Count > 0)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>The first dropped path that is a media file this app can open.</summary>
+        private static string? FirstMediaPath(string[]? paths)
+        {
+            if (paths == null)
+            {
+                return null;
+            }
+
+            foreach (string candidate in paths)
+            {
+                if (string.IsNullOrEmpty(candidate) || !File.Exists(candidate))
+                {
+                    continue;
+                }
+
+                if (MediaExtensions.Contains(Path.GetExtension(candidate)))
+                {
+                    return candidate;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// A file dropped anywhere on the window still opens the video when the project is empty,
+        /// which is what the "Open a video file to begin" hint invites the user to do.
+        /// </summary>
+        private void WindowDragOver(object sender, DragEventArgs e)
+        {
+            e.Effects = HasAnyMedia() ? DragDropEffects.None : DragDropEffects.Copy;
+            e.Handled = true;
+        }
+
+        private void WindowDrop(object sender, DragEventArgs e)
+        {
+            if (HasAnyMedia() || !e.Data.GetDataPresent(DataFormats.FileDrop))
+            {
+                return;
+            }
+
+            string? path = FirstMediaPath(e.Data.GetData(DataFormats.FileDrop) as string[]);
+            if (path == null)
+            {
+                return;
+            }
+
+            e.Handled = true;
+
+            // A brand-new video starts a brand-new project, exactly like the Open dialog does.
+            projectPath = null;
+            LoadVideo(path);
+            SetStatus("Opened " + Path.GetFileName(path) + " from the drop, just like Open video…");
+        }
+
         private void LoadVideo(string path)
         {
             if (isRecording)
@@ -914,6 +998,7 @@ namespace SubtitleForge
             StyleProfile style = store.ResolveStyle(cue.StyleProfileId ?? App.Settings.DefaultStyleProfileId);
             IdleAnimationProfile idle = store.ResolveIdle(cue.IdleProfileId ?? App.Settings.DefaultIdleProfileId);
             PopInProfile popIn = store.ResolvePopIn(cue.PopInProfileId ?? App.Settings.DefaultPopInProfileId);
+            PopOutProfile popOut = store.ResolvePopOut(cue.PopOutProfileId ?? App.Settings.DefaultPopOutProfileId);
 
             double cueStart = ShiftedStart(cue).TotalSeconds;
             double cueEnd = ShiftedEnd(cue).TotalSeconds;
@@ -921,12 +1006,14 @@ namespace SubtitleForge
             bool profileChanged = !ReferenceEquals(overlay.TextStyle, style)
                 || !ReferenceEquals(overlay.Idle, idle)
                 || !ReferenceEquals(overlay.PopIn, popIn)
+                || !ReferenceEquals(overlay.PopOut, popOut)
                 || Math.Abs(overlay.CueStartSeconds - cueStart) > 0.0005
                 || Math.Abs(overlay.CueEndSeconds - cueEnd) > 0.0005;
 
             overlay.TextStyle = style;
             overlay.Idle = idle;
             overlay.PopIn = popIn;
+            overlay.PopOut = popOut;
             overlay.CueStartSeconds = cueStart;
             overlay.CueEndSeconds = cueEnd;
             overlay.PositionX = cue.PositionX ?? App.Settings.OverlayPositionX;
@@ -1007,6 +1094,15 @@ namespace SubtitleForge
                 }
 
                 CuePopInCombo.Items.Add(ProfileChoice.Mixed);
+
+                CuePopOutCombo.Items.Clear();
+                CuePopOutCombo.Items.Add(new ProfileChoice(null, "(default pop-out)"));
+                foreach (PopOutProfile popOut in App.Profiles.PopOuts)
+                {
+                    CuePopOutCombo.Items.Add(new ProfileChoice(popOut.Id, popOut.Name));
+                }
+
+                CuePopOutCombo.Items.Add(ProfileChoice.Mixed);
             }
             finally
             {
@@ -1026,6 +1122,7 @@ namespace SubtitleForge
                 CueStyleCombo.IsEnabled = enabled;
                 CueIdleCombo.IsEnabled = enabled;
                 CuePopInCombo.IsEnabled = enabled;
+                CuePopOutCombo.IsEnabled = enabled;
                 CuePositionXBox.IsEnabled = enabled;
                 CuePositionYBox.IsEnabled = enabled;
                 CueScaleBox.IsEnabled = enabled;
@@ -1036,6 +1133,7 @@ namespace SubtitleForge
                     SelectChoice(CueStyleCombo, null);
                     SelectChoice(CueIdleCombo, null);
                     SelectChoice(CuePopInCombo, null);
+                    SelectChoice(CuePopOutCombo, null);
                     CuePositionXBox.SetValueSilently(0.0);
                     CuePositionYBox.SetValueSilently(0.0);
                     CueScaleBox.SetValueSilently(1.0);
@@ -1045,6 +1143,7 @@ namespace SubtitleForge
                 SelectSharedChoice(CueStyleCombo, selection, cue => cue.StyleProfileId);
                 SelectSharedChoice(CueIdleCombo, selection, cue => cue.IdleProfileId);
                 SelectSharedChoice(CuePopInCombo, selection, cue => cue.PopInProfileId);
+                SelectSharedChoice(CuePopOutCombo, selection, cue => cue.PopOutProfileId);
 
                 double defaultX = App.Settings.OverlayPositionX;
                 double defaultY = App.Settings.OverlayPositionY;
@@ -1254,6 +1353,37 @@ namespace SubtitleForge
             }
 
             PushCueUndoIfChanged("cue pop-in animation", before);
+            MarkProjectDirty();
+            UpdateOverlay(CurrentPosition);
+        }
+
+        private void CuePopOutSelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (suppressCueAppearanceEvents)
+            {
+                return;
+            }
+
+            List<SubtitleCue> selection = SelectedCueList();
+            if (selection.Count == 0)
+            {
+                return;
+            }
+
+            ProfileChoice? choice = CuePopOutCombo.SelectedItem as ProfileChoice;
+            if (choice == null || choice.IsMixed)
+            {
+                // Re-selecting the placeholder means "leave every cue alone".
+                return;
+            }
+
+            List<SubtitleCue> before = CaptureCueSnapshot();
+            foreach (SubtitleCue cue in selection)
+            {
+                cue.PopOutProfileId = choice.Id;
+            }
+
+            PushCueUndoIfChanged("cue pop-out animation", before);
             MarkProjectDirty();
             UpdateOverlay(CurrentPosition);
         }
@@ -3988,6 +4118,7 @@ namespace SubtitleForge
                     cueData.StyleProfileId = cue.StyleProfileId;
                     cueData.IdleProfileId = cue.IdleProfileId;
                     cueData.PopInProfileId = cue.PopInProfileId;
+                    cueData.PopOutProfileId = cue.PopOutProfileId;
                     cueData.PositionX = cue.PositionX;
                     cueData.PositionY = cue.PositionY;
                     cueData.Scale = cue.Scale;
@@ -4158,6 +4289,7 @@ namespace SubtitleForge
                     loadedCue.StyleProfileId = cueData.StyleProfileId;
                     loadedCue.IdleProfileId = cueData.IdleProfileId;
                     loadedCue.PopInProfileId = cueData.PopInProfileId;
+                    loadedCue.PopOutProfileId = cueData.PopOutProfileId;
                     loadedCue.PositionX = cueData.PositionX;
                     loadedCue.PositionY = cueData.PositionY;
                     loadedCue.Scale = cueData.Scale;
@@ -5031,6 +5163,19 @@ namespace SubtitleForge
                 return;
             }
 
+            // Nothing is open yet, so the drop means "start with this file" rather than "add a track".
+            if (!HasAnyMedia())
+            {
+                string? opened = FirstMediaPath(e.Paths);
+                if (opened != null)
+                {
+                    projectPath = null;
+                    LoadVideo(opened);
+                    SetStatus("Opened " + Path.GetFileName(opened) + " from the drop, just like Open video…");
+                    return;
+                }
+            }
+
             string? ffmpeg = FfmpegLocator.Resolve("ffmpeg", App.Settings.FfmpegDirectory);
             string? ffprobe = FfmpegLocator.Resolve("ffprobe", App.Settings.FfmpegDirectory);
 
@@ -5219,7 +5364,7 @@ namespace SubtitleForge
             window.Owner = this;
 
             bool saved = window.ShowDialog() == true;
-            ApplyProfileEdits(window.DefaultChanged, window.DefaultProfileId, null, null, saved);
+            ApplyProfileEdits(window.DefaultChanged, window.DefaultProfileId, null, null, null, saved);
         }
 
         private void IdleProfileClick(object sender, RoutedEventArgs e)
@@ -5232,7 +5377,7 @@ namespace SubtitleForge
             window.Owner = this;
 
             bool saved = window.ShowDialog() == true;
-            ApplyProfileEdits(window.DefaultChanged, null, window.DefaultProfileId, null, saved);
+            ApplyProfileEdits(window.DefaultChanged, null, window.DefaultProfileId, null, null, saved);
         }
 
         private void PopInProfileClick(object sender, RoutedEventArgs e)
@@ -5246,7 +5391,21 @@ namespace SubtitleForge
             window.Owner = this;
 
             bool saved = window.ShowDialog() == true;
-            ApplyProfileEdits(window.DefaultChanged, null, null, window.DefaultProfileId, saved);
+            ApplyProfileEdits(window.DefaultChanged, null, null, window.DefaultProfileId, null, saved);
+        }
+
+        private void PopOutProfileClick(object sender, RoutedEventArgs e)
+        {
+            PopOutProfileWindow window = new PopOutProfileWindow(
+                App.Profiles,
+                App.Settings.DefaultPopOutProfileId,
+                App.Settings.DefaultPopOutProfileId);
+            window.PreviewStyle = App.Profiles.ResolveStyle(App.Settings.DefaultStyleProfileId);
+            window.PreviewIdle = App.Profiles.ResolveIdle(App.Settings.DefaultIdleProfileId);
+            window.Owner = this;
+
+            bool saved = window.ShowDialog() == true;
+            ApplyProfileEdits(window.DefaultChanged, null, null, null, window.DefaultProfileId, saved);
         }
 
         private void ApplyProfileEdits(
@@ -5254,6 +5413,7 @@ namespace SubtitleForge
             string? styleId,
             string? idleId,
             string? popInId,
+            string? popOutId,
             bool saved)
         {
             if (defaultChanged)
@@ -5271,6 +5431,11 @@ namespace SubtitleForge
                 if (!string.IsNullOrEmpty(popInId))
                 {
                     App.Settings.DefaultPopInProfileId = popInId;
+                }
+
+                if (!string.IsNullOrEmpty(popOutId))
+                {
+                    App.Settings.DefaultPopOutProfileId = popOutId;
                 }
 
                 App.Settings.Save();
@@ -5500,6 +5665,7 @@ namespace SubtitleForge
                     Style = store.ResolveStyle(cue.StyleProfileId ?? App.Settings.DefaultStyleProfileId),
                     Idle = store.ResolveIdle(cue.IdleProfileId ?? App.Settings.DefaultIdleProfileId),
                     PopIn = store.ResolvePopIn(cue.PopInProfileId ?? App.Settings.DefaultPopInProfileId),
+                    PopOut = store.ResolvePopOut(cue.PopOutProfileId ?? App.Settings.DefaultPopOutProfileId),
                     PositionX = cue.PositionX ?? App.Settings.OverlayPositionX,
                     PositionY = cue.PositionY ?? App.Settings.OverlayPositionY,
                     Scale = cue.Scale ?? App.Settings.OverlayScale
@@ -6207,6 +6373,7 @@ namespace SubtitleForge
                 if (!string.Equals(left.StyleProfileId, right.StyleProfileId, StringComparison.Ordinal)
                     || !string.Equals(left.IdleProfileId, right.IdleProfileId, StringComparison.Ordinal)
                     || !string.Equals(left.PopInProfileId, right.PopInProfileId, StringComparison.Ordinal)
+                    || !string.Equals(left.PopOutProfileId, right.PopOutProfileId, StringComparison.Ordinal)
                     || !SameOptionalNumber(left.PositionX, right.PositionX)
                     || !SameOptionalNumber(left.PositionY, right.PositionY)
                     || !SameOptionalNumber(left.Scale, right.Scale))

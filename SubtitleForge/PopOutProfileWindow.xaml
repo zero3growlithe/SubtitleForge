@@ -1,0 +1,370 @@
+<Window x:Class="SubtitleForge.PopOutProfileWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:SubtitleForge.Controls"
+        PreviewKeyDown="FieldPreviewKeyDown"
+        Title="Pop-out animation profile"
+        Height="760"
+        Width="900"
+        MinHeight="560"
+        MinWidth="740"
+        ShowInTaskbar="False"
+        Background="{StaticResource WindowBackgroundBrush}"
+        WindowStartupLocation="CenterOwner">
+
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <TextBlock Grid.Column="0" Text="Profile" Style="{StaticResource SectionLabelStyle}" />
+            <ComboBox x:Name="ProfileCombo" Grid.Column="1" SelectionChanged="ProfileSelectionChanged" />
+            <StackPanel Grid.Column="2" Orientation="Horizontal">
+                <Button Content="New" MinWidth="0" Padding="10,4" Click="NewProfileClick" />
+                <Button Content="Duplicate" MinWidth="0" Padding="10,4" Margin="4,0,0,0"
+                        ToolTip="Copy this profile under a new name"
+                        Click="DuplicateProfileClick" />
+                <Button Content="Copy to…" MinWidth="0" Padding="10,4" Margin="4,0,0,0"
+                        ToolTip="Copy these settings onto another profile"
+                        Click="CopyToProfileClick" />
+                <Button Content="Delete" MinWidth="0" Padding="10,4" Margin="4,0,0,0" Click="DeleteProfileClick" />
+                <Button x:Name="DefaultButton" Content="Set as default" MinWidth="0" Padding="10,4" Click="SetDefaultClick" />
+            </StackPanel>
+        </Grid>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <WrapPanel>
+                    <TextBlock Text="Name" Style="{StaticResource SectionLabelStyle}" />
+                    <TextBox x:Name="NameBox" Width="180" Margin="0,0,16,0" LostFocus="FieldChanged" />
+                    <TextBlock Text="Kind" Style="{StaticResource SectionLabelStyle}" />
+                    <ComboBox x:Name="KindCombo" Width="170" SelectionChanged="FieldChanged">
+                        <ComboBoxItem Content="None (just disappear)" Tag="None" />
+                        <ComboBoxItem Content="Fade out" Tag="FadeOut" />
+                        <ComboBoxItem Content="Move out" Tag="SlideOut" />
+                        <ComboBoxItem Content="Scale out" Tag="ScaleOut" />
+                        <ComboBoxItem Content="Spin out" Tag="SpinOut" />
+                        <ComboBoxItem Content="Dissolve" Tag="Dissolve" />
+                        <ComboBoxItem Content="Turn to dust" Tag="Dust" />
+                    </ComboBox>
+                </WrapPanel>
+
+                <TextBlock Text="Timing"
+                           FontWeight="SemiBold"
+                           Margin="0,16,0,4" />
+                <WrapPanel>
+                    <TextBlock Text="Duration (s)" Style="{StaticResource SectionLabelStyle}" />
+                    <controls:NumericDragBox x:Name="DurationBox"
+                                             Width="62"
+                                             Margin="0,0,16,0"
+                                             Minimum="0.02"
+                                             Maximum="6"
+                                             DragStep="0.005"
+                                             Format="0.###"
+                                             ValueChanged="FieldChanged" />
+                    <TextBlock Text="Ease (1 linear, 2 accelerates)" Style="{StaticResource SectionLabelStyle}" />
+                    <controls:NumericDragBox x:Name="EaseBox"
+                                             Width="62"
+                                             Margin="0,0,16,0"
+                                             Minimum="0.2"
+                                             Maximum="5"
+                                             DragStep="0.05"
+                                             Format="0.##"
+                                             ValueChanged="FieldChanged" />
+                    <CheckBox x:Name="PerCharacterCheck"
+                              Content="Stagger the exit"
+                              Margin="0,0,10,0"
+                              Click="FieldChanged" />
+                    <TextBlock Text="per" Style="{StaticResource SectionLabelStyle}" />
+                    <ComboBox x:Name="StaggerGroupingCombo"
+                              Width="124"
+                              Height="24"
+                              Margin="0,0,16,0"
+                              SelectionChanged="FieldChanged"
+                              ToolTip="Character = one glyph after another, word = whole words leave in turn, cue = everything at once">
+                        <ComboBoxItem Content="character" Tag="Character" />
+                        <ComboBoxItem Content="word" Tag="Word" />
+                        <ComboBoxItem Content="whole cue" Tag="Cue" />
+                    </ComboBox>
+                    <TextBlock Text="Delay (s)" Style="{StaticResource SectionLabelStyle}" />
+                    <controls:NumericDragBox x:Name="CharacterDelayBox"
+                                             Width="62"
+                                             Minimum="0"
+                                             Maximum="1"
+                                             DragStep="0.002"
+                                             Format="0.###"
+                                             ValueChanged="FieldChanged" />
+                </WrapPanel>
+                <TextBlock Text="The exit finishes exactly when the cue ends, so nothing stays on screen after the subtitle is over. A stagger that is longer than the cue is compressed instead of cut off."
+                           FontSize="11"
+                           TextWrapping="Wrap"
+                           Foreground="{StaticResource SubtleTextBrush}"
+                           Margin="0,4,0,0" />
+
+                <StackPanel x:Name="SlidePanel">
+                    <TextBlock Text="Move out" FontWeight="SemiBold" Margin="0,16,0,4" />
+                    <WrapPanel>
+                        <TextBlock Text="Direction" Style="{StaticResource SectionLabelStyle}" />
+                        <ComboBox x:Name="DirectionCombo" Width="110" Margin="0,0,16,0" SelectionChanged="FieldChanged">
+                            <ComboBoxItem Content="Bottom" Tag="Bottom" />
+                            <ComboBoxItem Content="Top" Tag="Top" />
+                            <ComboBoxItem Content="Left" Tag="Left" />
+                            <ComboBoxItem Content="Right" Tag="Right" />
+                        </ComboBox>
+                        <TextBlock Text="Distance (× font size)" Style="{StaticResource SectionLabelStyle}" />
+                        <controls:NumericDragBox x:Name="DistanceBox"
+                                                 Width="62"
+                                                 Minimum="-8"
+                                                 Maximum="8"
+                                                 DragStep="0.02"
+                                                 Format="0.##"
+                                                 ValueChanged="FieldChanged" />
+                    </WrapPanel>
+                </StackPanel>
+
+                <StackPanel x:Name="ScalePanel">
+                    <TextBlock Text="Scale out" FontWeight="SemiBold" Margin="0,16,0,4" />
+                    <WrapPanel>
+                        <TextBlock Text="End scale (0 shrinks away, 2 blows up)" Style="{StaticResource SectionLabelStyle}" />
+                        <controls:NumericDragBox x:Name="EndScaleBox"
+                                                 Width="62"
+                                                 Margin="0,0,16,0"
+                                                 Minimum="0"
+                                                 Maximum="4"
+                                                 DragStep="0.01"
+                                                 Format="0.###"
+                                                 ValueChanged="FieldChanged" />
+                        <TextBlock Text="Amplitude X" Style="{StaticResource SectionLabelStyle}" />
+                        <controls:NumericDragBox x:Name="JellyXBox"
+                                                 Width="62"
+                                                 Margin="0,0,16,0"
+                                                 Minimum="0"
+                                                 Maximum="3"
+                                                 DragStep="0.005"
+                                                 Format="0.###"
+                                                 ValueChanged="FieldChanged" />
+                        <TextBlock Text="Amplitude Y" Style="{StaticResource SectionLabelStyle}" />
+                        <controls:NumericDragBox x:Name="JellyYBox"
+                                                 Width="62"
+                                                 Margin="0,0,16,0"
+                                                 Minimum="0"
+                                                 Maximum="3"
+                                                 DragStep="0.005"
+                                                 Format="0.###"
+                                                 ValueChanged="FieldChanged" />
+                        <TextBlock Text="Frequency" Style="{StaticResource SectionLabelStyle}" />
+                        <controls:NumericDragBox x:Name="JellyFrequencyBox"
+                                                 Width="62"
+                                                 Margin="0,0,16,0"
+                                                 Minimum="0"
+                                                 Maximum="20"
+                                                 DragStep="0.02"
+                                                 Format="0.##"
+                                                 ValueChanged="FieldChanged" />
+                        <TextBlock Text="Falloff" Style="{StaticResource SectionLabelStyle}" />
+                        <controls:NumericDragBox x:Name="JellyFalloffBox"
+                                                 Width="62"
+                                                 Minimum="0"
+                                                 Maximum="20"
+                                                 DragStep="0.02"
+                                                 Format="0.##"
+                                                 ValueChanged="FieldChanged" />
+                    </WrapPanel>
+                </StackPanel>
+
+                <StackPanel x:Name="SpinPanel">
+                    <TextBlock Text="Spin out" FontWeight="SemiBold" Margin="0,16,0,4" />
+                    <WrapPanel>
+                        <TextBlock Text="Axis" Style="{StaticResource SectionLabelStyle}" />
+                        <ComboBox x:Name="SpinAxisCombo" Width="90" Margin="0,0,16,0" SelectionChanged="FieldChanged">
+                            <ComboBoxItem Content="X (flip)" Tag="X" />
+                            <ComboBoxItem Content="Y (turn)" Tag="Y" />
+                            <ComboBoxItem Content="Z (roll)" Tag="Z" />
+                        </ComboBox>
+                        <TextBlock Text="Turns (negative = the other way)" Style="{StaticResource SectionLabelStyle}" />
+                        <controls:NumericDragBox x:Name="SpinTurnsBox"
+                                                 Width="62"
+                                                 Margin="0,0,16,0"
+                                                 Minimum="-4"
+                                                 Maximum="4"
+                                                 DragStep="0.01"
+                                                 Format="0.###"
+                                                 ValueChanged="FieldChanged" />
+                        <TextBlock Text="End scale" Style="{StaticResource SectionLabelStyle}" />
+                        <controls:NumericDragBox x:Name="SpinEndScaleBox"
+                                                 Width="62"
+                                                 Minimum="0"
+                                                 Maximum="4"
+                                                 DragStep="0.01"
+                                                 Format="0.###"
+                                                 ValueChanged="FieldChanged" />
+                    </WrapPanel>
+                    <TextBlock Text="X and Y are faked on a flat canvas by squashing the glyph, the same way the idle spin works."
+                               FontSize="11"
+                               TextWrapping="Wrap"
+                               Foreground="{StaticResource SubtleTextBrush}"
+                               Margin="0,4,0,0" />
+                </StackPanel>
+
+                <StackPanel x:Name="BreakUpPanel">
+                    <TextBlock Text="Break-up" FontWeight="SemiBold" Margin="0,16,0,4" />
+                    <WrapPanel>
+                        <TextBlock Text="Origin" Style="{StaticResource SectionLabelStyle}" />
+                        <ComboBox x:Name="OriginCombo" Width="140" Margin="0,0,16,0" SelectionChanged="FieldChanged"
+                                  ToolTip="Where it starts to crumble — the same directions the gradient fills use">
+                            <ComboBoxItem Content="Left to right" Tag="LeftToRight" />
+                            <ComboBoxItem Content="Right to left" Tag="RightToLeft" />
+                            <ComboBoxItem Content="Top to bottom" Tag="TopToBottom" />
+                            <ComboBoxItem Content="Bottom to top" Tag="BottomToTop" />
+                            <ComboBoxItem Content="Top-left → bottom-right" Tag="DownRight" />
+                            <ComboBoxItem Content="Bottom-left → top-right" Tag="UpRight" />
+                            <ComboBoxItem Content="Top-right → bottom-left" Tag="DownLeft" />
+                            <ComboBoxItem Content="Bottom-right → top-left" Tag="UpLeft" />
+                            <ComboBoxItem Content="From the centre" Tag="Center" />
+                            <ComboBoxItem Content="No order (noise only)" Tag="Random" />
+                        </ComboBox>
+                        <TextBlock Text="Pieces" Style="{StaticResource SectionLabelStyle}" />
+                        <controls:NumericDragBox x:Name="CellCountBox"
+                                                 Width="56"
+                                                 Margin="0,0,16,0"
+                                                 Minimum="2"
+                                                 Maximum="40"
+                                                 DragStep="1"
+                                                 Format="0"
+                                                 ToolTip="Cells across the glyph: smaller pieces mean a finer crumble"
+                                                 ValueChanged="FieldChanged" />
+                        <TextBlock Text="Noise" Style="{StaticResource SectionLabelStyle}" />
+                        <controls:NumericDragBox x:Name="NoiseBox"
+                                                 Width="56"
+                                                 Margin="0,0,16,0"
+                                                 Minimum="0"
+                                                 Maximum="1"
+                                                 DragStep="0.01"
+                                                 Format="0.##"
+                                                 ToolTip="0 is a clean sweep along the origin, 1 is pure noise"
+                                                 ValueChanged="FieldChanged" />
+                        <TextBlock Text="Seed" Style="{StaticResource SectionLabelStyle}" />
+                        <controls:NumericDragBox x:Name="SeedBox"
+                                                 Width="56"
+                                                 Minimum="0"
+                                                 Maximum="9999"
+                                                 DragStep="1"
+                                                 Format="0"
+                                                 ToolTip="Same seed, same pattern — the export matches the preview"
+                                                 ValueChanged="FieldChanged" />
+                    </WrapPanel>
+                </StackPanel>
+
+                <StackPanel x:Name="DustPanel">
+                    <TextBlock Text="Wind and pieces" FontWeight="SemiBold" Margin="0,16,0,4" />
+                    <WrapPanel>
+                        <TextBlock Text="Pieces per glyph" Style="{StaticResource SectionLabelStyle}" />
+                        <controls:NumericDragBox x:Name="ParticleCountBox"
+                                                 Width="56"
+                                                 Margin="0,0,16,0"
+                                                 Minimum="0"
+                                                 Maximum="64"
+                                                 DragStep="1"
+                                                 Format="0"
+                                                 ValueChanged="FieldChanged" />
+                        <TextBlock Text="Piece size (× font size)" Style="{StaticResource SectionLabelStyle}" />
+                        <controls:NumericDragBox x:Name="ParticleSizeBox"
+                                                 Width="62"
+                                                 Margin="0,0,16,0"
+                                                 Minimum="0.005"
+                                                 Maximum="0.5"
+                                                 DragStep="0.002"
+                                                 Format="0.###"
+                                                 ValueChanged="FieldChanged" />
+                        <TextBlock Text="Wind direction (°)" Style="{StaticResource SectionLabelStyle}" />
+                        <controls:NumericDragBox x:Name="WindAngleBox"
+                                                 Width="62"
+                                                 Margin="0,0,16,0"
+                                                 Minimum="0"
+                                                 Maximum="360"
+                                                 DragStep="1"
+                                                 Format="0"
+                                                 ToolTip="0 blows right, 90 blows down, 180 blows left, 270 blows up"
+                                                 ValueChanged="FieldChanged" />
+                        <TextBlock Text="Wind force (× font size)" Style="{StaticResource SectionLabelStyle}" />
+                        <controls:NumericDragBox x:Name="WindForceBox"
+                                                 Width="62"
+                                                 Margin="0,0,16,0"
+                                                 Minimum="0"
+                                                 Maximum="8"
+                                                 DragStep="0.02"
+                                                 Format="0.##"
+                                                 ValueChanged="FieldChanged" />
+                        <TextBlock Text="Spread (°)" Style="{StaticResource SectionLabelStyle}" />
+                        <controls:NumericDragBox x:Name="WindSpreadBox"
+                                                 Width="62"
+                                                 Margin="0,0,16,0"
+                                                 Minimum="0"
+                                                 Maximum="180"
+                                                 DragStep="1"
+                                                 Format="0"
+                                                 ValueChanged="FieldChanged" />
+                        <TextBlock Text="Piece spin (°)" Style="{StaticResource SectionLabelStyle}" />
+                        <controls:NumericDragBox x:Name="ParticleSpinBox"
+                                                 Width="62"
+                                                 Minimum="-1440"
+                                                 Maximum="1440"
+                                                 DragStep="5"
+                                                 Format="0"
+                                                 ValueChanged="FieldChanged" />
+                    </WrapPanel>
+                </StackPanel>
+            </StackPanel>
+        </ScrollViewer>
+
+        <Grid Grid.Row="2" Margin="0,12,0,0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <WrapPanel Grid.Row="0" Margin="0,0,0,6">
+                <TextBlock Text="Preview size" Style="{StaticResource SectionLabelStyle}" />
+                <controls:NumericDragBox x:Name="PreviewSizeBox"
+                                         Width="64"
+                                         Margin="0,0,8,0"
+                                         Minimum="8"
+                                         Maximum="400"
+                                         DragStep="0.5"
+                                         Format="0.#"
+                                         ToolTip="Font size used by this preview only — it never touches the profile"
+                                         ValueChanged="PreviewSizeChanged" />
+                <TextBlock Text="Preview text" Style="{StaticResource SectionLabelStyle}" Margin="16,0,0,0" />
+                <TextBox x:Name="PreviewTextBox"
+                         Width="180"
+                         Margin="0,0,8,0"
+                         Text="Sample Text"
+                         TextChanged="PreviewTextChanged"
+                         ToolTip="Text shown in this preview only — it never touches the profile" />
+                <TextBlock Text="the loop shows the exit at the end of a short cue"
+                           FontSize="11"
+                           VerticalAlignment="Center"
+                           Foreground="{StaticResource SubtleTextBrush}" />
+            </WrapPanel>
+
+            <Border Grid.Row="1" Height="230" Background="#FF14141A" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1">
+                <controls:SubtitleOverlay x:Name="PreviewOverlay" IsHitTestVisible="False" />
+            </Border>
+        </Grid>
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button Content="Cancel" MinWidth="90" IsCancel="True" Click="CancelClick" />
+            <Button Content="Save profile" MinWidth="120" IsDefault="True" Style="{StaticResource AccentButtonStyle}" Click="SaveClick" />
+        </StackPanel>
+    </Grid>
+</Window>

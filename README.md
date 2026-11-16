@@ -402,7 +402,25 @@ Nothing is built locally; GitHub Actions is the build authority
   natives in `runtimes\cuda12\win-<arch>`, so GPU transcription works on a machine with a driver and
   the toolkit, and a machine without one still has the CPU fallback to walk on to.
 
-The CUDA natives themselves are **not** shipped — `ggml-cuda-whisper.dll` alone is 538 MB. The
+**Only one CUDA native is missing from the download: `ggml-cuda-whisper.dll`, 538 MB.** The four small
+ones (`whisper.dll`, `ggml-whisper.dll`, `ggml-base-whisper.dll`, `ggml-cpu-whisper.dll`) ship with the
+app, because they are **not** the same files as the CPU runtime's copies of those names — this is worth
+reading twice:
+
+- whisper.net puts its backends into ggml's registry with a **static import**, not a folder scan. The
+  CUDA package's `ggml-whisper.dll` imports `ggml_backend_cuda_reg` from `ggml-cuda-whisper.dll`; the
+  CPU package's `ggml-whisper.dll` imports only `ggml_backend_cpu_reg`.
+- So a CUDA folder assembled from "the big CUDA file plus whatever else was lying around" has exactly
+  one backend. whisper then logs `backends = 1` and `no GPU found`, every file is present, the module
+  loads fine when asked directly, and nothing says why. Copying the CPU package's
+  `ggml-base-whisper.dll` even *looks* right, because both packages' copies of that file are the same
+  size — they are not the same bytes, and the CPU copy is a CPU file.
+- GPU diagnostics therefore prints an **is this a CUDA set or a copy of the CPU one?** block: it reads
+  `ggml-whisper.dll`'s import table for `ggml_backend_cuda_reg`, compares `whisper.dll` and
+  `ggml-whisper.dll` against the CPU fallback's copies and states the verdict. The build refuses to
+  publish a CUDA folder whose `ggml-whisper.dll` is the CPU build, and a transcription that would have
+  fallen back for this reason says so in the status bar and in `crash.log` instead of quietly running on
+  the CPU. The
 `runtimes\cuda12\win-<arch>` folder stays in the artifact, empty except for a
 `PUT-CUDA-LIBRARIES-HERE.txt` that says exactly which files to copy in. An empty folder is what makes
 whisper.net walk on to the CPU runtime instead of pretending it has CUDA, and dropping the files in
@@ -474,6 +492,10 @@ Two more things are reported because they are the ones with no trace in any log:
   `ggml_backend_cuda_reg`, `ggml_backend_score` and `ggml_backend_init` — a Win32 error there names
   the missing dependency (126), a version clash (127) or a 32/64-bit mismatch (193), none of which
   whisper's own log distinguishes.
+
+The one missing native comes from the NuGet package: copy `build/win-x64/ggml-cuda-whisper.dll` out of
+`Whisper.net.Runtime.Cuda12.Windows` 1.9.1 into `runtimes\cuda12\win-x64\`, next to the files already
+there. Nothing else from that package is needed, and nothing at all from `Whisper.net.Runtime`.
 
 The CUDA runtime libraries (`cudart64_12`, `cublas64_12`, `cublasLt64_12`) are **preloaded by absolute
 path from the newest CUDA 12 toolkit** before anything asks for them by name. A machine with several

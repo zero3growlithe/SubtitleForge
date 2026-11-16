@@ -635,6 +635,125 @@ namespace SubtitleForge.Services
             TimeSpan durationDifference = previous.Duration - candidate.Duration;
             return Math.Abs(durationDifference.TotalSeconds) <= DuplicateDurationTolerance.TotalSeconds;
         }
+
+        /// <summary>
+        /// The few facts that come out of a window and belong to the whole run, written from
+        /// several workers at once.
+        /// </summary>
+        private sealed class TranscribeState
+        {
+            public string DetectedLanguage { get; set; } = string.Empty;
+
+            public bool UsedWordTimings { get; set; }
+        }
+
+        /// <summary>
+        /// Turns "worker 2 is 40 % through its window" into one overall percentage: windows that are
+        /// already done plus the fraction each worker is inside right now, over the window count.
+        /// Without this the bar would only jump when a whole window finished, or would race
+        /// backwards when two workers report out of order.
+        /// </summary>
+        private sealed class WindowProgressTracker
+        {
+            private readonly IProgress<double>? progress;
+            private readonly double[] windowFractions;
+            private readonly int windowCount;
+            private readonly object gate = new object();
+            private double finishedWindows;
+
+            public WindowProgressTracker(IProgress<double>? progress, int windowCount, int workerCount)
+            {
+                this.progress = progress;
+                this.windowCount = Math.Max(1, windowCount);
+                this.windowFractions = new double[Math.Max(1, workerCount)];
+            }
+
+            public void BeginWindow(int workerSlot)
+            {
+                lock (gate)
+                {
+                    windowFractions[workerSlot] = 0.0;
+                }
+            }
+
+            public void CompleteWindow(int workerSlot)
+            {
+                if (progress == null)
+                {
+                    return;
+                }
+
+                double fraction;
+                lock (gate)
+                {
+                    windowFractions[workerSlot] = 0.0;
+                    finishedWindows += 1.0;
+                    fraction = (finishedWindows + Sum()) / windowCount;
+                }
+
+                progress.Report(Clamp(fraction));
+            }
+
+            public void Report(int workerSlot, int percent)
+            {
+                if (progress == null)
+                {
+                    return;
+                }
+
+                double windowFraction = percent / 100.0;
+                if (windowFraction < 0.0)
+                {
+                    windowFraction = 0.0;
+                }
+
+                if (windowFraction > 1.0)
+                {
+                    windowFraction = 1.0;
+                }
+
+                double overall;
+                lock (gate)
+                {
+                    // Progress inside one window never runs backwards, even if the native side
+                    // reports a smaller number after seeking.
+                    if (windowFraction > windowFractions[workerSlot])
+                    {
+                        windowFractions[workerSlot] = windowFraction;
+                    }
+
+                    overall = (finishedWindows + Sum()) / windowCount;
+                }
+
+                progress.Report(Clamp(overall));
+            }
+
+            private double Sum()
+            {
+                double total = 0.0;
+                for (int index = 0; index < windowFractions.Length; index++)
+                {
+                    total += windowFractions[index];
+                }
+
+                return total;
+            }
+
+            private static double Clamp(double value)
+            {
+                if (value < 0.0)
+                {
+                    return 0.0;
+                }
+
+                if (value > 1.0)
+                {
+                    return 1.0;
+                }
+
+                return value;
+            }
+        }
     }
 
     /// <summary>
@@ -836,124 +955,6 @@ namespace SubtitleForge.Services
                     return "CPU (no AVX)";
                 default:
                     return library.Value.ToString();
-            }
-        }
-        /// <summary>
-        /// The few facts that come out of a window and belong to the whole run, written from
-        /// several workers at once.
-        /// </summary>
-        private sealed class TranscribeState
-        {
-            public string DetectedLanguage { get; set; } = string.Empty;
-
-            public bool UsedWordTimings { get; set; }
-        }
-
-        /// <summary>
-        /// Turns "worker 2 is 40 % through its window" into one overall percentage: windows that are
-        /// already done plus the fraction each worker is inside right now, over the window count.
-        /// Without this the bar would only jump when a whole window finished, or would race
-        /// backwards when two workers report out of order.
-        /// </summary>
-        private sealed class WindowProgressTracker
-        {
-            private readonly IProgress<double>? progress;
-            private readonly double[] windowFractions;
-            private readonly int windowCount;
-            private readonly object gate = new object();
-            private double finishedWindows;
-
-            public WindowProgressTracker(IProgress<double>? progress, int windowCount, int workerCount)
-            {
-                this.progress = progress;
-                this.windowCount = Math.Max(1, windowCount);
-                this.windowFractions = new double[Math.Max(1, workerCount)];
-            }
-
-            public void BeginWindow(int workerSlot)
-            {
-                lock (gate)
-                {
-                    windowFractions[workerSlot] = 0.0;
-                }
-            }
-
-            public void CompleteWindow(int workerSlot)
-            {
-                if (progress == null)
-                {
-                    return;
-                }
-
-                double fraction;
-                lock (gate)
-                {
-                    windowFractions[workerSlot] = 0.0;
-                    finishedWindows += 1.0;
-                    fraction = (finishedWindows + Sum()) / windowCount;
-                }
-
-                progress.Report(Clamp(fraction));
-            }
-
-            public void Report(int workerSlot, int percent)
-            {
-                if (progress == null)
-                {
-                    return;
-                }
-
-                double windowFraction = percent / 100.0;
-                if (windowFraction < 0.0)
-                {
-                    windowFraction = 0.0;
-                }
-
-                if (windowFraction > 1.0)
-                {
-                    windowFraction = 1.0;
-                }
-
-                double overall;
-                lock (gate)
-                {
-                    // Progress inside one window never runs backwards, even if the native side
-                    // reports a smaller number after seeking.
-                    if (windowFraction > windowFractions[workerSlot])
-                    {
-                        windowFractions[workerSlot] = windowFraction;
-                    }
-
-                    overall = (finishedWindows + Sum()) / windowCount;
-                }
-
-                progress.Report(Clamp(overall));
-            }
-
-            private double Sum()
-            {
-                double total = 0.0;
-                for (int index = 0; index < windowFractions.Length; index++)
-                {
-                    total += windowFractions[index];
-                }
-
-                return total;
-            }
-
-            private static double Clamp(double value)
-            {
-                if (value < 0.0)
-                {
-                    return 0.0;
-                }
-
-                if (value > 1.0)
-                {
-                    return 1.0;
-                }
-
-                return value;
             }
         }
     }

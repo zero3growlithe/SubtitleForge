@@ -62,6 +62,15 @@
                     Padding="10,4"
                     Click="GpuDiagnosticsClick"
                     ToolTip="Check the driver, the CUDA toolkit, the CUDA libraries and a real CUDA model load" />
+            <TextBlock Text="Parts" Style="{StaticResource SectionLabelStyle}"
+                       ToolTip="How many 150-second parts are transcribed at the same time. Each one gets its own decoder, so the thread budget is split between them" />
+            <ComboBox x:Name="WorkersComboBox" Width="52" Margin="0,0,12,0" SelectionChanged="WorkersSelectionChanged"
+                      ToolTip="Parallel parts. 1 = one at a time (always the case on GPU)">
+                <ComboBoxItem Content="1" />
+                <ComboBoxItem Content="2" />
+                <ComboBoxItem Content="3" />
+                <ComboBoxItem Content="4" />
+            </ComboBox>
             <CheckBox x:Name="TranslateCheckBox" Content="Translate → EN" />
             <Button x:Name="TranscribeButton" Content="Transcribe" Style="{StaticResource AccentButtonStyle}" Click="TranscribeClick" />
             <Button x:Name="CancelButton" Content="Cancel" Click="CancelClick" IsEnabled="False" />

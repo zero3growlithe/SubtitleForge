@@ -19,6 +19,9 @@ namespace SubtitleForge.Services
 
         public int Threads { get; set; } = Math.Max(2, Math.Min(8, Environment.ProcessorCount - 1));
 
+        /// <summary>How many audio parts are decoded at the same time. 1 keeps it sequential.</summary>
+        public int TranscriptionWorkers { get; set; } = 1;
+
         public bool SkipNonSpeech { get; set; } = true;
 
         public int MaximumCharactersPerCue { get; set; } = 48;
@@ -177,6 +180,16 @@ namespace SubtitleForge.Services
             if (Threads > 16)
             {
                 Threads = 16;
+            }
+
+            if (TranscriptionWorkers < 1)
+            {
+                TranscriptionWorkers = 1;
+            }
+
+            if (TranscriptionWorkers > 4)
+            {
+                TranscriptionWorkers = 4;
             }
 
             if (MaximumCharactersPerCue < 16)

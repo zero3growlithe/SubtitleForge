@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -27,6 +28,12 @@ namespace SubtitleForge.Services
         public bool SkipNonSpeech { get; set; } = true;
 
         public int Threads { get; set; } = 4;
+
+        /// <summary>
+        /// How many windows may be decoded at the same time. Each one owns a whisper decoder, so
+        /// the thread budget is split between them; 1 keeps the old one-at-a-time behaviour.
+        /// </summary>
+        public int ParallelWindows { get; set; } = 1;
 
         public string? InitialPrompt { get; set; }
     }
@@ -157,150 +164,151 @@ namespace SubtitleForge.Services
 
             using (factory)
             {
-                WhisperProcessorBuilder builder = factory.CreateBuilder()
-                    .WithThreads(Math.Max(1, request.Threads))
-                    // Whisper otherwise feeds the previous window back in as the initial prompt and
-                    // can loop on one sentence for minutes; drop that context.
-                    .WithNoContext()
-                    .WithLanguage(string.IsNullOrWhiteSpace(request.Language) ? "auto" : request.Language)
-                    .SplitOnWord()
-                    // Token timestamps are what make a two-word cue land on the two words that were
-                    // actually spoken. Without them the only timing whisper gives is the whole
-                    // segment, and splitting long text has to guess where each piece starts.
-                    .WithTokenTimestamps()
-                    .WithProgressHandler(delegate (int percent)
-                    {
-                        if (progress != null)
-                        {
-                            double fraction = percent / 100.0;
-                            if (fraction < 0.0)
-                            {
-                                fraction = 0.0;
-                            }
+                string language = string.IsNullOrWhiteSpace(request.Language) ? "auto" : request.Language;
 
-                            if (fraction > 1.0)
-                            {
-                                fraction = 1.0;
-                            }
-
-                            progress.Report(fraction);
-                        }
-                    });
-
-                if (request.TranslateToEnglish)
+                // Every window is a separate piece of work, so several can be decoded at the same
+                // time. Each one needs its own processor: the factory shares the model weights, the
+                // decoder state is per processor. The thread budget is split between them, because
+                // whisper already uses all the threads it is given inside a single decode — running
+                // four decoders on four threads each is not four times faster, it is roughly the
+                // same speed with more memory in play. It wins when the decode is bound by memory
+                // rather than by arithmetic.
+                int requestedWorkers = Math.Max(1, request.ParallelWindows);
+                if (gpuRequested && requestedWorkers > 1)
                 {
-                    builder = builder.WithTranslate();
+                    requestedWorkers = 1;
+                    status?.Report("GPU decodes one part at a time — parallel parts only pay off on CPU.");
                 }
 
-                if (!string.IsNullOrWhiteSpace(request.InitialPrompt))
+                int usableWindows = 0;
+                for (int index = 0; index < windows.Count; index++)
                 {
-                    builder = builder.WithPrompt(request.InitialPrompt!);
+                    if (File.Exists(windows[index].WavPath))
+                    {
+                        usableWindows++;
+                    }
                 }
 
-                // Not a using block: Whisper.net throws "Cannot dispose while processing, please
-                // use DisposeAsync instead" when Dispose() lands while the native side is still
-                // winding down, which is exactly the state pressing Cancel leaves it in. The async
-                // dispose waits for the processing to stop before it releases the model.
-                WhisperProcessor processor = builder.Build();
-                try
+                int workerCount = Math.Max(1, Math.Min(requestedWorkers, usableWindows));
+                int threadsPerWorker = Math.Max(1, request.Threads / workerCount);
+                WindowProgressTracker tracker = new WindowProgressTracker(progress, windows.Count, workerCount);
+                TranscribeState state = new TranscribeState();
+                object stateGate = new object();
+
+                if (workerCount > 1)
                 {
-                    int windowIndex = 0;
-                    foreach (TranscriptionWindow window in windows)
+                    status?.Report("Transcribing " + windows.Count.ToString(CultureInfo.InvariantCulture)
+                        + " parts, " + workerCount.ToString(CultureInfo.InvariantCulture) + " at a time…");
+                }
+
+                Func<int, WhisperProcessor> createProcessor = delegate (int workerSlot)
+                {
+                    WhisperProcessorBuilder workerBuilder = factory.CreateBuilder()
+                        .WithThreads(threadsPerWorker)
+                        // Whisper otherwise feeds the previous window back in as the initial prompt
+                        // and can loop on one sentence for minutes; drop that context.
+                        .WithNoContext()
+                        .WithLanguage(language)
+                        .SplitOnWord()
+                        // Token timestamps are what make a two-word cue land on the two words that
+                        // were actually spoken. Without them the only timing whisper gives is the
+                        // whole segment, and splitting long text has to guess where each piece starts.
+                        .WithTokenTimestamps()
+                        .WithProgressHandler(delegate (int percent)
+                        {
+                            tracker.Report(workerSlot, percent);
+                        });
+
+                    if (request.TranslateToEnglish)
                     {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        windowIndex++;
+                        workerBuilder = workerBuilder.WithTranslate();
+                    }
 
-                        if (!File.Exists(window.WavPath))
+                    if (!string.IsNullOrWhiteSpace(request.InitialPrompt))
+                    {
+                        workerBuilder = workerBuilder.WithPrompt(request.InitialPrompt!);
+                    }
+
+                    return workerBuilder.Build();
+                };
+
+                ConcurrentQueue<int> pending = new ConcurrentQueue<int>();
+                for (int index = 0; index < windows.Count; index++)
+                {
+                    if (File.Exists(windows[index].WavPath))
+                    {
+                        pending.Enqueue(index);
+                    }
+                }
+
+                // One list per window, stitched together in window order afterwards, so parallel
+                // decoding still produces cues in timeline order no matter which worker finished first.
+                List<List<SubtitleCue>> buckets = new List<List<SubtitleCue>>(windows.Count);
+                for (int index = 0; index < windows.Count; index++)
+                {
+                    buckets.Add(new List<SubtitleCue>());
+                }
+
+                Task[] jobs = new Task[workerCount];
+                for (int slot = 0; slot < workerCount; slot++)
+                {
+                    int workerSlot = slot;
+                    jobs[slot] = Task.Run(
+                        async delegate
                         {
-                            continue;
-                        }
-
-                        if (windows.Count > 1)
-                        {
-                            status?.Report("Transcribing part " + windowIndex.ToString(CultureInfo.InvariantCulture)
-                                + " of " + windows.Count.ToString(CultureInfo.InvariantCulture) + "…");
-                        }
-
-                        double windowOffset = window.OffsetSeconds;
-                        double skipBefore = window.SkipBeforeSeconds;
-                        int windowNumber = windowIndex;
-
-                        using (FileStream waveStream = File.OpenRead(window.WavPath))
-                        {
-                            await Task.Run(
-                                async delegate
+                            // Not a using block: Whisper.net throws "Cannot dispose while processing,
+                            // please use DisposeAsync instead" when Dispose() lands while the native
+                            // side is still winding down, which is exactly the state pressing Cancel
+                            // leaves it in. The async dispose waits for processing to stop first.
+                            WhisperProcessor processor = createProcessor(workerSlot);
+                            try
+                            {
+                                while (pending.TryDequeue(out int windowIndex))
                                 {
-                                    await foreach (SegmentData segment in processor
-                                        .ProcessAsync(waveStream, cancellationToken)
-                                        .ConfigureAwait(false))
-                                    {
-                                        cancellationToken.ThrowIfCancellationRequested();
-
-                                        string text = (segment.Text ?? string.Empty).Trim();
-                                        if (text.Length == 0)
-                                        {
-                                            continue;
-                                        }
-
-                                        if (request.SkipNonSpeech && IsNonSpeech(text))
-                                        {
-                                            continue;
-                                        }
-
-                                        // Overlap between neighbouring windows: the previous
-                                        // window already transcribed this bit.
-                                        if (skipBefore > 0.0 && segment.Start.TotalSeconds < skipBefore)
-                                        {
-                                            continue;
-                                        }
-
-                                        if (detectedLanguage.Length == 0 && !string.IsNullOrWhiteSpace(segment.Language))
-                                        {
-                                            detectedLanguage = segment.Language;
-                                        }
-
-                                        // Whisper gives the words and the time each one was spoken, so
-                                        // every word becomes its own cue here and the "two to four
-                                        // words per subtitle" part is decided later against the
-                                        // character budget. A segment with no usable token timings is
-                                        // still handled the old way: one cue, cut by hand afterwards.
-                                        List<SubtitleCue> wordCues = BuildWordCues(segment, windowOffset, skipBefore);
-                                        if (wordCues.Count > 0)
-                                        {
-                                            cues.AddRange(wordCues);
-                                            usedWordTimings = true;
-                                            continue;
-                                        }
-
-                                        TimeSpan start = segment.Start + TimeSpan.FromSeconds(windowOffset);
-                                        TimeSpan end = segment.End + TimeSpan.FromSeconds(windowOffset);
-                                        if (end <= start)
-                                        {
-                                            double estimated = Math.Max(0.4, text.Length * 0.045);
-                                            end = start + TimeSpan.FromSeconds(estimated);
-                                        }
-
-                                        cues.Add(new SubtitleCue(start, end, text, segment.Probability));
-                                    }
-                                },
-                                cancellationToken).ConfigureAwait(false);
-                        }
-
-                        progress?.Report((double)windowNumber / windows.Count);
-                    }
+                                    cancellationToken.ThrowIfCancellationRequested();
+                                    tracker.BeginWindow(workerSlot);
+                                    await TranscribeWindowAsync(
+                                        processor,
+                                        windows[windowIndex],
+                                        windowIndex + 1,
+                                        windows.Count,
+                                        request.SkipNonSpeech,
+                                        buckets[windowIndex],
+                                        state,
+                                        stateGate,
+                                        status,
+                                        cancellationToken).ConfigureAwait(false);
+                                    tracker.CompleteWindow(workerSlot);
+                                }
+                            }
+                            finally
+                            {
+                                try
+                                {
+                                    await processor.DisposeAsync().ConfigureAwait(false);
+                                }
+                                catch (Exception)
+                                {
+                                    // A disposal that still fails must not replace the cancellation
+                                    // the caller is waiting for: the model is going away either way.
+                                }
+                            }
+                        },
+                        cancellationToken);
                 }
-                finally
+
+                await Task.WhenAll(jobs).ConfigureAwait(false);
+
+                for (int index = 0; index < buckets.Count; index++)
                 {
-                    try
+                    if (buckets[index].Count > 0)
                     {
-                        await processor.DisposeAsync().ConfigureAwait(false);
-                    }
-                    catch (Exception)
-                    {
-                        // A disposal that still fails must not replace the cancellation the caller
-                        // is waiting for: the model is going away either way.
+                        cues.AddRange(buckets[index]);
                     }
                 }
+
+                detectedLanguage = state.DetectedLanguage;
+                usedWordTimings = state.UsedWordTimings;
             }
 
             stopwatch.Stop();
@@ -312,6 +320,103 @@ namespace SubtitleForge.Services
             result.Elapsed = stopwatch.Elapsed;
             progress?.Report(1.0);
             return result;
+        }
+
+        /// <summary>
+        /// Decodes one window into the caller's own cue list. Several workers call this at the same
+        /// time, so nothing here is shared: the only mutable state it touches is <paramref name="state"/>
+        /// and that is written under <paramref name="stateGate"/>.
+        /// </summary>
+        private static async Task TranscribeWindowAsync(
+            WhisperProcessor processor,
+            TranscriptionWindow window,
+            int windowNumber,
+            int windowCount,
+            bool skipNonSpeech,
+            List<SubtitleCue> destination,
+            TranscribeState state,
+            object stateGate,
+            IProgress<string>? status,
+            CancellationToken cancellationToken)
+        {
+            if (!File.Exists(window.WavPath))
+            {
+                return;
+            }
+
+            if (windowCount > 1)
+            {
+                status?.Report("Transcribing part " + windowNumber.ToString(CultureInfo.InvariantCulture)
+                    + " of " + windowCount.ToString(CultureInfo.InvariantCulture) + "…");
+            }
+
+            double windowOffset = window.OffsetSeconds;
+            double skipBefore = window.SkipBeforeSeconds;
+
+            using (FileStream waveStream = File.OpenRead(window.WavPath))
+            {
+                await foreach (SegmentData segment in processor
+                    .ProcessAsync(waveStream, cancellationToken)
+                    .ConfigureAwait(false))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    string text = (segment.Text ?? string.Empty).Trim();
+                    if (text.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    if (skipNonSpeech && IsNonSpeech(text))
+                    {
+                        continue;
+                    }
+
+                    // Overlap between neighbouring windows: the previous window already
+                    // transcribed this bit.
+                    if (skipBefore > 0.0 && segment.Start.TotalSeconds < skipBefore)
+                    {
+                        continue;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(segment.Language))
+                    {
+                        lock (stateGate)
+                        {
+                            if (state.DetectedLanguage.Length == 0)
+                            {
+                                state.DetectedLanguage = segment.Language;
+                            }
+                        }
+                    }
+
+                    // Whisper gives the words and the time each one was spoken, so every word
+                    // becomes its own cue here and the "two to four words per subtitle" part is
+                    // decided later against the character budget. A segment with no usable token
+                    // timings is still handled the old way: one cue, cut by hand afterwards.
+                    List<SubtitleCue> wordCues = BuildWordCues(segment, windowOffset, skipBefore);
+                    if (wordCues.Count > 0)
+                    {
+                        destination.AddRange(wordCues);
+                        lock (stateGate)
+                        {
+                            state.UsedWordTimings = true;
+                        }
+
+                        continue;
+                    }
+
+                    TimeSpan start = segment.Start + TimeSpan.FromSeconds(windowOffset);
+                    TimeSpan end = segment.End + TimeSpan.FromSeconds(windowOffset);
+                    if (end <= start)
+                    {
+                        double estimated = Math.Max(0.4, text.Length * 0.045);
+                        end = start + TimeSpan.FromSeconds(estimated);
+                    }
+
+                    destination.Add(new SubtitleCue(start, end, text, segment.Probability));
+                }
+            }
         }
 
         /// <summary>
@@ -731,6 +836,124 @@ namespace SubtitleForge.Services
                     return "CPU (no AVX)";
                 default:
                     return library.Value.ToString();
+            }
+        }
+        /// <summary>
+        /// The few facts that come out of a window and belong to the whole run, written from
+        /// several workers at once.
+        /// </summary>
+        private sealed class TranscribeState
+        {
+            public string DetectedLanguage { get; set; } = string.Empty;
+
+            public bool UsedWordTimings { get; set; }
+        }
+
+        /// <summary>
+        /// Turns "worker 2 is 40 % through its window" into one overall percentage: windows that are
+        /// already done plus the fraction each worker is inside right now, over the window count.
+        /// Without this the bar would only jump when a whole window finished, or would race
+        /// backwards when two workers report out of order.
+        /// </summary>
+        private sealed class WindowProgressTracker
+        {
+            private readonly IProgress<double>? progress;
+            private readonly double[] windowFractions;
+            private readonly int windowCount;
+            private readonly object gate = new object();
+            private double finishedWindows;
+
+            public WindowProgressTracker(IProgress<double>? progress, int windowCount, int workerCount)
+            {
+                this.progress = progress;
+                this.windowCount = Math.Max(1, windowCount);
+                this.windowFractions = new double[Math.Max(1, workerCount)];
+            }
+
+            public void BeginWindow(int workerSlot)
+            {
+                lock (gate)
+                {
+                    windowFractions[workerSlot] = 0.0;
+                }
+            }
+
+            public void CompleteWindow(int workerSlot)
+            {
+                if (progress == null)
+                {
+                    return;
+                }
+
+                double fraction;
+                lock (gate)
+                {
+                    windowFractions[workerSlot] = 0.0;
+                    finishedWindows += 1.0;
+                    fraction = (finishedWindows + Sum()) / windowCount;
+                }
+
+                progress.Report(Clamp(fraction));
+            }
+
+            public void Report(int workerSlot, int percent)
+            {
+                if (progress == null)
+                {
+                    return;
+                }
+
+                double windowFraction = percent / 100.0;
+                if (windowFraction < 0.0)
+                {
+                    windowFraction = 0.0;
+                }
+
+                if (windowFraction > 1.0)
+                {
+                    windowFraction = 1.0;
+                }
+
+                double overall;
+                lock (gate)
+                {
+                    // Progress inside one window never runs backwards, even if the native side
+                    // reports a smaller number after seeking.
+                    if (windowFraction > windowFractions[workerSlot])
+                    {
+                        windowFractions[workerSlot] = windowFraction;
+                    }
+
+                    overall = (finishedWindows + Sum()) / windowCount;
+                }
+
+                progress.Report(Clamp(overall));
+            }
+
+            private double Sum()
+            {
+                double total = 0.0;
+                for (int index = 0; index < windowFractions.Length; index++)
+                {
+                    total += windowFractions[index];
+                }
+
+                return total;
+            }
+
+            private static double Clamp(double value)
+            {
+                if (value < 0.0)
+                {
+                    return 0.0;
+                }
+
+                if (value > 1.0)
+                {
+                    return 1.0;
+                }
+
+                return value;
             }
         }
     }

@@ -109,6 +109,14 @@ to keep the selection untouched while scrubbing.
   **Max sec**, no pause longer than 0.35 s comes between them and the previous line did not end
   on a full stop. That is what makes "two to four words per subtitle" track fast speech — the
   timings come from the words, not from dividing a phrase's duration by character count.
+- **Parts** in the transcription toolbar decides how many of those windows are decoded at the
+  same time (1–4). Each parallel part owns its own Whisper decoder — the model weights are
+  shared, the decoder state is not — and the thread budget is divided between them, so four
+  parts on four threads each is not four times faster: whisper already uses every thread it is
+  given inside a single decode. It helps when the decode is bound by memory rather than
+  arithmetic. CUDA always decodes one part at a time, because splitting one device between
+  decoders buys nothing and needs a slice of VRAM for each. Cues from parallel windows are
+  stitched back together in timeline order.
   **Max chars** is the character budget of one cue (spaces included) and **Max sec** the longest
   a cue may stay up; a cue is also cut when only one of the two is exceeded. A cue that is still
   shorter than the minimum on-screen time is held a little longer, but only into the silence that

@@ -269,6 +269,7 @@ namespace SubtitleForge
             GpuCheckBox.IsChecked = settings.UseGpu;
             suppressCudaCheck = false;
             TranslateCheckBox.IsChecked = settings.TranslateToEnglish;
+            SelectWorkers(settings.TranscriptionWorkers);
 
             MaxCharactersTextBox.Text = settings.MaximumCharactersPerCue.ToString(CultureInfo.InvariantCulture);
             MaxDurationTextBox.Text = settings.MaximumCueDurationSeconds.ToString("0.#", CultureInfo.InvariantCulture);
@@ -295,6 +296,7 @@ namespace SubtitleForge
 
             settings.UseGpu = GpuCheckBox.IsChecked == true;
             settings.TranslateToEnglish = TranslateCheckBox.IsChecked == true;
+            settings.TranscriptionWorkers = SelectedWorkers();
 
             int characters;
             if (int.TryParse(MaxCharactersTextBox.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out characters))
@@ -4960,6 +4962,7 @@ namespace SubtitleForge
                 request.UseGpu = App.Settings.UseGpu;
                 request.SkipNonSpeech = App.Settings.SkipNonSpeech;
                 request.Threads = App.Settings.Threads;
+                request.ParallelWindows = App.Settings.TranscriptionWorkers;
 
                 IProgress<double> progress = new Progress<double>(delegate (double fraction)
                 {
@@ -7472,6 +7475,48 @@ namespace SubtitleForge
         }
 
         // ── GPU / CUDA availability ────────────────────────────────────────
+
+        private void WorkersSelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (!IsLoaded)
+            {
+                return;
+            }
+
+            // Switching to parallel parts while the GPU does the decoding would only split the
+            // device between decoders, so the choice is kept but not honoured until it is on CPU.
+            if (GpuCheckBox.IsChecked == true && SelectedWorkers() > 1)
+            {
+                SetStatus("Parallel parts only help on the CPU — GPU always decodes one part at a time.");
+            }
+        }
+
+        private void SelectWorkers(int workers)
+        {
+            int wanted = workers;
+            if (wanted < 1)
+            {
+                wanted = 1;
+            }
+
+            if (wanted > 4)
+            {
+                wanted = 4;
+            }
+
+            WorkersComboBox.SelectedIndex = wanted - 1;
+        }
+
+        private int SelectedWorkers()
+        {
+            int index = WorkersComboBox.SelectedIndex;
+            if (index < 0)
+            {
+                return 1;
+            }
+
+            return index + 1;
+        }
 
         private void GpuCheckedChanged(object sender, RoutedEventArgs e)
         {

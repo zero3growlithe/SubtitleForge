@@ -793,37 +793,37 @@ namespace SubtitleForge.Controls
             drawingContext.PushClip(new RectangleGeometry(new Rect(ContentLeft, top, Math.Max(0.0, ContentWidth), RulerHeight)));
             try
             {
-            double viewEnd = viewStartSeconds + VisibleSeconds;
-            double seconds = Math.Floor(viewStartSeconds / step) * step;
-            while (seconds <= viewEnd + 0.0001)
-            {
-                if (seconds < -0.0001)
+                double viewEnd = viewStartSeconds + VisibleSeconds;
+                double seconds = Math.Floor(viewStartSeconds / step) * step;
+                while (seconds <= viewEnd + 0.0001)
                 {
+                    if (seconds < -0.0001)
+                    {
+                        seconds += step;
+                        continue;
+                    }
+
+                    double x = XForSeconds(seconds);
+                    bool major = Math.Abs(seconds % (step * 5.0)) < 0.001 || Math.Abs(seconds) < 0.001;
+                    double tickHeight = major ? RulerHeight - 8.0 : RulerHeight - 4.0;
+
+                    drawingContext.DrawLine(tickPen, new Point(x, top + tickHeight), new Point(x, top + RulerHeight));
+
+                    if (major)
+                    {
+                        FormattedText label = new FormattedText(
+                            FormatClock(seconds, step < 1.0),
+                            CultureInfo.InvariantCulture,
+                            FlowDirection.LeftToRight,
+                            BodyTypeface,
+                            9.5,
+                            textBrush,
+                            pixelsPerDip);
+                        drawingContext.DrawText(label, new Point(x + 3.0, top + 2.0));
+                    }
+
                     seconds += step;
-                    continue;
                 }
-
-                double x = XForSeconds(seconds);
-                bool major = Math.Abs(seconds % (step * 5.0)) < 0.001 || Math.Abs(seconds) < 0.001;
-                double tickHeight = major ? RulerHeight - 8.0 : RulerHeight - 4.0;
-
-                drawingContext.DrawLine(tickPen, new Point(x, top + tickHeight), new Point(x, top + RulerHeight));
-
-                if (major)
-                {
-                    FormattedText label = new FormattedText(
-                        FormatClock(seconds),
-                        CultureInfo.InvariantCulture,
-                        FlowDirection.LeftToRight,
-                        BodyTypeface,
-                        9.5,
-                        textBrush,
-                        pixelsPerDip);
-                    drawingContext.DrawText(label, new Point(x + 3.0, top + 2.0));
-                }
-
-                seconds += step;
-            }
             }
             finally
             {
@@ -939,14 +939,37 @@ namespace SubtitleForge.Controls
             return candidates[candidates.Length - 1];
         }
 
-        private static string FormatClock(double seconds)
+        /// <summary>
+        /// m:ss, or m:ss.t once the zoom makes half-second ticks far enough apart to label them —
+        /// without the tenth the same label would repeat twice while placing a clip edge.
+        /// </summary>
+        private static string FormatClock(double seconds, bool withTenths)
         {
-            int totalSeconds = (int)Math.Round(seconds);
-            int minutes = totalSeconds / 60;
-            int rest = totalSeconds % 60;
-            return minutes.ToString(CultureInfo.InvariantCulture)
+            if (seconds < 0.0)
+            {
+                seconds = 0.0;
+            }
+
+            if (!withTenths)
+            {
+                int totalSeconds = (int)Math.Round(seconds);
+                return (totalSeconds / 60).ToString(CultureInfo.InvariantCulture)
+                    + ":"
+                    + (totalSeconds % 60).ToString("00", CultureInfo.InvariantCulture);
+            }
+
+            int wholeSeconds = (int)Math.Floor(seconds);
+            int tenths = (int)Math.Round((seconds - wholeSeconds) * 10.0);
+            if (tenths >= 10)
+            {
+                tenths = 9;
+            }
+
+            return (wholeSeconds / 60).ToString(CultureInfo.InvariantCulture)
                 + ":"
-                + rest.ToString("00", CultureInfo.InvariantCulture);
+                + (wholeSeconds % 60).ToString("00", CultureInfo.InvariantCulture)
+                + "."
+                + tenths.ToString(CultureInfo.InvariantCulture);
         }
 
         private void DrawTrack(DrawingContext drawingContext, TimelineTrack track, int index)

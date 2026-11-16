@@ -192,7 +192,8 @@ namespace SubtitleForge
 
         private void GuardAgainstSystemMenu()
         {
-            HwndSource? source = PresentationSource.FromVisual(this) as HwndSource;
+            System.Windows.Interop.HwndSource? source =
+                PresentationSource.FromVisual(this) as System.Windows.Interop.HwndSource;
             if (source == null)
             {
                 return;

@@ -474,6 +474,7 @@ namespace SubtitleForge
             videoPath = path;
             RememberDirectory(path);
             durationSeconds = 0.0;
+            ClearTranscribeRange();
             UpdateEmptyHint();
 
             if (proxyCancellation != null)
@@ -1588,6 +1589,25 @@ namespace SubtitleForge
             baseline.Opacity = 0.35;
             TimelineCanvas.Children.Add(baseline);
 
+            // The marked transcribe range sits under the cue marks, so the strip under the preview
+            // shows the same span the ruler does.
+            if (transcribeRangeStart.HasValue && transcribeRangeEnd.HasValue)
+            {
+                double rangeFrom = Math.Max(0.0, Math.Min(transcribeRangeStart.Value, transcribeRangeEnd.Value));
+                double rangeTo = Math.Min(total, Math.Max(transcribeRangeStart.Value, transcribeRangeEnd.Value));
+                if (rangeTo > rangeFrom)
+                {
+                    Rectangle band = new Rectangle();
+                    band.Fill = accent;
+                    band.Opacity = 0.22;
+                    band.Width = Math.Max(1.0, ((rangeTo - rangeFrom) / total) * width);
+                    band.Height = height;
+                    Canvas.SetLeft(band, (rangeFrom / total) * width);
+                    Canvas.SetTop(band, 0.0);
+                    TimelineCanvas.Children.Add(band);
+                }
+            }
+
             List<SubtitleCue> selectedCues = SelectedCueList();
             HashSet<SubtitleCue> selectedLookup = new HashSet<SubtitleCue>(selectedCues);
             foreach (SubtitleCue cue in cues)
@@ -2279,6 +2299,336 @@ namespace SubtitleForge
             DrawTimeline();
         }
 
+        // ── Transcribe range ───────────────────────────────────────────────
+        //
+        // Transcribing used to be all-or-nothing: every cue was thrown away and replaced. A range
+        // narrows that to one span — the cues inside it are erased and the fresh transcription goes
+        // in their place — which is what fixing one half-heard line needs.
+
+        private enum TranscribeRangeMode
+        {
+            WholeVideo,
+            Range,
+            Invalid
+        }
+
+        private double? transcribeRangeStart;
+        private double? transcribeRangeEnd;
+
+        private static string FormatRangeClock(double seconds)
+        {
+            return SubtitleCue.FormatTimestamp(TimeSpan.FromSeconds(seconds < 0.0 ? 0.0 : seconds));
+        }
+
+        private static bool TryReadRangeBox(string? text, out double? seconds)
+        {
+            seconds = null;
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return true;
+            }
+
+            TimeSpan parsed;
+            if (!SubtitleCue.TryParseTimestamp(text, out parsed))
+            {
+                return false;
+            }
+
+            seconds = parsed < TimeSpan.Zero ? 0.0 : parsed.TotalSeconds;
+            return true;
+        }
+
+        private void TrackScrollChanged(object sender, ScrollChangedEventArgs e)
+        {
+            // The ruler is painted a second time at the scroll offset, so it stays in sight however
+            // many tracks push the rows past the bottom of the panel.
+            TrackTimelineView.StickyOffset = TrackScrollViewer.VerticalOffset;
+        }
+
+        private void RangeStartClick(object sender, RoutedEventArgs e)
+        {
+            transcribeRangeStart = CurrentPosition.TotalSeconds;
+            RangeStartBox.Text = FormatRangeClock(transcribeRangeStart.Value);
+            ApplyRangeToTimeline("Range starts at " + FormatRangeClock(transcribeRangeStart.Value) + ".");
+        }
+
+        private void RangeEndClick(object sender, RoutedEventArgs e)
+        {
+            transcribeRangeEnd = CurrentPosition.TotalSeconds;
+            RangeEndBox.Text = FormatRangeClock(transcribeRangeEnd.Value);
+            ApplyRangeToTimeline("Range ends at " + FormatRangeClock(transcribeRangeEnd.Value) + ".");
+        }
+
+        private void RangeFromSelectionClick(object sender, RoutedEventArgs e)
+        {
+            List<SubtitleCue> selection = SelectedCueList();
+            if (selection.Count == 0)
+            {
+                SetStatus("Select one or more cues first — their span becomes the transcribe range.");
+                return;
+            }
+
+            double start = double.MaxValue;
+            double end = double.MinValue;
+            foreach (SubtitleCue cue in selection)
+            {
+                start = Math.Min(start, cue.Start.TotalSeconds);
+                end = Math.Max(end, cue.End.TotalSeconds);
+            }
+
+            transcribeRangeStart = start;
+            transcribeRangeEnd = end;
+            RangeStartBox.Text = FormatRangeClock(start);
+            RangeEndBox.Text = FormatRangeClock(end);
+            ApplyRangeToTimeline(
+                "Range taken from " + selection.Count.ToString(CultureInfo.InvariantCulture) + " selected cue(s).");
+        }
+
+        private void RangeClearClick(object sender, RoutedEventArgs e)
+        {
+            ClearTranscribeRange();
+            ApplyRangeToTimeline("Transcribing the whole video again.");
+        }
+
+        /// <summary>
+        /// Forgets the range without touching the controls' messages. A new video is not the video
+        /// the range was measured on, so it must never survive a load.
+        /// </summary>
+        private void ClearTranscribeRange()
+        {
+            transcribeRangeStart = null;
+            transcribeRangeEnd = null;
+            if (RangeStartBox != null)
+            {
+                RangeStartBox.Text = string.Empty;
+            }
+
+            if (RangeEndBox != null)
+            {
+                RangeEndBox.Text = string.Empty;
+            }
+
+            if (TrackTimelineView != null)
+            {
+                TrackTimelineView.SetRange(null, null);
+            }
+
+            if (TranscribeButton != null)
+            {
+                TranscribeButton.ToolTip = "Transcribe the whole video";
+            }
+        }
+
+        private void RangeBoxChanged(object sender, RoutedEventArgs e)
+        {
+            ReadRangeBoxes();
+        }
+
+        private void RangeBoxKeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key != Key.Enter && e.Key != Key.Return)
+            {
+                return;
+            }
+
+            ReadRangeBoxes();
+            e.Handled = true;
+        }
+
+        /// <summary>
+        /// Reads the two boxes back. A box that cannot be parsed turns the range off instead of
+        /// guessing, so a typo can never quietly re-transcribe half the video.
+        /// </summary>
+        private void ReadRangeBoxes()
+        {
+            double? start;
+            double? end;
+            if (!TryReadRangeBox(RangeStartBox.Text, out start) || !TryReadRangeBox(RangeEndBox.Text, out end))
+            {
+                transcribeRangeStart = null;
+                transcribeRangeEnd = null;
+                ApplyRangeToTimeline("The range has to look like 00:01:20.000 or a plain number of seconds.");
+                return;
+            }
+
+            transcribeRangeStart = start;
+            transcribeRangeEnd = end;
+            ApplyRangeToTimeline(null);
+        }
+
+        /// <summary>
+        /// Puts the range on the ruler and spells it out on the Transcribe button, so what the next
+        /// run will cover is never a guess.
+        /// </summary>
+        private void ApplyRangeToTimeline(string? message)
+        {
+            if (transcribeRangeStart.HasValue && transcribeRangeEnd.HasValue)
+            {
+                if (transcribeRangeEnd.Value < transcribeRangeStart.Value)
+                {
+                    double swap = transcribeRangeStart.Value;
+                    transcribeRangeStart = transcribeRangeEnd.Value;
+                    transcribeRangeEnd = swap;
+                    RangeStartBox.Text = FormatRangeClock(transcribeRangeStart.Value);
+                    RangeEndBox.Text = FormatRangeClock(transcribeRangeEnd.Value);
+                }
+
+                if (durationSeconds > 0.0 && transcribeRangeEnd.Value > durationSeconds)
+                {
+                    transcribeRangeEnd = durationSeconds;
+                    RangeEndBox.Text = FormatRangeClock(durationSeconds);
+                }
+            }
+
+            TrackTimelineView.SetRange(transcribeRangeStart, transcribeRangeEnd);
+            DrawTimeline();
+
+            bool hasRange = transcribeRangeStart.HasValue && transcribeRangeEnd.HasValue;
+            TranscribeButton.ToolTip = hasRange
+                ? "Transcribe only " + FormatRangeClock(transcribeRangeStart.Value) + " → "
+                    + FormatRangeClock(transcribeRangeEnd.Value) + " and replace the cues in it"
+                : "Transcribe the whole video";
+
+            if (!string.IsNullOrEmpty(message))
+            {
+                SetStatus(message);
+            }
+        }
+
+        /// <summary>
+        /// Decides what Transcribe covers: everything, the marked span, or nothing because the span
+        /// makes no sense. A span shorter than a fifth of a second is refused rather than dropped,
+        /// so a mistyped box never turns into a full re-transcription.
+        /// </summary>
+        private TranscribeRangeMode ResolveTranscribeRange(out double startSeconds, out double endSeconds)
+        {
+            startSeconds = 0.0;
+            endSeconds = 0.0;
+            if (!transcribeRangeStart.HasValue || !transcribeRangeEnd.HasValue)
+            {
+                return TranscribeRangeMode.WholeVideo;
+            }
+
+            double start = Math.Min(transcribeRangeStart.Value, transcribeRangeEnd.Value);
+            double end = Math.Max(transcribeRangeStart.Value, transcribeRangeEnd.Value);
+            if (durationSeconds > 0.0 && end > durationSeconds)
+            {
+                end = durationSeconds;
+            }
+
+            if (end - start < 0.2)
+            {
+                return TranscribeRangeMode.Invalid;
+            }
+
+            startSeconds = start;
+            endSeconds = end;
+            return TranscribeRangeMode.Range;
+        }
+
+        private int CountCuesOverlapping(double startSeconds, double endSeconds)
+        {
+            int count = 0;
+            foreach (SubtitleCue cue in cues)
+            {
+                if (cue.End.TotalSeconds > startSeconds + 0.0005 && cue.Start.TotalSeconds < endSeconds - 0.0005)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        /// <summary>
+        /// Copies just the part of each audio clip that falls inside the span. The copy keeps the
+        /// samples of the whole source, so the transcriber reads real audio at the right timeline
+        /// offset while the clips on the tracks stay untouched.
+        /// </summary>
+        private static List<TimelineSegment> ClipSegmentsToRange(
+            List<TimelineSegment> segments,
+            double startSeconds,
+            double endSeconds)
+        {
+            List<TimelineSegment> clipped = new List<TimelineSegment>();
+            foreach (TimelineSegment segment in segments)
+            {
+                if (!segment.Overlaps(startSeconds, endSeconds))
+                {
+                    continue;
+                }
+
+                double from = Math.Max(segment.StartSeconds, startSeconds);
+                double to = Math.Min(segment.EndSeconds, endSeconds);
+                if (to - from <= 0.05)
+                {
+                    continue;
+                }
+
+                TimelineSegment clip = segment.Clone();
+                clip.SourceOffsetSeconds = segment.SourceOffsetSeconds + (from - segment.StartSeconds);
+                clip.StartSeconds = from;
+                clip.DurationSeconds = to - from;
+                clipped.Add(clip);
+            }
+
+            return clipped;
+        }
+
+        /// <summary>
+        /// Erases the cues that overlap the span and drops the fresh transcription in their place.
+        /// A cue that only pokes into the span is trimmed instead of thrown away, and one the span
+        /// cuts in half becomes two, so nothing spoken outside the range is lost.
+        /// </summary>
+        private int ReplaceCuesInRange(double startSeconds, double endSeconds, List<SubtitleCue> fresh)
+        {
+            const double minimumKeptPieceSeconds = 0.12;
+
+            List<SubtitleCue> kept = new List<SubtitleCue>();
+            int erased = 0;
+            foreach (SubtitleCue cue in cues)
+            {
+                double cueStart = cue.Start.TotalSeconds;
+                double cueEnd = cue.End.TotalSeconds;
+                if (cueEnd <= startSeconds + 0.0005 || cueStart >= endSeconds - 0.0005)
+                {
+                    kept.Add(cue);
+                    continue;
+                }
+
+                erased++;
+                if (startSeconds - cueStart >= minimumKeptPieceSeconds)
+                {
+                    SubtitleCue head = cue.Clone();
+                    head.Start = cue.Start;
+                    head.End = TimeSpan.FromSeconds(startSeconds);
+                    kept.Add(head);
+                }
+
+                if (cueEnd - endSeconds >= minimumKeptPieceSeconds)
+                {
+                    SubtitleCue tail = cue.Clone();
+                    tail.Start = TimeSpan.FromSeconds(endSeconds);
+                    tail.End = cue.End;
+                    kept.Add(tail);
+                }
+            }
+
+            kept.AddRange(fresh);
+            kept.Sort(delegate (SubtitleCue left, SubtitleCue right)
+            {
+                return left.Start.CompareTo(right.Start);
+            });
+
+            cues.Clear();
+            foreach (SubtitleCue cue in kept)
+            {
+                cues.Add(cue);
+            }
+
+            return erased;
+        }
+
         // ── Transcription ──────────────────────────────────────────────────
 
         private async void TranscribeClick(object sender, RoutedEventArgs e)
@@ -2296,6 +2646,18 @@ namespace SubtitleForge
 
             ApplyUiToSettings();
 
+            double rangeStart;
+            double rangeEnd;
+            TranscribeRangeMode rangeMode = ResolveTranscribeRange(out rangeStart, out rangeEnd);
+            if (rangeMode == TranscribeRangeMode.Invalid)
+            {
+                string rangeMessage = "The transcribe range is empty: \"" + RangeStartBox.Text + "\" → \""
+                    + RangeEndBox.Text + "\".\n\nAn end has to come after the start, and the span has to be longer than a fifth of a second. Clear both boxes to transcribe the whole video.";
+                SetStatus("The transcribe range makes no sense.");
+                MessageBox.Show(this, rangeMessage, "SubtitleForge", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
             string? ffmpeg = FfmpegLocator.Resolve("ffmpeg", App.Settings.FfmpegDirectory);
             if (ffmpeg == null)
             {
@@ -2306,11 +2668,20 @@ namespace SubtitleForge
                 return;
             }
 
-            if (cues.Count > 0)
+            int cuesInRange = rangeMode == TranscribeRangeMode.Range
+                ? CountCuesOverlapping(rangeStart, rangeEnd)
+                : cues.Count;
+            if (cuesInRange > 0)
             {
+                string question = rangeMode == TranscribeRangeMode.Range
+                    ? "Re-transcribe " + FormatRangeClock(rangeStart) + " → " + FormatRangeClock(rangeEnd) + "?\n\n"
+                        + cuesInRange.ToString(CultureInfo.InvariantCulture)
+                        + " cue(s) in that span are erased and replaced with the new transcription. Everything outside the span is left alone."
+                    : "Replace the current " + cues.Count.ToString(CultureInfo.InvariantCulture) + " cues with a fresh transcription?";
+
                 MessageBoxResult answer = MessageBox.Show(
                     this,
-                    "Replace the current " + cues.Count.ToString(CultureInfo.InvariantCulture) + " cues with a fresh transcription?",
+                    question,
                     "SubtitleForge",
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Question);
@@ -2377,13 +2748,23 @@ namespace SubtitleForge
 
                 SetStatus("Collecting audio clips…");
                 List<TimelineSegment> audioSegments = AudioSegmentsForTranscription();
+                if (rangeMode == TranscribeRangeMode.Range)
+                {
+                    audioSegments = ClipSegmentsToRange(audioSegments, rangeStart, rangeEnd);
+                }
+
                 if (audioSegments.Count == 0)
                 {
                     // No timeline yet (or no audio lanes): fall back to the video's own audio.
+                    double spanStart = rangeMode == TranscribeRangeMode.Range ? rangeStart : 0.0;
+                    double spanLength = rangeMode == TranscribeRangeMode.Range
+                        ? rangeEnd - rangeStart
+                        : durationSeconds;
+
                     TimelineSegment fallback = new TimelineSegment(TrackKind.Audio);
-                    fallback.StartSeconds = 0.0;
-                    fallback.SourceOffsetSeconds = 0.0;
-                    fallback.DurationSeconds = durationSeconds;
+                    fallback.StartSeconds = spanStart;
+                    fallback.SourceOffsetSeconds = spanStart;
+                    fallback.DurationSeconds = spanLength;
                     fallback.SourcePath = videoPath;
                     audioSegments.Add(fallback);
                 }
@@ -2407,27 +2788,59 @@ namespace SubtitleForge
 
                 List<SubtitleCue> normalized = CuePostProcessor.Normalize(combined, options);
 
-                cues.Clear();
-                foreach (SubtitleCue cue in normalized)
+                List<SubtitleCue>? cuesBefore = null;
+                int erasedCues = 0;
+                if (rangeMode == TranscribeRangeMode.Range)
                 {
-                    cues.Add(cue);
+                    // One undo step: the whole range replacement unwinds with a single Ctrl+Z.
+                    cuesBefore = CaptureCueSnapshot();
+                    erasedCues = ReplaceCuesInRange(rangeStart, rangeEnd, normalized);
+                }
+                else
+                {
+                    cues.Clear();
+                    foreach (SubtitleCue cue in normalized)
+                    {
+                        cues.Add(cue);
+                    }
                 }
 
                 CuePostProcessor.Renumber(cues);
+                if (cuesBefore != null)
+                {
+                    PushCueUndoIfChanged("re-transcribe range", cuesBefore);
+                    RefreshCueEditor();
+                    UpdateOverlay(CurrentPosition);
+                }
                 RuntimeText.Text = "Runtime: " + lastRuntimeDescription;
                 SetProgress(1.0);
                 DrawTimeline();
 
                 string language = string.IsNullOrEmpty(lastDetectedLanguage) ? string.Empty : ", language " + lastDetectedLanguage;
+                string rangeNote = rangeMode == TranscribeRangeMode.Range
+                    ? " Replaced " + erasedCues.ToString(CultureInfo.InvariantCulture) + " cue(s) in "
+                        + FormatRangeClock(rangeStart) + " → " + FormatRangeClock(rangeEnd) + "."
+                    : string.Empty;
+
                 SetStatus(
                     "Done: " + cues.Count.ToString(CultureInfo.InvariantCulture) + " cues from "
                     + audioSegments.Count.ToString(CultureInfo.InvariantCulture) + " clip(s) in "
                     + elapsed.ToString(@"mm\:ss", CultureInfo.InvariantCulture)
-                    + " on " + lastRuntimeDescription + language + ".");
+                    + " on " + lastRuntimeDescription + language + "." + rangeNote);
 
                 if (cues.Count > 0)
                 {
-                    CueList.SelectedIndex = 0;
+                    int firstFresh = 0;
+                    if (rangeMode == TranscribeRangeMode.Range && normalized.Count > 0)
+                    {
+                        int found = cues.IndexOf(normalized[0]);
+                        if (found >= 0)
+                        {
+                            firstFresh = found;
+                        }
+                    }
+
+                    CueList.SelectedIndex = firstFresh;
                 }
             }
             catch (OperationCanceledException)
@@ -4192,6 +4605,7 @@ namespace SubtitleForge
                 }
 
                 ApplyDurationToUi();
+                ClearTranscribeRange();
 
                 tracks.Clear();
                 undoStack.Clear();

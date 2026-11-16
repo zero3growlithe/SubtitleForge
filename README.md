@@ -22,6 +22,15 @@ Everything runs on your machine. No cloud, no API keys, no uploads.
   into the seek bar below it (blue marks = cue start/length) plus the playhead.
 - **Cue cleanup** on transcription: long segments are wrapped and split proportionally,
   overlaps are removed, non-speech markers (`[Music]`, `(applause)`) are dropped.
+- **Re-transcribe just one span.** Set `Transcribe range` in the timeline toolbar — type the
+  times (the same `00:01:20.000` or plain-seconds syntax the cue editor takes), or park the
+  playhead and press `In = playhead` / `Out = playhead`, or take the span of the cues selected
+  in the list with `From selection`. The span is drawn on the ruler, and a click on `Transcribe`
+  then sends **only that audio** to Whisper: the cues inside the span are erased and replaced
+  with the new transcription, while everything outside it is left exactly as it was. A cue that
+  only pokes into the span is trimmed instead of thrown away, and one the span cuts in half
+  becomes two, so nothing spoken outside the range is lost. The whole replacement is one undo
+  step, and `Whole video` clears the range again.
 - **One `Export…` button.** Its menu offers the subtitle formats (`.srt` / `.vtt` / `.ass`)
   and `As MP4…`, which opens a small dialog with the toggles **Include video**,
   **Include audio**, **Include subtitles (as a file)** and **Burn in subtitles**, plus a
@@ -82,6 +91,10 @@ to keep the selection untouched while scrubbing.
   (or below the last one) to give it a track of its own.
 - **Drag the ruler or an empty lane** to scrub the playhead; drag a lane's **name** to
   reorder whole tracks. `Shift`+drag on a clip scrubs instead of moving it.
+- **The ruler stays put.** However many tracks are stacked up, the ruler is painted again at the
+  scroll offset as the tracks view scrolls, so the time scale, the cue marks, the marked
+  transcribe range and the playhead are always in sight; the playhead is drawn over the ruler so
+  the position stays readable while scrolled down.
 - **Drag the bar between the preview and the tracks** to make the video smaller and give the
   timeline more room (or the other way round).
 - **Seeking repaints the preview** whether playback is running or paused — the frame under

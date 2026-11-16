@@ -183,6 +183,13 @@ namespace SubtitleForge.Controls
         private static readonly Typeface BodyTypeface = new Typeface(new FontFamily("Segoe UI"), FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
         private static readonly Color AccentColor = Color.FromRgb(0x2F, 0x81, 0xF7);
         private static readonly Color SelectionColor = Color.FromRgb(0xF2, 0xF6, 0xFC);
+        /// <summary>The span a range transcription rewrites, drawn in the ruler.</summary>
+        private static readonly Brush RangeBandBrush = Frozen(Color.FromArgb(0x60, 0x2F, 0x6F, 0xE0));
+
+        private double stickyOffset;
+        private double? rangeStartSeconds;
+        private double? rangeEndSeconds;
+
         private static readonly Color RulerColor = Color.FromRgb(0x2A, 0x2A, 0x31);
         private static readonly Brush ReadyBandBrush = CreateFrozenBrush(AccentColor);
         private static readonly Brush CueMarkBrush = CreateFrozenBrush(Color.FromRgb(0x27, 0x56, 0x8F));
@@ -283,6 +290,54 @@ namespace SubtitleForge.Controls
         {
             InvalidateMeasure();
             InvalidateVisual();
+        }
+
+        /// <summary>
+        /// How far the surrounding scroll viewer has scrolled. The ruler is painted a second time at
+        /// that offset, so it stays on screen however many tracks push the rows down.
+        /// </summary>
+        public double StickyOffset
+        {
+            get { return stickyOffset; }
+            set
+            {
+                double updated = value < 0.0 ? 0.0 : value;
+                if (Math.Abs(stickyOffset - updated) > 0.5)
+                {
+                    stickyOffset = updated;
+                    InvalidateVisual();
+                }
+            }
+        }
+
+        /// <summary>Marks the span a range transcription will rewrite. Both null clears it.</summary>
+        public void SetRange(double? startSeconds, double? endSeconds)
+        {
+            double? start = startSeconds;
+            double? end = endSeconds;
+            if (start.HasValue && end.HasValue && end.Value < start.Value)
+            {
+                double swap = start.Value;
+                start = end.Value;
+                end = swap;
+            }
+
+            bool same = rangeStartSeconds == start && rangeEndSeconds == end;
+            if (same)
+            {
+                return;
+            }
+
+            rangeStartSeconds = start;
+            rangeEndSeconds = end;
+            InvalidateVisual();
+        }
+
+        private static Brush Frozen(Color color)
+        {
+            SolidColorBrush brush = new SolidColorBrush(color);
+            brush.Freeze();
+            return brush;
         }
 
         // ── Layout ─────────────────────────────────────────────────────────
@@ -423,7 +478,7 @@ namespace SubtitleForge.Controls
         protected override void OnRender(DrawingContext drawingContext)
         {
             drawingContext.DrawRectangle(Brushes.Transparent, null, new Rect(0, 0, ActualWidth, ActualHeight));
-            DrawRuler(drawingContext);
+            DrawRuler(drawingContext, 0.0);
 
             if (tracks == null || tracks.Count == 0)
             {
@@ -460,11 +515,32 @@ namespace SubtitleForge.Controls
             double playheadX = XForSeconds(playheadSeconds);
             Pen playheadPen = new Pen(new SolidColorBrush(AccentColor), 1.5);
             drawingContext.DrawLine(playheadPen, new Point(playheadX, 0), new Point(playheadX, ActualHeight));
+
+            if (stickyOffset <= 0.5)
+            {
+                return;
+            }
+
+            // The rows above have scrolled past the top of the panel, so the ruler is painted a
+            // second time at the scroll offset. It covers the rows scrolling behind it and stays
+            // put no matter how far down the list the user goes.
+            DrawRuler(drawingContext, stickyOffset);
+            drawingContext.DrawLine(
+                new Pen(new SolidColorBrush(Color.FromRgb(0x18, 0x18, 0x1E)), 1.0),
+                new Point(0, stickyOffset + RulerHeight),
+                new Point(ActualWidth, stickyOffset + RulerHeight));
+
+            // The playhead used to be hidden behind the band; it is drawn over it so the position
+            // stays readable while scrolled.
+            drawingContext.DrawLine(
+                playheadPen,
+                new Point(playheadX, stickyOffset),
+                new Point(playheadX, ActualHeight));
         }
 
-        private void DrawRuler(DrawingContext drawingContext)
+        private void DrawRuler(DrawingContext drawingContext, double top)
         {
-            drawingContext.DrawRectangle(new SolidColorBrush(RulerColor), null, new Rect(0, 0, ActualWidth, RulerHeight));
+            drawingContext.DrawRectangle(new SolidColorBrush(RulerColor), null, new Rect(0, top, ActualWidth, RulerHeight));
 
             double pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
             Brush textBrush = new SolidColorBrush(RulerTextColor);
@@ -483,7 +559,7 @@ namespace SubtitleForge.Controls
                 bool major = Math.Abs(seconds % (step * 5.0)) < 0.001 || Math.Abs(seconds) < 0.001;
                 double tickHeight = major ? RulerHeight - 8.0 : RulerHeight - 4.0;
 
-                drawingContext.DrawLine(tickPen, new Point(x, tickHeight), new Point(x, RulerHeight));
+                drawingContext.DrawLine(tickPen, new Point(x, top + tickHeight), new Point(x, top + RulerHeight));
 
                 if (major)
                 {
@@ -495,16 +571,48 @@ namespace SubtitleForge.Controls
                         9.5,
                         textBrush,
                         pixelsPerDip);
-                    drawingContext.DrawText(label, new Point(x + 3.0, 2.0));
+                    drawingContext.DrawText(label, new Point(x + 3.0, top + 2.0));
                 }
 
                 seconds += step;
             }
 
-            DrawCueMarks(drawingContext);
+            DrawRangeBand(drawingContext, top);
+            DrawCueMarks(drawingContext, top);
         }
 
-        private void DrawCueMarks(DrawingContext drawingContext)
+        /// <summary>
+        /// The span a range transcription will rewrite. It sits under the cue marks so the marks
+        /// still read, and its edges are marked so the user can see exactly what will be replaced.
+        /// </summary>
+        private void DrawRangeBand(DrawingContext drawingContext, double top)
+        {
+            if (!rangeStartSeconds.HasValue || !rangeEndSeconds.HasValue)
+            {
+                return;
+            }
+
+            double start = Math.Min(rangeStartSeconds.Value, rangeEndSeconds.Value);
+            double end = Math.Max(rangeStartSeconds.Value, rangeEndSeconds.Value);
+            if (end - start <= 0.0001)
+            {
+                return;
+            }
+
+            double left = Math.Max(XForSeconds(start), HeaderWidth);
+            double right = Math.Min(XForSeconds(end), ActualWidth);
+            if (right <= left)
+            {
+                return;
+            }
+
+            drawingContext.DrawRectangle(RangeBandBrush, null, new Rect(left, top, right - left, RulerHeight));
+            Pen edgePen = new Pen(new SolidColorBrush(AccentColor), 1.0);
+            drawingContext.DrawLine(edgePen, new Point(left, top), new Point(left, top + RulerHeight));
+            drawingContext.DrawLine(edgePen, new Point(right, top), new Point(right, top + RulerHeight));
+        }
+
+        private void DrawCueMarks(DrawingContext drawingContext, double top)
         {
             Func<IReadOnlyList<CueMark>>? provider = CueMarkProvider;
             if (provider == null)
@@ -528,7 +636,7 @@ namespace SubtitleForge.Controls
             }
 
             double markHeight = 5.0;
-            double markTop = RulerHeight - markHeight - 1.0;
+            double markTop = top + RulerHeight - markHeight - 1.0;
 
             foreach (CueMark mark in marks)
             {
@@ -874,6 +982,12 @@ namespace SubtitleForge.Controls
 
         // ── Hit testing ────────────────────────────────────────────────────
 
+        /// <summary>True inside the ruler, wherever its sticky copy currently sits.</summary>
+        private bool IsRuler(double y)
+        {
+            return y >= stickyOffset - 0.5 && y <= stickyOffset + RulerHeight;
+        }
+
         private TimelineSegment? SegmentAt(TimelineTrack track, Point point, out int rowIndex)
         {
             rowIndex = RowAt(point);
@@ -905,7 +1019,7 @@ namespace SubtitleForge.Controls
 
             Point point = e.GetPosition(this);
 
-            if (point.Y <= RulerHeight)
+            if (IsRuler(point.Y))
             {
                 isScrubbing = true;
                 CaptureMouse();

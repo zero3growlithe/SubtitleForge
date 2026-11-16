@@ -431,8 +431,24 @@ not get it leaves a `GPU requested but not used:` line in `crash.log`.
 (`nvcuda.dll` plus its version), the toolkit (`nvcc.exe`, `CUDA_PATH`, installed versions), the
 libraries whisper.cpp links against (`cublas64_12`, `cublasLt64_12`, `cudart64_12`, `cudnn64_9`) with
 the path each one was found at or "not found anywhere", the whisper CUDA natives next to the exe,
-and finally a real attempt at opening the selected model through CUDA — the only check that cannot
-lie. The report is also written to `%LocalAppData%\SubtitleForge\gpu-diagnostics.txt`.
+and finally a real attempt at opening the selected model through CUDA. The report is also written to
+`%LocalAppData%\SubtitleForge\gpu-diagnostics.txt`.
+
+Opening the model is still only half of it: a CUDA build of `whisper.dll` loads perfectly well and then
+runs the CPU backend when its `ggml-cuda-whisper.dll` companion is missing, mismatched or refuses to
+initialise — the loader has no reason to complain, the app just gets slow. So the last section of the
+report **decodes one second of synthetic silence** and reads whisper.cpp's own log for the backend it
+initialised (`using CUDA0 backend` versus `no GPU found`), then asks `nvidia-smi` whether this process
+holds any device memory. Those two are the only witnesses that cannot be fooled, and the same
+verification runs after every transcription: the status bar reports
+`GPU — CUDA 12 · CUDA0 · NVIDIA GeForce RTX 3060 · 1.8 GB on the device`, or says outright that the
+CUDA build loaded but the CPU backend ran, and leaves a matching line in `crash.log`.
+
+If it reports CUDA and the GPU still looks idle, look at the right graph: Windows Task Manager shows
+CUDA work under the **Cuda** (or `Compute_0`) engine of the GPU tab, not under **3D**, and a modern card
+finishes a 150-second window in well under a second, so the average sits near zero even while the work
+is happening. `nvidia-smi dmon` and `nvidia-smi --query-compute-apps=pid,used_gpu_memory` show the
+truth.
 
 Every transcription that asks for the GPU and does not get it now leaves a line in
 `crash.log` starting with `GPU requested but not used:` or `GPU requested but CUDA failed to

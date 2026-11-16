@@ -64,6 +64,17 @@ namespace SubtitleForge.Services
 
         public string RuntimeDescription { get; set; } = "CPU";
 
+        /// <summary>
+        /// What whisper.cpp itself said it ran on, for example "CUDA0 · NVIDIA GeForce RTX 3060".
+        /// Empty when the log said nothing either way.
+        /// </summary>
+        public string VerifiedBackend { get; set; } = string.Empty;
+
+        public bool VerifiedOnGpu { get; set; }
+
+        /// <summary>VRAM this process holds on the device, 0 when it is not on the device.</summary>
+        public long VideoMemoryBytes { get; set; }
+
         public string DetectedLanguage { get; set; } = string.Empty;
 
         public TimeSpan Elapsed { get; set; }
@@ -134,181 +145,224 @@ namespace SubtitleForge.Services
                 status?.Report("GPU not used (" + cudaReason + ") — running on CPU.");
             }
 
-            WhisperFactory? factory = null;
-            if (gpuRequested)
+            // The loader's answer is a claim: a CUDA build of whisper.dll can be loaded and then run
+            // the CPU backend when its ggml-cuda companion is missing or will not initialise. Whisper's
+            // own native log is the only witness to what the decoder really used, so it is caught for
+            // the whole run and read once the run is over.
+            using (WhisperBackendVerification verification = new WhisperBackendVerification())
             {
-                RuntimeOptions.RuntimeLibraryOrder = WhisperRuntimeProbe.AutoOrder;
-                try
+                WhisperFactory? factory = null;
+                if (gpuRequested)
                 {
-                    factory = WhisperFactory.FromPath(request.ModelPath, new WhisperFactoryOptions { UseGpu = true });
-                }
-                catch (Exception exception)
-                {
-                    // Missing cuBLAS / cuDNN or an unusable device: fall back instead of failing the job.
-                    CrashLog.Write(exception, "SpeechTranscriber.GpuFactory");
-                    CrashLog.WriteNote("GPU requested but CUDA failed to initialise: " + WhisperRuntimeProbe.DescribeError(exception));
-                    status?.Report(
-                        "CUDA could not be initialised (" + WhisperRuntimeProbe.DescribeError(exception)
-                        + ") — falling back to CPU.");
-                    factory = null;
-                }
-            }
-
-            if (factory == null)
-            {
-                RuntimeOptions.RuntimeLibraryOrder = WhisperRuntimeProbe.CpuOnlyOrder;
-                factory = WhisperFactory.FromPath(request.ModelPath, new WhisperFactoryOptions { UseGpu = false });
-            }
-
-            result.RuntimeDescription = WhisperRuntimeProbe.Describe(RuntimeOptions.LoadedLibrary, request.UseGpu);
-
-            using (factory)
-            {
-                string language = string.IsNullOrWhiteSpace(request.Language) ? "auto" : request.Language;
-
-                // Every window is a separate piece of work, so several can be decoded at the same
-                // time. Each one needs its own processor: the factory shares the model weights, the
-                // decoder state is per processor. The thread budget is split between them, because
-                // whisper already uses all the threads it is given inside a single decode — running
-                // four decoders on four threads each is not four times faster, it is roughly the
-                // same speed with more memory in play. It wins when the decode is bound by memory
-                // rather than by arithmetic.
-                int requestedWorkers = Math.Max(1, request.ParallelWindows);
-                if (gpuRequested && requestedWorkers > 1)
-                {
-                    requestedWorkers = 1;
-                    status?.Report("GPU decodes one part at a time — parallel parts only pay off on CPU.");
-                }
-
-                int usableWindows = 0;
-                for (int index = 0; index < windows.Count; index++)
-                {
-                    if (File.Exists(windows[index].WavPath))
+                    RuntimeOptions.RuntimeLibraryOrder = WhisperRuntimeProbe.AutoOrder;
+                    try
                     {
-                        usableWindows++;
+                        factory = WhisperFactory.FromPath(request.ModelPath, new WhisperFactoryOptions { UseGpu = true });
+                    }
+                    catch (Exception exception)
+                    {
+                        // Missing cuBLAS / cuDNN or an unusable device: fall back instead of failing the job.
+                        CrashLog.Write(exception, "SpeechTranscriber.GpuFactory");
+                        CrashLog.WriteNote("GPU requested but CUDA failed to initialise: " + WhisperRuntimeProbe.DescribeError(exception));
+                        status?.Report(
+                            "CUDA could not be initialised (" + WhisperRuntimeProbe.DescribeError(exception)
+                            + ") — falling back to CPU.");
+                        factory = null;
                     }
                 }
 
-                int workerCount = Math.Max(1, Math.Min(requestedWorkers, usableWindows));
-                int threadsPerWorker = Math.Max(1, request.Threads / workerCount);
-                WindowProgressTracker tracker = new WindowProgressTracker(progress, windows.Count, workerCount);
-                TranscribeState state = new TranscribeState();
-                object stateGate = new object();
-
-                if (workerCount > 1)
+                if (factory == null)
                 {
-                    status?.Report("Transcribing " + windows.Count.ToString(CultureInfo.InvariantCulture)
-                        + " parts, " + workerCount.ToString(CultureInfo.InvariantCulture) + " at a time…");
+                    RuntimeOptions.RuntimeLibraryOrder = WhisperRuntimeProbe.CpuOnlyOrder;
+                    factory = WhisperFactory.FromPath(request.ModelPath, new WhisperFactoryOptions { UseGpu = false });
                 }
 
-                Func<int, WhisperProcessor> createProcessor = delegate (int workerSlot)
+                result.RuntimeDescription = WhisperRuntimeProbe.Describe(RuntimeOptions.LoadedLibrary, request.UseGpu);
+
+                using (factory)
                 {
-                    WhisperProcessorBuilder workerBuilder = factory.CreateBuilder()
-                        .WithThreads(threadsPerWorker)
-                        // Whisper otherwise feeds the previous window back in as the initial prompt
-                        // and can loop on one sentence for minutes; drop that context.
-                        .WithNoContext()
-                        .WithLanguage(language)
-                        .SplitOnWord()
-                        // Token timestamps are what make a two-word cue land on the two words that
-                        // were actually spoken. Without them the only timing whisper gives is the
-                        // whole segment, and splitting long text has to guess where each piece starts.
-                        .WithTokenTimestamps()
-                        .WithProgressHandler(delegate (int percent)
+                    string language = string.IsNullOrWhiteSpace(request.Language) ? "auto" : request.Language;
+
+                    // Every window is a separate piece of work, so several can be decoded at the same
+                    // time. Each one needs its own processor: the factory shares the model weights, the
+                    // decoder state is per processor. The thread budget is split between them, because
+                    // whisper already uses all the threads it is given inside a single decode — running
+                    // four decoders on four threads each is not four times faster, it is roughly the
+                    // same speed with more memory in play. It wins when the decode is bound by memory
+                    // rather than by arithmetic.
+                    int requestedWorkers = Math.Max(1, request.ParallelWindows);
+                    if (gpuRequested && requestedWorkers > 1)
+                    {
+                        requestedWorkers = 1;
+                        status?.Report("GPU decodes one part at a time — parallel parts only pay off on CPU.");
+                    }
+
+                    int usableWindows = 0;
+                    for (int index = 0; index < windows.Count; index++)
+                    {
+                        if (File.Exists(windows[index].WavPath))
                         {
-                            tracker.Report(workerSlot, percent);
-                        });
-
-                    if (request.TranslateToEnglish)
-                    {
-                        workerBuilder = workerBuilder.WithTranslate();
+                            usableWindows++;
+                        }
                     }
 
-                    if (!string.IsNullOrWhiteSpace(request.InitialPrompt))
+                    int workerCount = Math.Max(1, Math.Min(requestedWorkers, usableWindows));
+                    int threadsPerWorker = Math.Max(1, request.Threads / workerCount);
+                    WindowProgressTracker tracker = new WindowProgressTracker(progress, windows.Count, workerCount);
+                    TranscribeState state = new TranscribeState();
+                    object stateGate = new object();
+
+                    if (workerCount > 1)
                     {
-                        workerBuilder = workerBuilder.WithPrompt(request.InitialPrompt!);
+                        status?.Report("Transcribing " + windows.Count.ToString(CultureInfo.InvariantCulture)
+                            + " parts, " + workerCount.ToString(CultureInfo.InvariantCulture) + " at a time…");
                     }
 
-                    return workerBuilder.Build();
-                };
-
-                ConcurrentQueue<int> pending = new ConcurrentQueue<int>();
-                for (int index = 0; index < windows.Count; index++)
-                {
-                    if (File.Exists(windows[index].WavPath))
+                    Func<int, WhisperProcessor> createProcessor = delegate (int workerSlot)
                     {
-                        pending.Enqueue(index);
-                    }
-                }
+                        WhisperProcessorBuilder workerBuilder = factory.CreateBuilder()
+                            .WithThreads(threadsPerWorker)
+                            // Whisper otherwise feeds the previous window back in as the initial prompt
+                            // and can loop on one sentence for minutes; drop that context.
+                            .WithNoContext()
+                            .WithLanguage(language)
+                            .SplitOnWord()
+                            // Token timestamps are what make a two-word cue land on the two words that
+                            // were actually spoken. Without them the only timing whisper gives is the
+                            // whole segment, and splitting long text has to guess where each piece starts.
+                            .WithTokenTimestamps()
+                            .WithProgressHandler(delegate (int percent)
+                            {
+                                tracker.Report(workerSlot, percent);
+                            });
 
-                // One list per window, stitched together in window order afterwards, so parallel
-                // decoding still produces cues in timeline order no matter which worker finished first.
-                List<List<SubtitleCue>> buckets = new List<List<SubtitleCue>>(windows.Count);
-                for (int index = 0; index < windows.Count; index++)
-                {
-                    buckets.Add(new List<SubtitleCue>());
-                }
-
-                Task[] jobs = new Task[workerCount];
-                for (int slot = 0; slot < workerCount; slot++)
-                {
-                    int workerSlot = slot;
-                    jobs[slot] = Task.Run(
-                        async delegate
+                        if (request.TranslateToEnglish)
                         {
-                            // Not a using block: Whisper.net throws "Cannot dispose while processing,
-                            // please use DisposeAsync instead" when Dispose() lands while the native
-                            // side is still winding down, which is exactly the state pressing Cancel
-                            // leaves it in. The async dispose waits for processing to stop first.
-                            WhisperProcessor processor = createProcessor(workerSlot);
-                            try
+                            workerBuilder = workerBuilder.WithTranslate();
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(request.InitialPrompt))
+                        {
+                            workerBuilder = workerBuilder.WithPrompt(request.InitialPrompt!);
+                        }
+
+                        return workerBuilder.Build();
+                    };
+
+                    ConcurrentQueue<int> pending = new ConcurrentQueue<int>();
+                    for (int index = 0; index < windows.Count; index++)
+                    {
+                        if (File.Exists(windows[index].WavPath))
+                        {
+                            pending.Enqueue(index);
+                        }
+                    }
+
+                    // One list per window, stitched together in window order afterwards, so parallel
+                    // decoding still produces cues in timeline order no matter which worker finished first.
+                    List<List<SubtitleCue>> buckets = new List<List<SubtitleCue>>(windows.Count);
+                    for (int index = 0; index < windows.Count; index++)
+                    {
+                        buckets.Add(new List<SubtitleCue>());
+                    }
+
+                    Task[] jobs = new Task[workerCount];
+                    for (int slot = 0; slot < workerCount; slot++)
+                    {
+                        int workerSlot = slot;
+                        jobs[slot] = Task.Run(
+                            async delegate
                             {
-                                while (pending.TryDequeue(out int windowIndex))
-                                {
-                                    cancellationToken.ThrowIfCancellationRequested();
-                                    tracker.BeginWindow(workerSlot);
-                                    await TranscribeWindowAsync(
-                                        processor,
-                                        windows[windowIndex],
-                                        windowIndex + 1,
-                                        windows.Count,
-                                        request.SkipNonSpeech,
-                                        buckets[windowIndex],
-                                        state,
-                                        stateGate,
-                                        status,
-                                        cancellationToken).ConfigureAwait(false);
-                                    tracker.CompleteWindow(workerSlot);
-                                }
-                            }
-                            finally
-                            {
+                                // Not a using block: Whisper.net throws "Cannot dispose while processing,
+                                // please use DisposeAsync instead" when Dispose() lands while the native
+                                // side is still winding down, which is exactly the state pressing Cancel
+                                // leaves it in. The async dispose waits for processing to stop first.
+                                WhisperProcessor processor = createProcessor(workerSlot);
                                 try
                                 {
-                                    await processor.DisposeAsync().ConfigureAwait(false);
+                                    while (pending.TryDequeue(out int windowIndex))
+                                    {
+                                        cancellationToken.ThrowIfCancellationRequested();
+                                        tracker.BeginWindow(workerSlot);
+                                        await TranscribeWindowAsync(
+                                            processor,
+                                            windows[windowIndex],
+                                            windowIndex + 1,
+                                            windows.Count,
+                                            request.SkipNonSpeech,
+                                            buckets[windowIndex],
+                                            state,
+                                            stateGate,
+                                            status,
+                                            cancellationToken).ConfigureAwait(false);
+                                        tracker.CompleteWindow(workerSlot);
+                                    }
                                 }
-                                catch (Exception)
+                                finally
                                 {
-                                    // A disposal that still fails must not replace the cancellation
-                                    // the caller is waiting for: the model is going away either way.
+                                    try
+                                    {
+                                        await processor.DisposeAsync().ConfigureAwait(false);
+                                    }
+                                    catch (Exception)
+                                    {
+                                        // A disposal that still fails must not replace the cancellation
+                                        // the caller is waiting for: the model is going away either way.
+                                    }
                                 }
-                            }
-                        },
-                        cancellationToken);
+                            },
+                            cancellationToken);
+                    }
+
+                    await Task.WhenAll(jobs).ConfigureAwait(false);
+
+                    for (int index = 0; index < buckets.Count; index++)
+                    {
+                        if (buckets[index].Count > 0)
+                        {
+                            cues.AddRange(buckets[index]);
+                        }
+                    }
+
+                    detectedLanguage = state.DetectedLanguage;
+                    usedWordTimings = state.UsedWordTimings;
                 }
 
-                await Task.WhenAll(jobs).ConfigureAwait(false);
+                string libraryClaim = result.RuntimeDescription;
+                result.VerifiedBackend = verification.Describe();
+                result.VerifiedOnGpu = verification.Kind == WhisperBackendKind.Cuda;
 
-                for (int index = 0; index < buckets.Count; index++)
+                if (result.VerifiedOnGpu)
                 {
-                    if (buckets[index].Count > 0)
+                    string videoMemoryDetail;
+                    long videoMemory = NvidiaSmiProbe.GetProcessVideoMemory(Environment.ProcessId, out videoMemoryDetail);
+                    result.VideoMemoryBytes = videoMemory;
+
+                    if (videoMemory > 0)
                     {
-                        cues.AddRange(buckets[index]);
+                        result.RuntimeDescription = libraryClaim + " · " + result.VerifiedBackend
+                            + " · " + DescribeBytes(videoMemory) + " on the device";
+                    }
+                    else
+                    {
+                        result.RuntimeDescription = libraryClaim + " · " + result.VerifiedBackend
+                            + " · no device memory visible (" + videoMemoryDetail + ")";
                     }
                 }
+                else if (verification.Kind == WhisperBackendKind.Cpu)
+                {
+                    if (gpuRequested)
+                    {
+                        CrashLog.WriteNote("CUDA build loaded but whisper initialised the CPU backend. "
+                            + verification.Evidence);
+                        status?.Report(
+                            "Heads-up: the CUDA build loaded, but whisper initialised the CPU backend, so the "
+                            + "model ran on the CPU. GPU diagnostics says which file it is missing.");
+                    }
 
-                detectedLanguage = state.DetectedLanguage;
-                usedWordTimings = state.UsedWordTimings;
+                    result.RuntimeDescription = libraryClaim + " · " + result.VerifiedBackend;
+                }
+
             }
 
             stopwatch.Stop();
@@ -417,6 +471,18 @@ namespace SubtitleForge.Services
                     destination.Add(new SubtitleCue(start, end, text, segment.Probability));
                 }
             }
+        }
+
+        private static string DescribeBytes(long bytes)
+        {
+            const double Megabyte = 1024.0 * 1024.0;
+            double megabytes = bytes / Megabyte;
+            if (megabytes >= 1024.0)
+            {
+                return (megabytes / 1024.0).ToString("0.#", CultureInfo.InvariantCulture) + " GB";
+            }
+
+            return megabytes.ToString("0", CultureInfo.InvariantCulture) + " MB";
         }
 
         /// <summary>

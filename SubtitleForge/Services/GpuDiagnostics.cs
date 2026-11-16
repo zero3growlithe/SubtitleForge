@@ -5,6 +5,8 @@ using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using Whisper.net;
 using Whisper.net.LibraryLoader;
 
@@ -58,6 +60,7 @@ namespace SubtitleForge.Services
             AppendCudaLibraries(report);
             AppendLoaderSearchPaths(report);
             AppendAttempt(report, modelPath, ref gpuUsable);
+            AppendDecode(report, modelPath, ref gpuUsable);
 
             return report.ToString();
         }
@@ -357,8 +360,11 @@ namespace SubtitleForge.Services
 
                     if (loaded == RuntimeLibrary.Cuda || loaded == RuntimeLibrary.Cuda12)
                     {
-                        report.AppendLine("   OK: the model runs on the GPU through " + loadedText + ".");
-                        gpuUsable = true;
+                        // This only says a CUDA build was found and opened. Whether the arithmetic
+                        // ends up on the device is a different question, answered in step 6.
+                        report.AppendLine("   the CUDA build was loaded: " + loadedText + ".");
+                        report.AppendLine("   whether it also RUNS on the device is the next step, because a");
+                        report.AppendLine("   CUDA build of whisper.dll will happily load and then use the CPU.");
                     }
                     else
                     {
@@ -386,6 +392,203 @@ namespace SubtitleForge.Services
             {
                 RuntimeOptions.RuntimeLibraryOrder = WhisperRuntimeProbe.CpuOnlyOrder;
             }
+        }
+
+        /// <summary>
+        /// The only check that cannot be fooled: decode a second of audio and read whisper.cpp's own
+        /// log for the backend it initialised, then confirm the process holds memory on the device.
+        /// A CUDA build can be loaded, opened and then run the CPU backend when its ggml-cuda
+        /// companion is missing or will not initialise, and that is exactly the case this catches.
+        /// </summary>
+        private static void AppendDecode(StringBuilder report, string? modelPath, ref bool gpuUsable)
+        {
+            report.AppendLine();
+            report.AppendLine("6. Decoding one second of audio to see which backend whisper really uses");
+            report.AppendLine("   adapters per nvidia-smi: " + NvidiaSmiProbe.DescribeAdapters());
+
+            if (string.IsNullOrEmpty(modelPath) || !File.Exists(modelPath))
+            {
+                report.AppendLine("   skipped: no model file to open");
+                return;
+            }
+
+            string wavPath = string.Empty;
+            try
+            {
+                wavPath = WriteSilentWave();
+
+                RuntimeOptions.RuntimeLibraryOrder = WhisperRuntimeProbe.AutoOrder;
+                using (WhisperFactory factory = WhisperFactory.FromPath(modelPath, new WhisperFactoryOptions { UseGpu = true }))
+                using (WhisperBackendVerification verification = new WhisperBackendVerification())
+                {
+                    WhisperProcessor processor = factory.CreateBuilder()
+                        .WithThreads(2)
+                        .WithNoContext()
+                        .WithLanguage("en")
+                        .Build();
+
+                    try
+                    {
+                        using (FileStream waveStream = File.OpenRead(wavPath))
+                        {
+                            int segments = 0;
+                            IAsyncEnumerator<SegmentData> enumerator = processor
+                                .ProcessAsync(waveStream, CancellationToken.None)
+                                .GetAsyncEnumerator();
+                            try
+                            {
+                                while (enumerator.MoveNextAsync().AsTask().GetAwaiter().GetResult())
+                                {
+                                    segments++;
+                                    if (segments > 8)
+                                    {
+                                        break;
+                                    }
+                                }
+                            }
+                            finally
+                            {
+                                enumerator.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        try
+                        {
+                            processor.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                        }
+                        catch (Exception)
+                        {
+                        }
+                    }
+
+                    if (verification.Kind == WhisperBackendKind.Cuda)
+                    {
+                        report.AppendLine("   OK: whisper initialised " + verification.Describe() + ".");
+                        if (verification.CudaDeviceCount > 0)
+                        {
+                            report.AppendLine("   CUDA devices reported: "
+                                + verification.CudaDeviceCount.ToString(CultureInfo.InvariantCulture));
+                        }
+
+                        string videoMemoryDetail;
+                        long videoMemory = NvidiaSmiProbe.GetProcessVideoMemory(Environment.ProcessId, out videoMemoryDetail);
+                        if (videoMemory > 0)
+                        {
+                            report.AppendLine("   this process holds " + DescribeMegabytes(videoMemory)
+                                + " of device memory: the tensors really are on the GPU.");
+                        }
+                        else
+                        {
+                            report.AppendLine("   note: nvidia-smi does not list this process (" + videoMemoryDetail + ").");
+                            report.AppendLine("         On a laptop with switchable graphics that can mean the driver");
+                            report.AppendLine("         gave the work to another adapter; check with nvidia-smi dmon.");
+                        }
+
+                        gpuUsable = true;
+                    }
+                    else if (verification.Kind == WhisperBackendKind.Cpu)
+                    {
+                        report.AppendLine("   FAILED: the CUDA build loaded but whisper initialised the CPU backend.");
+                        report.AppendLine("   whisper said: " + verification.Evidence);
+                        report.AppendLine("   The usual reasons, cheapest to check first:");
+                        report.AppendLine("     a) ggml-cuda-whisper.dll is missing from runtimes\\cuda12\\win-x64, so whisper.dll");
+                        report.AppendLine("        there has no CUDA backend to use (section 4 lists what is in the folder)");
+                        report.AppendLine("     b) the files in that folder come from a different whisper.net version than");
+                        report.AppendLine("        Whiser.net.dll, so the CUDA backend refused to load");
+                        report.AppendLine("     c) the CUDA libraries are the wrong major version (needs CUDA 12, cudnn 9)");
+                        report.AppendLine("   Whisper's own log lines:");
+                        report.AppendLine(verification.DescribeEvidence());
+                        gpuUsable = false;
+                    }
+                    else
+                    {
+                        report.AppendLine("   inconclusive: whisper logged nothing about its backend.");
+                        report.AppendLine("   Log lines seen:");
+                        string evidence = verification.DescribeEvidence();
+                        report.AppendLine(evidence.Length > 0 ? evidence : "     (none)");
+                    }
+                }
+            }
+            catch (Exception exception)
+            {
+                report.AppendLine("   FAILED: " + exception.GetType().Name + ": " + exception.Message);
+                Exception? inner = exception.InnerException;
+                while (inner != null)
+                {
+                    report.AppendLine("     caused by: " + inner.GetType().Name + ": " + inner.Message);
+                    inner = inner.InnerException;
+                }
+
+                CrashLog.Write(exception, "GpuDiagnostics.Decode");
+            }
+            finally
+            {
+                RuntimeOptions.RuntimeLibraryOrder = WhisperRuntimeProbe.CpuOnlyOrder;
+                TryDelete(wavPath);
+            }
+        }
+
+        /// <summary>One second of silence as 16 kHz mono 16-bit PCM, enough for whisper to initialise.</summary>
+        private static string WriteSilentWave()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "subtitleforge-gpudiag-" + Guid.NewGuid().ToString("N") + ".wav");
+            const int sampleRate = 16000;
+            const int sampleCount = sampleRate;
+
+            using (FileStream stream = File.Create(path))
+            using (BinaryWriter writer = new BinaryWriter(stream))
+            {
+                int dataBytes = sampleCount * 2;
+                writer.Write(new char[] { 'R', 'I', 'F', 'F' });
+                writer.Write(36 + dataBytes);
+                writer.Write(new char[] { 'W', 'A', 'V', 'E' });
+                writer.Write(new char[] { 'f', 'm', 't', ' ' });
+                writer.Write(16);
+                writer.Write((short)1);
+                writer.Write((short)1);
+                writer.Write(sampleRate);
+                writer.Write(sampleRate * 2);
+                writer.Write((short)2);
+                writer.Write((short)16);
+                writer.Write(new char[] { 'd', 'a', 't', 'a' });
+                writer.Write(dataBytes);
+                writer.Write(new byte[dataBytes]);
+            }
+
+            return path;
+        }
+
+        private static void TryDelete(string path)
+        {
+            if (path.Length == 0)
+            {
+                return;
+            }
+
+            try
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+            catch (Exception)
+            {
+            }
+        }
+
+        private static string DescribeMegabytes(long bytes)
+        {
+            const double Megabyte = 1024.0 * 1024.0;
+            double megabytes = bytes / Megabyte;
+            if (megabytes >= 1024.0)
+            {
+                return (megabytes / 1024.0).ToString("0.#", CultureInfo.InvariantCulture) + " GB";
+            }
+
+            return megabytes.ToString("0", CultureInfo.InvariantCulture) + " MB";
         }
 
         private static string DescribeFolder(string folder)

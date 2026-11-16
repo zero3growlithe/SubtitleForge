@@ -145,6 +145,12 @@ namespace SubtitleForge
 
             PreviewMouseDown += MainWindowPreviewMouseDown;
 
+            // Alt+Space is the window's own system menu, and it fires the moment the user reaches for
+            // an Alt shortcut with a space anywhere near it. A WPF key handler is not enough: the
+            // menu is opened by DefWindowProc when the message is left unhandled, so the message is
+            // swallowed before it ever gets there.
+            SourceInitialized += delegate { GuardAgainstSystemMenu(); };
+
             // Splitter sizes, the global subtitle offset and a maximised window are remembered.
             Loaded += delegate (object sender, RoutedEventArgs e)
             {
@@ -178,6 +184,37 @@ namespace SubtitleForge
             UpdateCommandStates();
             DrawTimeline();
             UpdateTimelineDuration();
+        }
+
+        private const int SystemKeyDownMessage = 0x0104;
+        private const int SystemCharacterMessage = 0x0106;
+        private const int SpaceVirtualKey = 0x20;
+
+        private void GuardAgainstSystemMenu()
+        {
+            HwndSource? source = PresentationSource.FromVisual(this) as HwndSource;
+            if (source == null)
+            {
+                return;
+            }
+
+            source.AddHook(SystemMenuGuard);
+        }
+
+        /// <summary>
+        /// Swallows `Alt`+`Space`, which Windows turns into a click on the window menu (Restore,
+        /// Move, Size, Minimize, Maximize, Close) in the top-left corner. The key is also swallowed
+        /// in a text box, where it does nothing useful either.
+        /// </summary>
+        private static IntPtr SystemMenuGuard(IntPtr window, int message, IntPtr wordParameter, IntPtr longParameter, ref bool handled)
+        {
+            bool isSystemKey = message == SystemKeyDownMessage || message == SystemCharacterMessage;
+            if (isSystemKey && wordParameter == (IntPtr)SpaceVirtualKey)
+            {
+                handled = true;
+            }
+
+            return IntPtr.Zero;
         }
 
         /// <summary>Unity-style placeholder for a field whose value differs across the selection.</summary>

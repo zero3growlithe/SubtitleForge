@@ -149,6 +149,19 @@ namespace SubtitleForge.Services
             {
                 // Idempotent: the app shell already did this, but a run must not depend on that.
                 GgmlBackendPath.Apply();
+
+                // A CUDA set that is really a copy of the CPU natives loads, opens the model and then
+                // runs on the CPU without a single complaint. Say so before the slow part starts.
+                string? mixedSet = CudaNativeSet.FindProblem(
+                    System.IO.Path.Combine(AppContext.BaseDirectory, "runtimes", "cuda12", "win-x64"),
+                    System.IO.Path.Combine(AppContext.BaseDirectory, "runtimes", "win-x64"));
+
+                if (mixedSet != null)
+                {
+                    CrashLog.WriteNote("GPU requested but the CUDA natives are the CPU ones: " + mixedSet);
+                    status?.Report("GPU not used (" + mixedSet + ") — running on CPU.");
+                    gpuRequested = false;
+                }
             }
 
             // The loader's answer is a claim: a CUDA build of whisper.dll can be loaded and then run

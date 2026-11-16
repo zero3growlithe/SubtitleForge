@@ -41,9 +41,9 @@ namespace SubtitleForge.Services
         }
 
         /// <summary>
-        /// True when the CUDA whisper natives sit next to the executable. The build ships without
-        /// them (the package is about 560 MB and the CUDA toolkit cannot replace it), so GPU
-        /// transcription needs both this and the toolkit.
+        /// True when the CUDA whisper natives sit next to the executable. The four small ones ship
+        /// with the app; only ggml-cuda-whisper.dll (538 MB) has to be dropped in by hand, which is
+        /// why this check looks for that one file in particular.
         /// </summary>
         public static bool IsRuntimePresent(out string details)
         {
@@ -65,8 +65,14 @@ namespace SubtitleForge.Services
 
                 if (File.Exists(runtimeFile))
                 {
-                    details = runtimeFolder + " contains " + RuntimeFileName + " but no whisper.dll, so whisper.net "
-                        + "cannot use that folder. Unzip the whole runtimes folder from the package into the app folder.";
+                    string cudaGgml = Path.Combine(runtimeFolder, "ggml-whisper.dll");
+                    details = File.Exists(cudaGgml)
+                        ? runtimeFolder + " has " + RuntimeFileName + " but no whisper.dll, so whisper.net cannot use "
+                            + "that folder. Restore it from the app download, which ships that file."
+                        : runtimeFolder + " contains " + RuntimeFileName + " and is missing the rest of the CUDA set."
+                            + " Restore the folder from the app download, which ships whisper.dll, ggml-whisper.dll,"
+                            + " ggml-base-whisper.dll and ggml-cpu-whisper.dll, then copy " + RuntimeFileName
+                            + " into it.";
                     return false;
                 }
 
@@ -85,9 +91,11 @@ namespace SubtitleForge.Services
 
             if (Directory.Exists(runtimeFolder))
             {
-                details = runtimeFolder + " is empty. The CUDA natives are not part of the download ("
-                    + RuntimeFileName + " alone is 538 MB); copy the package's own runtimes\\cuda12\\win-x64 "
-                    + "contents into that folder to turn GPU transcription on.";
+                details = runtimeFolder + " is missing " + RuntimeFileName + " (538 MB, so it is not part of the"
+                    + " download). Copy that single file out of Whisper.net.Runtime.Cuda12.Windows "
+                    + "1.9.1" + " — it sits in build/win-x64/ of the package zip — and GPU"
+                    + " transcription turns on. Do not overwrite the other files there with copies from"
+                    + " Whisper.net.Runtime: those are the CPU builds and CUDA would never register.";
                 return false;
             }
 

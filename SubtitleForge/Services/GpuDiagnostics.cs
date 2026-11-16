@@ -250,8 +250,10 @@ namespace SubtitleForge.Services
             }
 
             string cudaFolder = Path.Combine(AppContext.BaseDirectory, "runtimes", "cuda12", "win-x64");
+            string cpuFolder = Path.Combine(AppContext.BaseDirectory, "runtimes", "win-x64");
             report.AppendLine("   does the CUDA set belong to the same release as the CPU set?");
             report.AppendLine("   " + CompareNativeSets());
+            report.Append(CudaNativeSet.Describe(cudaFolder, cpuFolder));
 
             report.AppendLine("   files the CUDA folder must contain:");
             foreach (string required in new string[] { "whisper.dll", "ggml-whisper.dll", "ggml-base-whisper.dll", "ggml-cuda-whisper.dll" })
@@ -538,6 +540,10 @@ namespace SubtitleForge.Services
                         report.AppendLine("   FAILED: the CUDA build loaded but whisper initialised the CPU backend.");
                         report.AppendLine("   whisper said: " + verification.Evidence);
                         report.AppendLine("   The usual reasons, cheapest to check first:");
+                        report.AppendLine("     0) the CUDA folder holds a copy of the CPU natives: whisper.net ships");
+                        report.AppendLine("        ggml-whisper.dll in both packages and only the CUDA one imports");
+                        report.AppendLine("        ggml_backend_cuda_reg, which is what fills ggml's registry. Section 4's");
+                        report.AppendLine("        'is this a CUDA set or a copy of the CPU one?' line answers this outright.");
                         report.AppendLine("     a) the module is registered under a name ggml does not derive an entry point");
                         report.AppendLine("        from: it reads the FILE NAME and asks for ggml_backend_<name>_reg, so");
                         report.AppendLine("        ggml-cuda-whisper.dll would need ggml_backend_cuda-whisper_reg. The");

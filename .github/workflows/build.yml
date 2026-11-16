@@ -44,47 +44,71 @@ jobs:
           if (-not (Test-Path "publish/runtimes/cuda12")) { throw "runtimes\cuda12 is missing from the publish output" }
           if (-not (Test-Path "publish/runtimes/win-x64/whisper.dll")) { throw "The CPU runtime is missing from the publish output" }
 
-      # ggml-cuda-whisper.dll alone is 538 MB, so it is not shipped. The folder layout stays, empty
-      # except for a note, because runtimes\cuda12\win-<arch> is the only place whisper.net probes:
-      # an empty folder makes it walk on to the CPU runtime, and dropping the files in later turns GPU
-      # transcription on without touching the build.
-      - name: Empty the CUDA folder but keep it
+      # Only ggml-cuda-whisper.dll (538 MB) is kept out of the build. The other four CUDA natives are
+      # shipped, because they are NOT the same files as the CPU runtime's copies: the CUDA package's
+      # ggml-whisper.dll imports ggml_backend_cuda_reg from ggml-cuda-whisper.dll, and that static
+      # import is the only thing that ever puts the CUDA backend into ggml's registry. Hand-copying
+      # "the CUDA folder" used to mix the two sets, and a mixed set fails silently: whisper reports
+      # backends = 1 and "no GPU found" while every file is present and loads fine.
+      - name: Strip the 538 MB CUDA module, verify the rest of the set
         shell: pwsh
         run: |
           $cudaRoot = Join-Path $PWD "publish/runtimes/cuda12"
           if (-not (Test-Path $cudaRoot)) { throw "runtimes\cuda12 is missing from the publish output" }
+          $cudaFolder = Join-Path $cudaRoot "win-x64"
 
           $note = @(
-            "The CUDA whisper natives are deliberately not part of this build:",
-            "ggml-cuda-whisper.dll alone is 538 MB.",
+            "ggml-cuda-whisper.dll is the one CUDA whisper native that is not part of this build:",
+            "it is 538 MB on its own.",
             "",
-            "To turn GPU transcription on, copy the whole folder",
-            "  runtimes\cuda12\win-x64",
-            "from the NuGet package Whisper.net.Runtime.Cuda12.Windows 1.9.1 into this one, so that",
-            "this directory ends up holding:",
-            "  ggml-cuda-whisper.dll  ggml-whisper.dll  ggml-base-whisper.dll",
-            "  ggml-cpu-whisper.dll   whisper.dll",
+            "To turn GPU transcription on, copy just that one file next to this note, so this folder",
+            "ends up holding:",
+            "  ggml-cuda-whisper.dll   (the file you copy in)",
+            "  whisper.dll  ggml-whisper.dll  ggml-base-whisper.dll  ggml-cpu-whisper.dll  (already here)",
             "",
-            "Package: https://www.nuget.org/api/v2/package/Whisper.net.Runtime.Cuda12.Windows/1.9.1",
-            "(it is a plain zip; only its runtimes folder is needed).",
+            "It is inside the NuGet package Whisper.net.Runtime.Cuda12.Windows 1.9.1:",
+            "https://www.nuget.org/api/v2/package/Whisper.net.Runtime.Cuda12.Windows/1.9.1",
+            "(a plain zip - the file sits in build/win-x64/, not in a runtimes folder).",
+            "",
+            "Do NOT copy whisper.dll, ggml-whisper.dll or ggml-base-whisper.dll from Whisper.net.Runtime:",
+            "those are the CPU builds, and with a CPU ggml-whisper.dll in here CUDA is never registered.",
             "",
             "The remaining CUDA libraries (cublas64_12, cublasLt64_12, cudart64_12) come from the CUDA 12",
             "toolkit: SubtitleForge adds the toolkit's bin folder to the DLL search path at start-up.",
             "GPU diagnostics in the app lists every file it looks for and where."
           )
 
-          Get-ChildItem -Recurse $cudaRoot -File | ForEach-Object {
-            "{0,10:N1} MB  removing {1}" -f ($_.Length / 1MB), $_.Name
-            Remove-Item $_.FullName -Force
+          $big = Join-Path $cudaFolder "ggml-cuda-whisper.dll"
+          if (Test-Path $big) {
+            "{0,10:N1} MB  removing {1}" -f ((Get-Item $big).Length / 1MB), "ggml-cuda-whisper.dll"
+            Remove-Item $big -Force
           }
 
-          foreach ($folder in (Get-ChildItem -Directory $cudaRoot -Recurse)) {
-            Set-Content -Path (Join-Path $folder.FullName "PUT-CUDA-LIBRARIES-HERE.txt") -Value $note -Encoding UTF8
+          Set-Content -Path (Join-Path $cudaFolder "PUT-CUDA-LIBRARIES-HERE.txt") -Value $note -Encoding UTF8
+
+          # The four shipped natives have to be there and the CUDA ggml-whisper.dll has to be the CUDA
+          # build - the whole point of shipping them. The import name is plain ASCII in the PE, so a
+          # byte search is enough and it cannot be fooled by a file that merely has the right name.
+          foreach ($file in @("whisper.dll","ggml-whisper.dll","ggml-base-whisper.dll","ggml-cpu-whisper.dll")) {
+            $path = Join-Path $cudaFolder $file
+            if (-not (Test-Path $path)) { throw "The CUDA set is incomplete: $file is missing from runtimes\cuda12\win-x64" }
           }
+
+          $bytes = [System.IO.File]::ReadAllBytes((Join-Path $cudaFolder "ggml-whisper.dll"))
+          $text = [System.Text.Encoding]::ASCII.GetString($bytes)
+          if (-not $text.Contains("ggml_backend_cuda_reg")) {
+            throw "runtimes\cuda12\win-x64\ggml-whisper.dll is the CPU build (no ggml_backend_cuda_reg import), so CUDA would never register"
+          }
+
+          # And it must not be the same file as the CPU fallback's copy, or one of the two sets is wrong.
+          $cudaGgml = (Get-FileHash (Join-Path $cudaFolder "ggml-whisper.dll") -Algorithm SHA256).Hash
+          $cpuGgml  = (Get-FileHash "publish/runtimes/win-x64/ggml-whisper.dll" -Algorithm SHA256).Hash
+          if ($cudaGgml -eq $cpuGgml) { throw "The CUDA and CPU ggml-whisper.dll are the same file: the publish merged the two native sets" }
+          Write-Host "CUDA ggml-whisper.dll imports ggml_backend_cuda_reg and differs from the CPU copy ($($cudaGgml.Substring(0,16)))"
 
           Get-ChildItem -Recurse $cudaRoot | Select-Object FullName
-          $big = Get-ChildItem -Recurse publish -File | Where-Object { $_.Length -gt 40MB }
-          if ($big) { throw ("Oversized files left in the publish output: " + ($big.Name -join ", ")) }
+          $oversized = Get-ChildItem -Recurse publish -File | Where-Object { $_.Length -gt 40MB }
+          if ($oversized) { throw ("Oversized files left in the publish output: " + ($oversized.Name -join ", ")) }
           if (-not (Test-Path "publish/runtimes/win-x64/whisper.dll")) { throw "The CPU fallback runtime is missing" }
 
       - name: Archive

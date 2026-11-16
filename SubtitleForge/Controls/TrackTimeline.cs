@@ -1069,18 +1069,27 @@ namespace SubtitleForge.Controls
                 return;
             }
 
+            // A clip can be minutes long, and zoomed in it can be tens of thousands of pixels wide.
+            // Only the part inside the timeline area is worth drawing: it is the same picture, it
+            // keeps the waveform arrays small, and it keeps a long clip off the track headers.
+            Rect onScreen = Rect.Intersect(rect, new Rect(ContentLeft, rowTop, Math.Max(0.0, ContentWidth), rowHeight));
+            if (onScreen.IsEmpty || onScreen.Width <= 0.5)
+            {
+                return;
+            }
+
             drawingContext.DrawRoundedRectangle(track.BackgroundBrush, null, rect, SegmentCornerRadius, SegmentCornerRadius);
 
-            drawingContext.PushClip(new RectangleGeometry(rect));
+            drawingContext.PushClip(new RectangleGeometry(onScreen));
             try
             {
                 if (segment.Kind == TrackKind.Video)
                 {
-                    DrawThumbnails(drawingContext, track, segment, rect);
+                    DrawThumbnails(drawingContext, track, segment, rect, onScreen);
                 }
                 else
                 {
-                    DrawWaveform(drawingContext, track, segment, rect);
+                    DrawWaveform(drawingContext, track, segment, rect, onScreen);
                 }
             }
             finally
@@ -1103,7 +1112,7 @@ namespace SubtitleForge.Controls
             return new Rect(left, rowTop + 1.0, width, rowHeight - 2.0);
         }
 
-        private void DrawWaveform(DrawingContext drawingContext, TimelineTrack track, TimelineSegment segment, Rect rect)
+        private void DrawWaveform(DrawingContext drawingContext, TimelineTrack track, TimelineSegment segment, Rect fullRect, Rect rect)
         {
             if (segment.Samples.Length == 0)
             {
@@ -1111,19 +1120,33 @@ namespace SubtitleForge.Controls
             }
 
             int pixelCount = (int)Math.Round(rect.Width);
-            if (pixelCount < 2 || segment.DurationSeconds <= 0.0)
+            if (pixelCount < 2 || segment.DurationSeconds <= 0.0 || fullRect.Width <= 0.0)
             {
                 return;
             }
 
+            // rect is the slice of the clip that is on screen, so the samples have to be walked over
+            // that slice only — otherwise a zoomed-in clip would squeeze minutes into a few hundred
+            // pixels and the waveform would stop matching the sound.
+            double visibleFraction = Math.Min(1.0, rect.Width / fullRect.Width);
+            if (visibleFraction <= 0.0)
+            {
+                return;
+            }
+
+            double leftFraction = (rect.X - fullRect.X) / fullRect.Width;
+
             double centerY = rect.Y + (rect.Height / 2.0);
             double halfHeight = Math.Max(2.0, (rect.Height / 2.0) - 3.0);
-            double samplesPerPixel = Math.Max(1.0, (segment.DurationSeconds * TimelineSegment.SampleRate) / pixelCount);
+            double samplesPerPixel = Math.Max(
+                1.0,
+                (segment.DurationSeconds * visibleFraction * TimelineSegment.SampleRate) / pixelCount);
 
             double[] tops = new double[pixelCount];
             for (int pixel = 0; pixel < pixelCount; pixel++)
             {
-                double timelineSeconds = segment.StartSeconds + (segment.DurationSeconds * ((pixel + 0.5) / pixelCount));
+                double localFraction = leftFraction + (visibleFraction * ((pixel + 0.5) / pixelCount));
+                double timelineSeconds = segment.StartSeconds + (segment.DurationSeconds * localFraction);
                 double mediaSeconds = segment.SourceOffsetSeconds + (timelineSeconds - segment.StartSeconds);
                 double peak = PeakFor(segment, mediaSeconds, samplesPerPixel);
                 tops[pixel] = centerY - Math.Max(0.6, peak * halfHeight);
@@ -1176,7 +1199,7 @@ namespace SubtitleForge.Controls
             return peak;
         }
 
-        private void DrawThumbnails(DrawingContext drawingContext, TimelineTrack track, TimelineSegment segment, Rect rect)
+        private void DrawThumbnails(DrawingContext drawingContext, TimelineTrack track, TimelineSegment segment, Rect fullRect, Rect rect)
         {
             if (segment.Thumbnails.Length == 0 || segment.DurationSeconds <= 0.0)
             {
@@ -1188,6 +1211,15 @@ namespace SubtitleForge.Controls
             {
                 return;
             }
+
+            double visibleFraction = fullRect.Width <= 0.0 ? 1.0 : Math.Min(1.0, rect.Width / fullRect.Width);
+            if (visibleFraction <= 0.0)
+            {
+                return;
+            }
+
+            double leftFraction = fullRect.Width <= 0.0 ? 0.0 : (rect.X - fullRect.X) / fullRect.Width;
+            double rightFraction = leftFraction + visibleFraction;
 
             int count = segment.Thumbnails.Length;
             for (int index = 0; index < count; index++)
@@ -1205,8 +1237,16 @@ namespace SubtitleForge.Controls
                 double startFraction = (visibleStart - segment.SourceOffsetSeconds) / segment.DurationSeconds;
                 double endFraction = (visibleEnd - segment.SourceOffsetSeconds) / segment.DurationSeconds;
 
-                double x = rect.X + (rect.Width * startFraction);
-                double width = rect.Width * (endFraction - startFraction);
+                // Keep only the part of the thumbnail that is on screen and place it there.
+                double onScreenStart = Math.Max(startFraction, leftFraction);
+                double onScreenEnd = Math.Min(endFraction, rightFraction);
+                if (onScreenEnd <= onScreenStart)
+                {
+                    continue;
+                }
+
+                double x = rect.X + (rect.Width * ((onScreenStart - leftFraction) / visibleFraction));
+                double width = rect.Width * ((onScreenEnd - onScreenStart) / visibleFraction);
                 if (width <= 0.5)
                 {
                     continue;

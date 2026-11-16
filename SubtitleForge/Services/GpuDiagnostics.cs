@@ -445,6 +445,7 @@ namespace SubtitleForge.Services
             {
                 report.AppendLine("   module as ggml would load it: " + modulePath);
                 report.AppendLine("   direct load test: " + GgmlBackendPath.TestModuleLoad(modulePath));
+                report.AppendLine("   names ggml will accept: " + GgmlBackendPath.DescribeRegistration(modulePath));
             }
 
             if (string.IsNullOrEmpty(modelPath) || !File.Exists(modelPath))
@@ -537,11 +538,14 @@ namespace SubtitleForge.Services
                         report.AppendLine("   FAILED: the CUDA build loaded but whisper initialised the CPU backend.");
                         report.AppendLine("   whisper said: " + verification.Evidence);
                         report.AppendLine("   The usual reasons, cheapest to check first:");
-                        report.AppendLine("     a) the CUDA backend module was never registered with ggml: it only scans the");
-                        report.AppendLine("        app folder and the current directory, which is why GGML_BACKEND_PATH above");
-                        report.AppendLine("        has to point at runtimes\\cuda12\\win-x64\\ggml-cuda-whisper.dll");
-                        report.AppendLine("     b) ggml-cuda-whisper.dll is missing from runtimes\\cuda12\\win-x64 (section 4 lists");
-                        report.AppendLine("        what is in the folder)");
+                        report.AppendLine("     a) the module is registered under a name ggml does not derive an entry point");
+                        report.AppendLine("        from: it reads the FILE NAME and asks for ggml_backend_<name>_reg, so");
+                        report.AppendLine("        ggml-cuda-whisper.dll would need ggml_backend_cuda-whisper_reg. The");
+                        report.AppendLine("        'names ggml will accept' line above shows which names work; the app links");
+                        report.AppendLine("        ggml-cuda.dll next to the exe for exactly this reason");
+                        report.AppendLine("     b) the CUDA backend module was never registered with ggml at all: it only");
+                        report.AppendLine("        scans the app folder and the current directory, which is why");
+                        report.AppendLine("        GGML_BACKEND_PATH above points into runtimes\\cuda12\\win-x64");
                         report.AppendLine("     c) the files in that folder come from a different whisper.net version than");
                         report.AppendLine("        Whisper.net.dll, or the CUDA libraries are the wrong major version (CUDA 12)");
                         report.AppendLine("   Whisper's own log lines:");

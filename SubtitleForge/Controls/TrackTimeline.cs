@@ -190,6 +190,19 @@ namespace SubtitleForge.Controls
         private double? rangeStartSeconds;
         private double? rangeEndSeconds;
 
+        private double horizontalZoom = 1.0;
+        private double verticalZoom = 1.0;
+        private double viewStartSeconds;
+
+        /// <summary>The whole timeline is this many seconds wide at zoom 1; more means fewer seconds.</summary>
+        public const double MaximumHorizontalZoom = 60.0;
+        public const double MinimumVerticalZoom = 0.45;
+        public const double MaximumVerticalZoom = 2.4;
+        private const double ZoomStep = 1.18;
+
+        /// <summary>Raised when zooming or scrolling changed what part of the timeline is on screen.</summary>
+        public event EventHandler? ViewChanged;
+
         private static readonly Color RulerColor = Color.FromRgb(0x2A, 0x2A, 0x31);
         private static readonly Brush ReadyBandBrush = CreateFrozenBrush(AccentColor);
         private static readonly Brush CueMarkBrush = CreateFrozenBrush(Color.FromRgb(0x27, 0x56, 0x8F));
@@ -251,8 +264,160 @@ namespace SubtitleForge.Controls
                 if (Math.Abs(totalDuration - updated) > 0.0001)
                 {
                     totalDuration = updated;
+                    ClampViewStart();
+                    InvalidateVisual();
+                    RaiseViewChanged();
+                }
+            }
+        }
+
+        /// <summary>
+        /// How far the timeline is stretched out horizontally. 1 shows the whole duration, 4 shows a
+        /// quarter of it, and a horizontal scrollbar appears as soon as it is above 1.
+        /// </summary>
+        public double HorizontalZoom
+        {
+            get { return horizontalZoom; }
+            set
+            {
+                double updated = value;
+                if (updated < 1.0)
+                {
+                    updated = 1.0;
+                }
+
+                if (updated > MaximumHorizontalZoom)
+                {
+                    updated = MaximumHorizontalZoom;
+                }
+
+                if (Math.Abs(horizontalZoom - updated) > 0.0001)
+                {
+                    horizontalZoom = updated;
+                    ClampViewStart();
+                    InvalidateVisual();
+                    RaiseViewChanged();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Row height multiplier. Below 1 the tracks get shorter so more of them fit on screen;
+        /// above 1 the waveforms and thumbnails get more room.
+        /// </summary>
+        public double VerticalZoom
+        {
+            get { return verticalZoom; }
+            set
+            {
+                double updated = value;
+                if (updated < MinimumVerticalZoom)
+                {
+                    updated = MinimumVerticalZoom;
+                }
+
+                if (updated > MaximumVerticalZoom)
+                {
+                    updated = MaximumVerticalZoom;
+                }
+
+                if (Math.Abs(verticalZoom - updated) > 0.0001)
+                {
+                    verticalZoom = updated;
+                    InvalidateMeasure();
+                    InvalidateVisual();
+                    RaiseViewChanged();
+                }
+            }
+        }
+
+        /// <summary>The left edge of the visible part of the timeline, in seconds.</summary>
+        public double ViewStartSeconds
+        {
+            get { return viewStartSeconds; }
+            set
+            {
+                double updated = value;
+                double maximum = MaximumViewStart();
+                if (updated > maximum)
+                {
+                    updated = maximum;
+                }
+
+                if (updated < 0.0)
+                {
+                    updated = 0.0;
+                }
+
+                if (Math.Abs(viewStartSeconds - updated) > 0.0001)
+                {
+                    viewStartSeconds = updated;
                     InvalidateVisual();
                 }
+            }
+        }
+
+        /// <summary>How many seconds fit in the timeline area right now.</summary>
+        public double VisibleSeconds
+        {
+            get
+            {
+                double visible = totalDuration / Math.Max(1.0, horizontalZoom);
+                return visible <= 0.05 ? 0.05 : visible;
+            }
+        }
+
+        public double MaximumViewStart()
+        {
+            double maximum = totalDuration - VisibleSeconds;
+            return maximum < 0.0 ? 0.0 : maximum;
+        }
+
+        /// <summary>The horizontal zoom and scroll, the way the scrollbar needs them.</summary>
+        public void SetVisibleRange(double startSeconds, double spanSeconds)
+        {
+            if (spanSeconds <= 0.0)
+            {
+                return;
+            }
+
+            double zoom = totalDuration / spanSeconds;
+            if (zoom < 1.0)
+            {
+                zoom = 1.0;
+            }
+
+            if (zoom > MaximumHorizontalZoom)
+            {
+                zoom = MaximumHorizontalZoom;
+            }
+
+            horizontalZoom = zoom;
+            viewStartSeconds = startSeconds;
+            ClampViewStart();
+            InvalidateVisual();
+        }
+
+        private void ClampViewStart()
+        {
+            double maximum = MaximumViewStart();
+            if (viewStartSeconds > maximum)
+            {
+                viewStartSeconds = maximum;
+            }
+
+            if (viewStartSeconds < 0.0)
+            {
+                viewStartSeconds = 0.0;
+            }
+        }
+
+        private void RaiseViewChanged()
+        {
+            EventHandler? handler = ViewChanged;
+            if (handler != null)
+            {
+                handler(this, EventArgs.Empty);
             }
         }
 
@@ -364,9 +529,12 @@ namespace SubtitleForge.Controls
             return Math.Max(height, RulerHeight + AudioRowHeight);
         }
 
-        private static double RowHeight(TimelineTrack track)
+        private double RowHeight(TimelineTrack track)
         {
-            return track.Kind == TrackKind.Video ? VideoRowHeight : AudioRowHeight;
+            double baseHeight = track.Kind == TrackKind.Video ? VideoRowHeight : AudioRowHeight;
+            double scaled = baseHeight * verticalZoom;
+            // Enough room for the header text to stay readable at any scale.
+            return scaled < 26.0 ? 26.0 : scaled;
         }
 
         private double ContentLeft
@@ -438,39 +606,102 @@ namespace SubtitleForge.Controls
 
         private double SecondsAt(Point point)
         {
-            double fraction = (point.X - ContentLeft) / ContentWidth;
-            if (fraction < 0.0)
+            double seconds = viewStartSeconds + ((point.X - ContentLeft) / PixelsPerSecond);
+            if (seconds < 0.0)
             {
-                fraction = 0.0;
+                seconds = 0.0;
             }
 
-            if (fraction > 1.0)
+            if (seconds > totalDuration)
             {
-                fraction = 1.0;
+                seconds = totalDuration;
             }
 
-            return fraction * totalDuration;
+            return seconds;
         }
 
         private double XForSeconds(double seconds)
         {
-            if (totalDuration <= 0.0)
-            {
-                return ContentLeft;
-            }
-
-            double x = ContentLeft + (ContentWidth * (seconds / totalDuration));
-            if (x < ContentLeft)
-            {
-                x = ContentLeft;
-            }
-
-            return x;
+            return ContentLeft + ((seconds - viewStartSeconds) * PixelsPerSecond);
         }
 
         private double PixelsPerSecond
         {
-            get { return totalDuration <= 0.0 ? 1.0 : ContentWidth / totalDuration; }
+            get { return ContentWidth / VisibleSeconds; }
+        }
+
+        /// <summary>True when the time is inside the part of the timeline that is on screen.</summary>
+        private bool IsTimeVisible(double seconds)
+        {
+            double viewEnd = viewStartSeconds + VisibleSeconds;
+            return seconds > viewStartSeconds - 0.001 && seconds < viewEnd + 0.001;
+        }
+
+        // ── Zoom ───────────────────────────────────────────────────────────
+
+        protected override void OnMouseWheel(MouseWheelEventArgs e)
+        {
+            base.OnMouseWheel(e);
+
+            int steps = e.Delta / 120;
+            if (steps == 0)
+            {
+                steps = e.Delta > 0 ? 1 : -1;
+            }
+
+            double factor = steps > 0 ? ZoomStep : 1.0 / ZoomStep;
+            bool alt = (Keyboard.Modifiers & ModifierKeys.Alt) == ModifierKeys.Alt;
+            bool control = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
+            bool shift = (Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift;
+
+            if (alt && !control)
+            {
+                // Zoom around the pointer: whatever second is under the cursor stays under it.
+                double anchorX = e.GetPosition(this).X;
+                double anchorSeconds = SecondsAt(new Point(anchorX, 0.0));
+                double offsetFraction = ContentWidth <= 0.0 ? 0.0 : (anchorX - ContentLeft) / ContentWidth;
+
+                HorizontalZoom *= factor;
+                viewStartSeconds = anchorSeconds - (offsetFraction * VisibleSeconds);
+                ClampViewStart();
+                InvalidateVisual();
+                RaiseViewChanged();
+                e.Handled = true;
+                return;
+            }
+
+            if (control && !alt)
+            {
+                VerticalZoom *= factor;
+                e.Handled = true;
+                return;
+            }
+
+            if (shift && !control && !alt && horizontalZoom > 1.0001)
+            {
+                // Shift scrolls along the timeline instead of moving through the row list.
+                ViewStartSeconds += -steps * VisibleSeconds * 0.12;
+                InvalidateVisual();
+                RaiseViewChanged();
+                e.Handled = true;
+            }
+        }
+
+        /// <summary>Puts the middle of the visible span on the playhead. Used while playing when zoomed.</summary>
+        public void FollowPlayhead()
+        {
+            if (horizontalZoom <= 1.0001)
+            {
+                return;
+            }
+
+            double viewEnd = viewStartSeconds + VisibleSeconds;
+            if (playheadSeconds >= viewStartSeconds && playheadSeconds <= viewEnd)
+            {
+                return;
+            }
+
+            ViewStartSeconds = playheadSeconds - (VisibleSeconds / 2.0);
         }
 
         // ── Rendering ──────────────────────────────────────────────────────
@@ -505,16 +736,19 @@ namespace SubtitleForge.Controls
                 DrawSegmentDragPreview(drawingContext);
             }
 
-            if (snapLineSeconds.HasValue)
+            if (snapLineSeconds.HasValue && IsTimeVisible(snapLineSeconds.Value))
             {
                 double snapX = XForSeconds(snapLineSeconds.Value);
                 Pen snapPen = new Pen(new SolidColorBrush(Color.FromRgb(0xFF, 0xD1, 0x66)), 1.5);
                 drawingContext.DrawLine(snapPen, new Point(snapX, RulerHeight), new Point(snapX, ActualHeight));
             }
 
-            double playheadX = XForSeconds(playheadSeconds);
             Pen playheadPen = new Pen(new SolidColorBrush(AccentColor), 1.5);
-            drawingContext.DrawLine(playheadPen, new Point(playheadX, 0), new Point(playheadX, ActualHeight));
+            double playheadX = XForSeconds(playheadSeconds);
+            if (IsTimeVisible(playheadSeconds))
+            {
+                drawingContext.DrawLine(playheadPen, new Point(playheadX, 0), new Point(playheadX, ActualHeight));
+            }
 
             if (stickyOffset <= 0.5)
             {
@@ -532,10 +766,13 @@ namespace SubtitleForge.Controls
 
             // The playhead used to be hidden behind the band; it is drawn over it so the position
             // stays readable while scrolled.
-            drawingContext.DrawLine(
-                playheadPen,
-                new Point(playheadX, stickyOffset),
-                new Point(playheadX, ActualHeight));
+            if (IsTimeVisible(playheadSeconds))
+            {
+                drawingContext.DrawLine(
+                    playheadPen,
+                    new Point(playheadX, stickyOffset),
+                    new Point(playheadX, ActualHeight));
+            }
         }
 
         private void DrawRuler(DrawingContext drawingContext, double top)
@@ -552,9 +789,20 @@ namespace SubtitleForge.Controls
                 return;
             }
 
-            double seconds = 0.0;
-            while (seconds <= totalDuration + 0.0001)
+            // Ticks and labels may not run into the track headers once the timeline is zoomed.
+            drawingContext.PushClip(new RectangleGeometry(new Rect(ContentLeft, top, Math.Max(0.0, ContentWidth), RulerHeight)));
+            try
             {
+            double viewEnd = viewStartSeconds + VisibleSeconds;
+            double seconds = Math.Floor(viewStartSeconds / step) * step;
+            while (seconds <= viewEnd + 0.0001)
+            {
+                if (seconds < -0.0001)
+                {
+                    seconds += step;
+                    continue;
+                }
+
                 double x = XForSeconds(seconds);
                 bool major = Math.Abs(seconds % (step * 5.0)) < 0.001 || Math.Abs(seconds) < 0.001;
                 double tickHeight = major ? RulerHeight - 8.0 : RulerHeight - 4.0;
@@ -576,9 +824,22 @@ namespace SubtitleForge.Controls
 
                 seconds += step;
             }
+            }
+            finally
+            {
+                drawingContext.Pop();
+            }
 
-            DrawRangeBand(drawingContext, top);
-            DrawCueMarks(drawingContext, top);
+            drawingContext.PushClip(new RectangleGeometry(new Rect(ContentLeft, top, Math.Max(0.0, ContentWidth), RulerHeight)));
+            try
+            {
+                DrawRangeBand(drawingContext, top);
+                DrawCueMarks(drawingContext, top);
+            }
+            finally
+            {
+                drawingContext.Pop();
+            }
         }
 
         /// <summary>
@@ -704,9 +965,19 @@ namespace SubtitleForge.Controls
                 drawingContext.DrawRoundedRectangle(null, selectionPen, new Rect(1.0, top + 1.0, ActualWidth - 2.0, height - 2.0), 4.0, 4.0);
             }
 
-            foreach (TimelineSegment segment in track.Segments)
+            // Zooming can push a segment past either edge of the panel; the clip keeps it off the
+            // track headers and off whatever sits next to the timeline.
+            drawingContext.PushClip(new RectangleGeometry(new Rect(ContentLeft, top, Math.Max(0.0, ContentWidth), height)));
+            try
             {
-                DrawSegment(drawingContext, track, segment, top, height);
+                foreach (TimelineSegment segment in track.Segments)
+                {
+                    DrawSegment(drawingContext, track, segment, top, height);
+                }
+            }
+            finally
+            {
+                drawingContext.Pop();
             }
 
             if (!track.HasSegments)

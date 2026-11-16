@@ -106,6 +106,16 @@ to keep the selection untouched while scrubbing.
   scroll offset as the tracks view scrolls, so the time scale, the cue marks, the marked
   transcribe range and the playhead are always in sight; the playhead is drawn over the ruler so
   the position stays readable while scrolled down.
+- **`Alt`+wheel zooms the timeline in and out horizontally**, anchored at the pointer, so the second
+  under the cursor stays under it. Zoom 1 is the whole video; the more you zoom, the fewer seconds fit
+  and the finer the ruler steps become (0.5 s ticks instead of whole minutes) — that is how a clip edge
+  gets placed to the tenth of a second. A horizontal scrollbar appears under the tracks while zoomed,
+  **`Shift`+wheel** scrolls along the timeline without touching the row list, and while playing the view
+  follows the playhead once it would leave the screen. Only a vertical scrollbar shows at zoom 1, so the
+  bar never costs a row.
+- **`Ctrl`+wheel changes the row height**: scrolling down makes the tracks shorter and fits more of them
+  in the panel, scrolling up gives the waveforms and thumbnails more room. `Fit whole video` in the
+  track right-click menu puts both back.
 - **Drag the bar between the preview and the tracks** to make the video smaller and give the
   timeline more room (or the other way round).
 - **Seeking repaints the preview** whether playback is running or paused — the frame under
@@ -439,6 +449,18 @@ resort the current directory is pointed at the natives folder for the moment the
 which is when ggml scans for backends. GPU diagnostics prints all three: the variable, the link and
 the folder, and then reads whisper's own verdict, so a failure always names the step that did not
 work.
+
+**The backend module's file name is part of the interface.** The ggml inside whisper.net 1.9.1 does
+not ask for a fixed symbol. It takes the module's own file name, strips `ggml-` and `.dll`, and calls
+`ggml_backend_<that name>_reg`. whisper.net ships its natives with a `-whisper` suffix so they cannot
+collide with other ggml builds in the same folder, which turns that lookup into
+`ggml_backend_cuda-whisper_reg` — a symbol nobody exports. The backend is then dropped without a word:
+`backends = 1` in whisper's own log, one second later `whisper_backend_init_gpu: no GPU found`. The
+module really exports `ggml_backend_cuda_reg`, so at start-up the app hard-links it as **`ggml-cuda.dll`**
+next to the exe and inside the CUDA natives folder, and keeps the suffixed link as well for builds that
+scan for `ggml-<backend>-*`. GPU diagnostics prints, for every candidate name, the entry point ggml
+would ask for and whether the module has it — that line is what tells a naming problem from a load
+problem.
 
 Two more things are reported because they are the ones with no trace in any log:
 

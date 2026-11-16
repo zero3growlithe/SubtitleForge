@@ -30,6 +30,23 @@ namespace SubtitleForge.Services
         };
 
         /// <summary>
+        /// The names the backend module is linked under, most likely first.
+        ///
+        /// This is not cosmetic. The ggml inside whisper.net 1.9.1 does not look for a fixed export:
+        /// it takes the module's <b>file name</b>, strips <c>ggml-</c> and <c>.dll</c>, and asks for
+        /// <c>ggml_backend_&lt;that name&gt;_reg</c>. Renaming ggml's CUDA module with whisper.net's
+        /// <c>-whisper</c> suffix therefore turns the lookup into
+        /// <c>ggml_backend_cuda-whisper_reg</c>, which of course nobody exports, and the backend is
+        /// dropped without a word. The module really exports <c>ggml_backend_cuda_reg</c>, so it has
+        /// to also be visible under the plain name <c>ggml-cuda.dll</c>.
+        /// </summary>
+        private static readonly string[] LinkNames = new string[]
+        {
+            "ggml-cuda.dll",
+            "ggml-cuda-whisper.dll"
+        };
+
+        /// <summary>
         /// Points <c>GGML_BACKEND_PATH</c> at the CUDA backend module when it is not next to the
         /// executable. Returns what it did, for the status line and the diagnostics report.
         /// </summary>
@@ -80,30 +97,150 @@ namespace SubtitleForge.Services
                 return "nothing to link";
             }
 
-            string fileName = Path.GetFileName(modulePath);
-            string target = Path.Combine(AppContext.BaseDirectory, fileName);
+            List<string> results = new List<string>();
+
+            // Both folders matter. ggml scans the executable folder and the current directory; the
+            // ggml inside whisper.dll additionally scans the folder it was loaded from, and that is
+            // the CUDA folder the module really lives in. A link in each place covers the lot.
+            string exeFolder = AppContext.BaseDirectory;
+            string nativesFolder = Path.GetDirectoryName(modulePath) ?? string.Empty;
+
+            for (int index = 0; index < LinkNames.Length; index++)
+            {
+                results.Add(EnsureOneLink(modulePath, LinkNames[index], exeFolder, "next to the exe"));
+            }
+
+            if (nativesFolder.Length > 0
+                && !string.Equals(
+                    Path.GetFullPath(nativesFolder).TrimEnd(Path.DirectorySeparatorChar),
+                    Path.GetFullPath(exeFolder).TrimEnd(Path.DirectorySeparatorChar),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                for (int index = 0; index < LinkNames.Length; index++)
+                {
+                    // Only the plain name matters here; the suffixed one is the real file already.
+                    if (!string.Equals(LinkNames[index], Path.GetFileName(modulePath), StringComparison.OrdinalIgnoreCase))
+                    {
+                        results.Add(EnsureOneLink(modulePath, LinkNames[index], nativesFolder, "in the CUDA folder"));
+                    }
+                }
+            }
+
+            return string.Join("; ", results.ToArray());
+        }
+
+        private static string EnsureOneLink(string modulePath, string linkName, string folder, string where)
+        {
+            string target = Path.Combine(folder, linkName);
 
             try
             {
                 if (File.Exists(target))
                 {
-                    return "already next to the exe (" + fileName + ")";
+                    long existingSize = new FileInfo(target).Length;
+                    long moduleSize = new FileInfo(modulePath).Length;
+                    if (existingSize == moduleSize)
+                    {
+                        return linkName + " already " + where;
+                    }
+
+                    return linkName + " " + where + " is a different file ("
+                        + existingSize.ToString(CultureInfo.InvariantCulture) + " bytes instead of "
+                        + moduleSize.ToString(CultureInfo.InvariantCulture) + ") — delete it";
                 }
 
                 if (!CreateHardLink(target, modulePath, IntPtr.Zero))
                 {
                     int error = Marshal.GetLastWin32Error();
-                    return "could not link " + fileName + " next to the exe (error "
+                    return "could not link " + linkName + " " + where + " (error "
                         + error.ToString(CultureInfo.InvariantCulture)
                         + "); copy the CUDA folder next to SubtitleForge.exe instead";
                 }
             }
             catch (Exception exception)
             {
-                return "could not link " + fileName + " next to the exe: " + exception.Message;
+                return "could not link " + linkName + " " + where + ": " + exception.Message;
             }
 
-            return "linked " + fileName + " next to the exe";
+            return "linked " + linkName + " " + where;
+        }
+
+        /// <summary>
+        /// Shows which of the names above actually satisfy the export ggml asks for, and which
+        /// <c>ggml-*</c> files the scans would see in the executable folder.
+        /// </summary>
+        public static string DescribeRegistration(string modulePath)
+        {
+            if (modulePath.Length == 0)
+            {
+                return "no CUDA module to inspect";
+            }
+
+            IntPtr module;
+            try
+            {
+                module = LoadLibraryEx(modulePath, IntPtr.Zero, LoadWithAlteredSearchPath);
+            }
+            catch (Exception exception)
+            {
+                return "could not even open it: " + exception.Message;
+            }
+
+            if (module == IntPtr.Zero)
+            {
+                int error = Marshal.GetLastWin32Error();
+                return "will not load, so ggml can never register it (Win32 error "
+                    + error.ToString(CultureInfo.InvariantCulture) + ": " + DescribeWin32Error(error) + ")";
+            }
+
+            List<string> lines = new List<string>();
+            lines.Add("exports: ggml_backend_init "
+                + (HasExport(module, "ggml_backend_init") ? "found" : "MISSING")
+                + ", ggml_backend_score "
+                + (HasExport(module, "ggml_backend_score") ? "found" : "MISSING"));
+
+            for (int index = 0; index < LinkNames.Length; index++)
+            {
+                string name = LinkNames[index];
+                string derived = DeriveEntryPoint(name);
+                bool present = HasExport(module, derived);
+                lines.Add(name + " -> " + derived + (present ? ": found" : ": MISSING")
+                    + (present ? "" : " (ggml silently drops this name)"));
+            }
+
+            List<string> seen = new List<string>();
+            try
+            {
+                string[] files = Directory.GetFiles(AppContext.BaseDirectory, "ggml-*.dll");
+                for (int index = 0; index < files.Length; index++)
+                {
+                    seen.Add(Path.GetFileName(files[index]));
+                }
+            }
+            catch (Exception)
+            {
+            }
+
+            seen.Sort(StringComparer.OrdinalIgnoreCase);
+            lines.Add("ggml-*.dll next to the exe: " + (seen.Count == 0 ? "(none)" : string.Join(", ", seen.ToArray())));
+            return string.Join("; ", lines.ToArray());
+        }
+
+        /// <summary>The entry point this ggml build asks a module for, derived the way it does.</summary>
+        public static string DeriveEntryPoint(string fileName)
+        {
+            string stem = Path.GetFileNameWithoutExtension(fileName);
+            if (stem.StartsWith("ggml-", StringComparison.OrdinalIgnoreCase))
+            {
+                stem = stem.Substring("ggml-".Length);
+            }
+
+            return "ggml_backend_" + stem + "_reg";
+        }
+
+        private static bool HasExport(IntPtr module, string name)
+        {
+            return GetProcAddress(module, name) != IntPtr.Zero;
         }
 
         /// <summary>

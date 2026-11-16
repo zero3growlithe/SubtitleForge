@@ -1660,6 +1660,9 @@ namespace SubtitleForge
         private void UpdatePlayhead(double positionSeconds)
         {
             TrackTimelineView.PlayheadSeconds = positionSeconds;
+            // While zoomed in the playhead has to be brought back into view, otherwise playback
+            // just walks off the right edge and nothing moves any more.
+            TrackTimelineView.FollowPlayhead();
 
             if (playheadLine == null)
             {
@@ -2337,6 +2340,56 @@ namespace SubtitleForge
             // The ruler is painted a second time at the scroll offset, so it stays in sight however
             // many tracks push the rows past the bottom of the panel.
             TrackTimelineView.StickyOffset = TrackScrollViewer.VerticalOffset;
+        }
+
+        /// <summary>
+        /// Alt + wheel zooms the timeline horizontally and Ctrl + wheel changes the row height, so
+        /// the scrollbar has to follow both of them even though it never raised the change itself.
+        /// </summary>
+        private void TrackTimelineViewChanged(object? sender, EventArgs e)
+        {
+            SyncTimelineScrollBar();
+        }
+
+        private void SyncTimelineScrollBar()
+        {
+            if (TimelineScrollBar == null)
+            {
+                return;
+            }
+
+            double span = TrackTimelineView.VisibleSeconds;
+            double maximum = TrackTimelineView.MaximumViewStart();
+
+            TimelineScrollBar.Visibility = TrackTimelineView.HorizontalZoom > 1.0001
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+
+            TimelineScrollBar.Minimum = 0.0;
+            TimelineScrollBar.Maximum = maximum;
+            TimelineScrollBar.ViewportSize = span;
+            TimelineScrollBar.LargeChange = Math.Max(0.25, span * 0.9);
+            TimelineScrollBar.SmallChange = Math.Max(0.05, span * 0.05);
+
+            double wanted = TrackTimelineView.ViewStartSeconds;
+            if (Math.Abs(TimelineScrollBar.Value - wanted) > 0.0005)
+            {
+                TimelineScrollBar.Value = wanted;
+            }
+        }
+
+        private void TimelineScrollBarScroll(object sender, System.Windows.Controls.Primitives.ScrollEventArgs e)
+        {
+            TrackTimelineView.ViewStartSeconds = e.NewValue;
+            TrackTimelineView.InvalidateVisual();
+        }
+
+        private void ZoomTimelineToWholeVideo()
+        {
+            TrackTimelineView.HorizontalZoom = 1.0;
+            TrackTimelineView.ViewStartSeconds = 0.0;
+            TrackTimelineView.InvalidateVisual();
+            SyncTimelineScrollBar();
         }
 
         private void RangeStartClick(object sender, RoutedEventArgs e)
@@ -3949,6 +4002,15 @@ namespace SubtitleForge
 
             menu.Items.Add(new Separator());
             menu.Items.Add(deleteItem);
+
+            MenuItem fitItem = new MenuItem();
+            fitItem.Header = "Fit whole video (Alt+wheel zooms, Ctrl+wheel resizes rows)";
+            fitItem.IsEnabled = TrackTimelineView.HorizontalZoom > 1.0001
+                || TrackTimelineView.VerticalZoom < 0.9999
+                || TrackTimelineView.VerticalZoom > 1.0001;
+            fitItem.Click += delegate { ZoomTimelineToWholeVideo(); TrackTimelineView.VerticalZoom = 1.0; };
+            menu.Items.Add(new Separator());
+            menu.Items.Add(fitItem);
 
             menu.PlacementTarget = TrackTimelineView;
             menu.IsOpen = true;

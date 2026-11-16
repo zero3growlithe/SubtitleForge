@@ -277,21 +277,39 @@
                         Background="{StaticResource PanelBackgroundBrush}"
                         BorderBrush="{StaticResource PanelBorderBrush}"
                         BorderThickness="1">
-                    <ScrollViewer x:Name="TrackScrollViewer"
-                                  VerticalScrollBarVisibility="Auto"
-                                  HorizontalScrollBarVisibility="Disabled"
-                                  ScrollChanged="TrackScrollChanged">
-                        <controls:TrackTimeline x:Name="TrackTimelineView"
-                                                GotKeyboardFocus="TracksViewGotFocus"
-                                                PreviewMouseLeftButtonDown="TracksViewMouseDown"
-                                                TrackMouseDown="TrackTimelineMouseDown"
-                                                SegmentMouseDown="TrackTimelineSegmentMouseDown"
-                                                SegmentDropped="TrackTimelineSegmentDropped"
-                                                AudioFilesDropped="TrackTimelineAudioFilesDropped"
-                                                TrackReorderRequested="TrackTimelineReorder"
-                                                TrackContextMenuRequested="TrackTimelineContextMenu"
-                                                SeekRequested="TrackTimelineSeek" />
-                    </ScrollViewer>
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <ScrollViewer x:Name="TrackScrollViewer"
+                                      Grid.Row="0"
+                                      VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled"
+                                      ScrollChanged="TrackScrollChanged">
+                            <controls:TrackTimeline x:Name="TrackTimelineView"
+                                                    GotKeyboardFocus="TracksViewGotFocus"
+                                                    PreviewMouseLeftButtonDown="TracksViewMouseDown"
+                                                    TrackMouseDown="TrackTimelineMouseDown"
+                                                    SegmentMouseDown="TrackTimelineSegmentMouseDown"
+                                                    SegmentDropped="TrackTimelineSegmentDropped"
+                                                    AudioFilesDropped="TrackTimelineAudioFilesDropped"
+                                                    TrackReorderRequested="TrackTimelineReorder"
+                                                    TrackContextMenuRequested="TrackTimelineContextMenu"
+                                                    SeekRequested="TrackTimelineSeek"
+                                                    ViewChanged="TrackTimelineViewChanged" />
+                        </ScrollViewer>
+                        <!-- Only shown once the timeline is zoomed in, so it never eats vertical room
+                             the rows could use. -->
+                        <ScrollBar x:Name="TimelineScrollBar"
+                                   Grid.Row="1"
+                                   Orientation="Horizontal"
+                                   Height="14"
+                                   Minimum="0"
+                                   Maximum="1"
+                                   Visibility="Collapsed"
+                                   Scroll="TimelineScrollBarScroll" />
+                    </Grid>
                 </Border>
             </Grid>
 

@@ -113,6 +113,10 @@ namespace SubtitleForge
         private TimelineSegment? recordingSegment;
         private string? projectPath;
         private string lastRuntimeDescription = string.Empty;
+
+        private List<CudaDeviceInfo> cudaDevices = new List<CudaDeviceInfo>();
+
+        private bool suppressCudaDeviceChoice;
         private string lastDetectedLanguage = string.Empty;
         private bool suppressTimelineBuild;
         private bool suppressCudaCheck;
@@ -270,6 +274,7 @@ namespace SubtitleForge
             suppressCudaCheck = false;
             TranslateCheckBox.IsChecked = settings.TranslateToEnglish;
             SelectWorkers(settings.TranscriptionWorkers);
+            RefreshCudaDeviceCombo();
 
             MaxCharactersTextBox.Text = settings.MaximumCharactersPerCue.ToString(CultureInfo.InvariantCulture);
             MaxDurationTextBox.Text = settings.MaximumCueDurationSeconds.ToString("0.#", CultureInfo.InvariantCulture);
@@ -297,6 +302,7 @@ namespace SubtitleForge
             settings.UseGpu = GpuCheckBox.IsChecked == true;
             settings.TranslateToEnglish = TranslateCheckBox.IsChecked == true;
             settings.TranscriptionWorkers = SelectedWorkers();
+            settings.CudaDeviceIndex = SelectedCudaDeviceIndex();
 
             int characters;
             if (int.TryParse(MaxCharactersTextBox.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out characters))
@@ -3919,6 +3925,24 @@ namespace SubtitleForge
             joinItem.Click += delegate { JoinSelectedSegments(); };
             menu.Items.Add(joinItem);
 
+            bool canMerge = CanMergeSelectedTracks();
+
+            MenuItem mergeDownItem = new MenuItem();
+            mergeDownItem.Header = "Merge tracks down (Ctrl+M)";
+            mergeDownItem.ToolTip = "Move every clip of the selected tracks onto the lowest one, top to bottom:"
+                + " a clip that lands on another one cuts it, and the lower clip wins";
+            mergeDownItem.IsEnabled = canMerge;
+            mergeDownItem.Click += delegate { MergeSelectedTracks(true); };
+            menu.Items.Add(mergeDownItem);
+
+            MenuItem mergeUpItem = new MenuItem();
+            mergeUpItem.Header = "Merge tracks up (Ctrl+Shift+M)";
+            mergeUpItem.ToolTip = "Move every clip of the selected tracks onto the highest one, bottom to top:"
+                + " a clip that lands on another one cuts it, and the upper clip wins";
+            mergeUpItem.IsEnabled = canMerge;
+            mergeUpItem.Click += delegate { MergeSelectedTracks(false); };
+            menu.Items.Add(mergeUpItem);
+
             MenuItem deleteItem = new MenuItem();
             deleteItem.Header = "Delete track (Del)";
             deleteItem.Click += delegate { DeleteSelection(); };
@@ -6631,6 +6655,13 @@ namespace SubtitleForge
 
             if (joinCount == 0)
             {
+                if (trackOrder.Count > 1)
+                {
+                    SetStatus("Those clips are on different tracks — merge the tracks first (Ctrl+M) and"
+                        + " then join the clips on the one row.");
+                    return;
+                }
+
                 SetStatus("Only neighbouring clips that come from the same source can be joined.");
                 return;
             }
@@ -6692,6 +6723,175 @@ namespace SubtitleForge
             return false;
         }
 
+        private bool CanMergeSelectedTracks()
+        {
+            List<TimelineTrack> rows = SelectedTrackRows();
+            if (rows.Count < 2)
+            {
+                return false;
+            }
+
+            TrackKind kind = rows[0].Kind;
+            foreach (TimelineTrack row in rows)
+            {
+                if (row.Kind != kind)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Squeezes the selected tracks onto one row, keeping every clip where it is on the timeline.
+        /// Rows are taken in order — top to bottom for a downward merge, bottom to top for an upward
+        /// one — and each clip is laid over what is already there: a clip completely inside another one
+        /// splits it in two, a clip half over it trims it, a clip on top of it replaces it. That is why
+        /// the direction matters: whichever row is handled last is the one whose clips survive.
+        /// </summary>
+        private void MergeSelectedTracks(bool downward)
+        {
+            List<TimelineTrack> rows = SelectedTrackRows();
+            if (rows.Count < 2)
+            {
+                SetStatus("Select two or more tracks (Ctrl+click their names), then merge them.");
+                return;
+            }
+
+            TrackKind kind = rows[0].Kind;
+            foreach (TimelineTrack row in rows)
+            {
+                if (row.Kind != kind)
+                {
+                    SetStatus("Merge one kind at a time: video tracks together, audio tracks together.");
+                    return;
+                }
+            }
+
+            rows.Sort(delegate (TimelineTrack left, TimelineTrack right)
+            {
+                return tracks.IndexOf(left).CompareTo(tracks.IndexOf(right));
+            });
+
+            if (!downward)
+            {
+                rows.Reverse();
+            }
+
+            TimelineTrack destination = rows[rows.Count - 1];
+
+            TimelineSnapshot before = CaptureTimeline();
+
+            List<TimelineSegment> queue = new List<TimelineSegment>();
+            foreach (TimelineTrack row in rows)
+            {
+                foreach (TimelineSegment segment in row.Segments)
+                {
+                    queue.Add(segment.Clone());
+                }
+            }
+
+            foreach (TimelineTrack row in rows)
+            {
+                row.Segments.Clear();
+            }
+
+            foreach (TimelineSegment incoming in queue)
+            {
+                PlaceOverwriting(destination, incoming);
+            }
+
+            for (int index = rows.Count - 1; index >= 0; index--)
+            {
+                if (!ReferenceEquals(rows[index], destination))
+                {
+                    tracks.Remove(rows[index]);
+                }
+            }
+
+            UndoStackPushTimeline(downward ? "merge tracks down" : "merge tracks up", before);
+
+            ClearSelection();
+            SelectTrackRow(destination, false);
+            AfterTimelineStructureChanged();
+
+            SetStatus("Merged " + rows.Count.ToString(CultureInfo.InvariantCulture) + " tracks into "
+                + destination.Name + " ("
+                + (downward ? "top to bottom, the lower clips win" : "bottom to top, the upper clips win")
+                + ") — " + destination.Segments.Count.ToString(CultureInfo.InvariantCulture) + " clips.");
+        }
+
+        /// <summary>
+        /// Puts <paramref name="incoming"/> on the track, cutting whatever it covers into the pieces
+        /// left and right of it. The pieces keep their source offsets, so the picture and the sound
+        /// under them do not shift.
+        /// </summary>
+        private static void PlaceOverwriting(TimelineTrack destination, TimelineSegment incoming)
+        {
+            const double tolerance = 0.0005;
+            double start = incoming.StartSeconds;
+            double end = incoming.EndSeconds;
+
+            List<TimelineSegment> survivors = new List<TimelineSegment>();
+            foreach (TimelineSegment existing in destination.Segments)
+            {
+                bool overlaps = existing.StartSeconds < end - tolerance && existing.EndSeconds > start + tolerance;
+                if (!overlaps)
+                {
+                    survivors.Add(existing);
+                    continue;
+                }
+
+                if (existing.StartSeconds < start - tolerance)
+                {
+                    TimelineSegment head = SliceSegment(existing, existing.StartSeconds, start);
+                    if (head != null)
+                    {
+                        survivors.Add(head);
+                    }
+                }
+
+                if (existing.EndSeconds > end + tolerance)
+                {
+                    TimelineSegment tail = SliceSegment(existing, end, existing.EndSeconds);
+                    if (tail != null)
+                    {
+                        survivors.Add(tail);
+                    }
+                }
+            }
+
+            survivors.Add(incoming);
+            survivors.Sort(delegate (TimelineSegment left, TimelineSegment right)
+            {
+                return left.StartSeconds.CompareTo(right.StartSeconds);
+            });
+
+            destination.Segments.Clear();
+            foreach (TimelineSegment segment in survivors)
+            {
+                destination.Segments.Add(segment);
+            }
+        }
+
+        /// <summary>A copy of a clip covering only the given span of the timeline.</summary>
+        private static TimelineSegment? SliceSegment(TimelineSegment source, double startSeconds, double endSeconds)
+        {
+            double duration = endSeconds - startSeconds;
+            if (duration <= 0.0005)
+            {
+                return null;
+            }
+
+            TimelineSegment piece = source.Clone();
+            piece.StartSeconds = startSeconds;
+            piece.SourceOffsetSeconds = source.SourceOffsetSeconds + (startSeconds - source.StartSeconds);
+            piece.DurationSeconds = duration;
+            piece.IsSelected = false;
+            return piece;
+        }
+
         private static bool CanJoinSegments(List<TimelineSegment> group)
         {
             const double tolerance = 0.05;
@@ -6733,6 +6933,16 @@ namespace SubtitleForge
             if (!string.IsNullOrEmpty(left.SourcePath)
                 && !string.IsNullOrEmpty(right.SourcePath)
                 && string.Equals(left.SourcePath, right.SourcePath, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            // Video clips split at the playhead keep their file in ClipFile rather than SourcePath,
+            // and the halves land on separate rows, so this is the comparison that decides whether
+            // two video halves may be joined again.
+            if (!string.IsNullOrEmpty(left.ClipFile)
+                && !string.IsNullOrEmpty(right.ClipFile)
+                && string.Equals(left.ClipFile, right.ClipFile, StringComparison.OrdinalIgnoreCase))
             {
                 return true;
             }
@@ -7050,6 +7260,21 @@ namespace SubtitleForge
             if (control && shift && key == Key.J)
             {
                 JoinSelectedSegments();
+                e.Handled = true;
+                return;
+            }
+
+            if (control && key == Key.M)
+            {
+                if (CanMergeSelectedTracks())
+                {
+                    MergeSelectedTracks(!shift);
+                }
+                else
+                {
+                    SetStatus("Select two or more tracks of the same kind (Ctrl+click their names) to merge.");
+                }
+
                 e.Handled = true;
                 return;
             }
@@ -7475,6 +7700,85 @@ namespace SubtitleForge
         }
 
         // ── GPU / CUDA availability ────────────────────────────────────────
+
+        private void RefreshCudaDeviceCombo()
+        {
+            suppressCudaDeviceChoice = true;
+            try
+            {
+                string detail;
+                cudaDevices = CudaDevices.Query(out detail);
+
+                CudaDeviceComboBox.Items.Clear();
+                ComboBoxItem automatic = new ComboBoxItem();
+                automatic.Content = cudaDevices.Count > 1 ? "Automatic (first card)" : "Automatic";
+                CudaDeviceComboBox.Items.Add(automatic);
+
+                for (int index = 0; index < cudaDevices.Count; index++)
+                {
+                    ComboBoxItem item = new ComboBoxItem();
+                    item.Content = cudaDevices[index].Describe();
+                    CudaDeviceComboBox.Items.Add(item);
+                }
+
+                if (cudaDevices.Count == 0)
+                {
+                    CudaDeviceComboBox.ToolTip = "No CUDA device answered" + (detail.Length > 0 ? ": " + detail : string.Empty);
+                }
+
+                SelectCudaDeviceInCombo(App.Settings.CudaDeviceIndex);
+            }
+            finally
+            {
+                suppressCudaDeviceChoice = false;
+            }
+        }
+
+        private void SelectCudaDeviceInCombo(int deviceIndex)
+        {
+            if (deviceIndex < 0)
+            {
+                CudaDeviceComboBox.SelectedIndex = 0;
+                return;
+            }
+
+            for (int index = 0; index < cudaDevices.Count; index++)
+            {
+                if (cudaDevices[index].Index == deviceIndex)
+                {
+                    CudaDeviceComboBox.SelectedIndex = index + 1;
+                    return;
+                }
+            }
+
+            CudaDeviceComboBox.SelectedIndex = 0;
+        }
+
+        private int SelectedCudaDeviceIndex()
+        {
+            int selected = CudaDeviceComboBox.SelectedIndex;
+            if (selected <= 0 || selected - 1 >= cudaDevices.Count)
+            {
+                return -1;
+            }
+
+            return cudaDevices[selected - 1].Index;
+        }
+
+        private void CudaDeviceSelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (suppressCudaDeviceChoice || !IsLoaded)
+            {
+                return;
+            }
+
+            int deviceIndex = SelectedCudaDeviceIndex();
+            App.Settings.CudaDeviceIndex = deviceIndex;
+            string note = CudaDevices.ApplySelection(deviceIndex);
+            SetStatus("CUDA device: " + note
+                + ". CUDA reads this once, when the first model is opened — restart the app if a model"
+                + " was already loaded in this session.");
+        }
 
         private void WorkersSelectionChanged(object sender, SelectionChangedEventArgs e)
         {

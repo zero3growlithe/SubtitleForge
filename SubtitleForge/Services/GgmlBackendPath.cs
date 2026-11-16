@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
+using System.Runtime.InteropServices;
 
 namespace SubtitleForge.Services
 {
@@ -45,17 +47,135 @@ namespace SubtitleForge.Services
                 return "no CUDA backend module found next to the app (" + folder + ")";
             }
 
+            string note;
             try
             {
                 Environment.SetEnvironmentVariable(VariableName, module);
+                note = "set to " + module;
             }
             catch (Exception exception)
             {
-                return "could not set " + VariableName + ": " + exception.Message;
+                note = "could not set " + VariableName + ": " + exception.Message;
             }
 
-            return "set to " + module;
+            // Belt and braces: the variable is ignored by whisper builds that predate it, and ggml
+            // always scans the executable folder, so the module is hard-linked there as well. A link
+            // costs no space, needs no admin rights on the app's own folder, and disappears with the
+            // file it points at.
+            string link = EnsureModuleNextToExecutable(module);
+            return note + "; " + link;
         }
+
+        /// <summary>
+        /// Hard-links the CUDA backend module into the folder holding the executable, which is the one
+        /// place ggml is guaranteed to look. Returns a one-line report.
+        /// </summary>
+        public static string EnsureModuleNextToExecutable(string modulePath)
+        {
+            if (modulePath.Length == 0)
+            {
+                return "nothing to link";
+            }
+
+            string fileName = Path.GetFileName(modulePath);
+            string target = Path.Combine(AppContext.BaseDirectory, fileName);
+
+            try
+            {
+                if (File.Exists(target))
+                {
+                    return "already next to the exe (" + fileName + ")";
+                }
+
+                if (!CreateHardLink(target, modulePath, IntPtr.Zero))
+                {
+                    int error = Marshal.GetLastWin32Error();
+                    return "could not link " + fileName + " next to the exe (error "
+                        + error.ToString(CultureInfo.InvariantCulture)
+                        + "); copy the CUDA folder next to SubtitleForge.exe instead";
+                }
+            }
+            catch (Exception exception)
+            {
+                return "could not link " + fileName + " next to the exe: " + exception.Message;
+            }
+
+            return "linked " + fileName + " next to the exe";
+        }
+
+        /// <summary>
+        /// Runs work with the current directory pointed at the CUDA natives folder.
+        ///
+        /// ggml also scans the current directory when it looks for backend modules, and the folder the
+        /// natives live in is the one path whisper.net has already loaded them from — so ggml ends up
+        /// with the same module, not a second copy. Used as a fallback when the hard link is refused
+        /// (read-only install folder, another volume).
+        /// </summary>
+        public static T WithBackendFolder<T>(Func<T> work)
+        {
+            if (work == null)
+            {
+                throw new ArgumentNullException("work");
+            }
+
+            string folder = string.Empty;
+            string module = FindCudaModule(out folder);
+            if (module.Length == 0)
+            {
+                return work();
+            }
+
+            string nativesFolder = Path.GetDirectoryName(module) ?? string.Empty;
+            if (nativesFolder.Length == 0)
+            {
+                return work();
+            }
+
+            string previous;
+            try
+            {
+                previous = Directory.GetCurrentDirectory();
+            }
+            catch (Exception)
+            {
+                return work();
+            }
+
+            lock (FolderGate)
+            {
+                try
+                {
+                    Directory.SetCurrentDirectory(nativesFolder);
+                }
+                catch (Exception)
+                {
+                    return work();
+                }
+
+                try
+                {
+                    return work();
+                }
+                finally
+                {
+                    try
+                    {
+                        Directory.SetCurrentDirectory(previous);
+                    }
+                    catch (Exception)
+                    {
+                    }
+                }
+            }
+        }
+
+        private static readonly object FolderGate = new object();
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern bool CreateHardLink(
+            string lpFileName,
+            string lpExistingFileName,
+            IntPtr lpSecurityAttributes);
 
         /// <summary>The CUDA backend module as it would be set right now, or empty.</summary>
         public static string CurrentValue()

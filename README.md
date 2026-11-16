@@ -89,6 +89,17 @@ to keep the selection untouched while scrubbing.
   clips to the right are pushed along by however much is needed.
 - **Drag a clip onto another lane** of the same type to join that track, or **between lanes**
   (or below the last one) to give it a track of its own.
+- **Merge tracks down / up** (`Ctrl+M` / `Ctrl+Shift+M`, or the track right-click menu) squeezes
+  several selected tracks of the same kind onto one row without moving anything in time. Rows are
+  taken in order — top to bottom for a downward merge, bottom to top for an upward one — and each
+  clip is laid over what is already on the row: a clip that lands inside a longer one **splits it in
+  two**, a clip half over it **trims** it, a clip on top of it **replaces** it. Whichever row is
+  handled last is the one whose clips survive, so the direction is the choice of who wins. Source
+  offsets are carried over to the cut pieces, so the picture and the sound do not shift.
+- **Join clips** accepts the two halves of a split video clip as well: they keep their file in
+  `ClipFile`, and until this was checked a video pair looked like two unrelated sources and the
+  command stayed greyed out. When the halves sit on different rows, join says so — merge the rows
+  first (`Ctrl+M`) and the two halves become joinable.
 - **Drag the ruler or an empty lane** to scrub the playhead; drag a lane's **name** to
   reorder whole tracks. `Shift`+drag on a clip scrubs instead of moving it.
 - **The ruler stays put.** However many tracks are stacked up, the ruler is painted again at the
@@ -316,6 +327,7 @@ stays a few kilobytes.
   clip(s) when the timeline was
 - `Ctrl+Shift+D` — split every selected clip at the playhead
 - `Ctrl+Shift+J` — join the selected neighbouring clips (also in a track's right-click menu)
+- `Ctrl+M` / `Ctrl+Shift+M` — merge the selected tracks down / up onto one row
 - `Ctrl+Z` — undo the last edit (move, add, delete, split, join, reorder, rename, recolour,
   record, and every cue edit: add, delete, split, merge, nudge, timing and text changes)
 - `Ctrl+Y` (or `Ctrl+Shift+Z`) — redo whatever was undone last; the toolbar has a `Redo` button too
@@ -420,13 +432,23 @@ found` while every file was present and the driver was healthy. At start-up the 
 backend. Nothing to configure: the first CUDA module found in `runtimes\cuda\win-x64` or
 `runtimes\cuda12\win-x64` is used, and a module placed next to the exe is found by ggml on its own.
 
+That variable is ignored by whisper builds older than the ggml that introduced it, so the module is
+**also hard-linked next to `SubtitleForge.exe`** at start-up — a hard link costs no disk space, needs no
+administrator rights inside the app's own folder and vanishes with the file it points at. As a last
+resort the current directory is pointed at the natives folder for the moment the model is opened,
+which is when ggml scans for backends. GPU diagnostics prints all three: the variable, the link and
+the folder, and then reads whisper's own verdict, so a failure always names the step that did not
+work.
+
 **Which card is used.** CUDA only enumerates NVIDIA adapters, so an integrated AMD or Intel GPU is not a
 CUDA device and never takes index 0: a single NVIDIA card — on the PCIe bus, in an M.2 slot over Oculink,
 or on a riser — *is* device 0 and needs no configuration. On a machine with more than one NVIDIA adapter
 the first one is used unless `CudaDeviceIndex` in `settings.json` says otherwise; the app then sets
 `CUDA_VISIBLE_DEVICES` and `CUDA_DEVICE_ORDER=PCI_BUS_ID` before the first CUDA call, so the number in
-the picker means the number nvidia-smi prints. GPU diagnostics lists every device with its memory and
-driver and marks the one that will be used.
+the picker means the number nvidia-smi prints. The **GPU** combo in the toolbar lists what nvidia-smi
+reports and stores the choice; CUDA reads it once, when the first model is opened, so a change needs a
+restart if a model was already loaded. GPU diagnostics lists every device with its memory and driver and
+marks the one that will be used.
 
 Two gates decide whether the CUDA runtime is tried at all, and both used to fail silently:
 

@@ -163,7 +163,15 @@ namespace SubtitleForge.Services
                     RuntimeOptions.RuntimeLibraryOrder = WhisperRuntimeProbe.AutoOrder;
                     try
                     {
-                        factory = WhisperFactory.FromPath(request.ModelPath, new WhisperFactoryOptions { UseGpu = true });
+                        // The current directory is pointed at the CUDA natives while the model is
+                        // opened: that is when ggml hunts for its backend modules, and it scans the
+                        // current directory as well as the executable folder.
+                        factory = GgmlBackendPath.WithBackendFolder(delegate
+                        {
+                            return WhisperFactory.FromPath(
+                                request.ModelPath,
+                                new WhisperFactoryOptions { UseGpu = true });
+                        });
                     }
                     catch (Exception exception)
                     {

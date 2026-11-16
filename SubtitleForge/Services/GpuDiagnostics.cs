@@ -431,7 +431,10 @@ namespace SubtitleForge.Services
                 wavPath = WriteSilentWave();
 
                 RuntimeOptions.RuntimeLibraryOrder = WhisperRuntimeProbe.AutoOrder;
-                using (WhisperFactory factory = WhisperFactory.FromPath(modelPath, new WhisperFactoryOptions { UseGpu = true }))
+                using (WhisperFactory factory = GgmlBackendPath.WithBackendFolder(delegate
+                {
+                    return WhisperFactory.FromPath(modelPath, new WhisperFactoryOptions { UseGpu = true });
+                }))
                 using (WhisperBackendVerification verification = new WhisperBackendVerification())
                 {
                     WhisperProcessor processor = factory.CreateBuilder()

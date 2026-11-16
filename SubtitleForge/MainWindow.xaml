@@ -41,12 +41,6 @@
                 </ComboBox.ItemTemplate>
             </ComboBox>
             <Button x:Name="ModelsButton" Content="Models…" MinWidth="0" Padding="10,4" Margin="0,0,12,0" Click="ModelsClick" />
-            <Button x:Name="TextStyleButton" Content="Text style…" MinWidth="0" Padding="10,4" Margin="0,0,6,0" Click="TextStyleClick" />
-            <Button x:Name="IdleProfileButton" Content="Idle anim…" MinWidth="0" Padding="10,4" Margin="0,0,6,0" Click="IdleProfileClick" />
-            <Button x:Name="PopInProfileButton" Content="Pop-in…" MinWidth="0" Padding="10,4" Margin="0,0,6,0" Click="PopInProfileClick" />
-            <Button x:Name="PopOutProfileButton" Content="Pop-out…" MinWidth="0" Padding="10,4" Margin="0,0,12,0"
-                    ToolTip="How the subtitles disappear: fade, move out, scale out, spin, dissolve or turn to dust"
-                    Click="PopOutProfileClick" />
             <TextBlock Text="Language" Style="{StaticResource SectionLabelStyle}" />
             <ComboBox x:Name="LanguageComboBox" Width="138" SelectionChanged="LanguageSelectionChanged">
                 <ComboBox.ItemTemplate>
@@ -56,6 +50,11 @@
                 </ComboBox.ItemTemplate>
             </ComboBox>
             <CheckBox x:Name="GpuCheckBox" Content="GPU (CUDA)" Checked="GpuCheckedChanged" />
+            <ComboBox x:Name="CudaDeviceComboBox" Width="170" Margin="6,0,6,0"
+                      SelectionChanged="CudaDeviceSelectionChanged"
+                      ToolTip="Which CUDA device transcribes. Only machines with more than one NVIDIA card have a choice; CUDA never enumerates an integrated AMD or Intel GPU">
+                <ComboBoxItem Content="Automatic" />
+            </ComboBox>
             <Button x:Name="GpuDiagnosticsButton"
                     Content="GPU diagnostics…"
                     MinWidth="0"
@@ -83,7 +82,14 @@
             <TextBlock Text="Max chars" Style="{StaticResource SectionLabelStyle}" />
             <TextBox x:Name="MaxCharactersTextBox" Width="46" Margin="0,0,12,0" />
             <TextBlock Text="Max sec" Style="{StaticResource SectionLabelStyle}" />
-            <TextBox x:Name="MaxDurationTextBox" Width="46" Margin="0,0,0,0" />
+            <TextBox x:Name="MaxDurationTextBox" Width="46" Margin="0,0,12,0" />
+            <Rectangle Width="1" Margin="0,2,12,2" Fill="{StaticResource PanelBorderBrush}" />
+            <Button x:Name="TextStyleButton" Content="Text style…" MinWidth="0" Padding="10,4" Margin="0,0,6,0" Click="TextStyleClick" />
+            <Button x:Name="IdleProfileButton" Content="Idle anim…" MinWidth="0" Padding="10,4" Margin="0,0,6,0" Click="IdleProfileClick" />
+            <Button x:Name="PopInProfileButton" Content="Pop-in…" MinWidth="0" Padding="10,4" Margin="0,0,6,0" Click="PopInProfileClick" />
+            <Button x:Name="PopOutProfileButton" Content="Pop-out…" MinWidth="0" Padding="10,4" Margin="0,0,0,0"
+                    ToolTip="How the subtitles disappear: fade, move out, scale out, spin, dissolve or turn to dust"
+                    Click="PopOutProfileClick" />
         </StackPanel>
 
         <!-- ── Main content ──────────────────────────────────────────────── -->

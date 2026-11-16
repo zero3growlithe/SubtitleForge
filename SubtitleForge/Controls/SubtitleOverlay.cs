@@ -289,6 +289,12 @@ namespace SubtitleForge.Controls
             bool breakingPieces = exitSchedule.Active && popOut != null && popOut.BreaksPieces;
             double transformScale = canvasScale * Math.Max(0.05, Scale);
 
+            // A whole-block effect is one shape for every glyph, so its fade is the average of the
+            // glyphs that built it. Without this the ring kept full alpha while the letters faded,
+            // and a filled one was left behind as a white slab until the cue ended.
+            double compositionOpacitySum = 0.0;
+            int compositionGlyphCount = 0;
+
             // Gradients are resolved in the same space the geometry is drawn in (the glyph space,
             // before the origin translate), otherwise a gradient anchored at the viewport position
             // of the text only shows a sliver of its ramp and looks like a flat colour.
@@ -546,12 +552,23 @@ namespace SubtitleForge.Controls
                     }
 
                     composition.Children.Add(shape);
+                    compositionOpacitySum += opacity;
+                    compositionGlyphCount++;
                 }
             }
 
             if (composition != null && composition.Children.Count > 0)
             {
-                DrawEffects(drawingContext, composition, style, paint, EffectTarget.Composition);
+                double compositionOpacity = compositionGlyphCount > 0
+                    ? Math.Max(0.0, compositionOpacitySum / compositionGlyphCount)
+                    : 1.0;
+
+                if (compositionOpacity > 0.001)
+                {
+                    drawingContext.PushOpacity(compositionOpacity);
+                    DrawEffects(drawingContext, composition, style, paint, EffectTarget.Composition);
+                    drawingContext.Pop();
+                }
             }
 
             for (int index = 0; index < glyphs.Count; index++)

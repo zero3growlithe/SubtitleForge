@@ -176,7 +176,13 @@
                              LostFocus="RangeBoxChanged"
                              KeyDown="RangeBoxKeyDown"
                              ToolTip="Start of the span — 00:01:20.000 or plain seconds" />
-                    <Button x:Name="RangeStartButton" Content="In = playhead" MinWidth="0" Padding="8,4" Margin="0,0,10,0" Click="RangeStartClick" />
+                    <Button x:Name="RangeStartButton"
+                            Content="Set in"
+                            MinWidth="0"
+                            Padding="8,4"
+                            Margin="0,0,10,0"
+                            Click="RangeStartClick"
+                            ToolTip="The range starts at the playhead" />
                     <TextBox x:Name="RangeEndBox"
                              Width="96"
                              FontFamily="Consolas"
@@ -184,7 +190,13 @@
                              LostFocus="RangeBoxChanged"
                              KeyDown="RangeBoxKeyDown"
                              ToolTip="End of the span — 00:01:20.000 or plain seconds" />
-                    <Button x:Name="RangeEndButton" Content="Out = playhead" MinWidth="0" Padding="8,4" Margin="0,0,10,0" Click="RangeEndClick" />
+                    <Button x:Name="RangeEndButton"
+                            Content="Set out"
+                            MinWidth="0"
+                            Padding="8,4"
+                            Margin="0,0,10,0"
+                            Click="RangeEndClick"
+                            ToolTip="The range ends at the playhead" />
                     <Button x:Name="RangeFromSelectionButton"
                             Content="From selection"
                             MinWidth="0"

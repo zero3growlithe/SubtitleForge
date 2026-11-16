@@ -191,7 +191,12 @@ namespace SubtitleForge.Services
                     builder = builder.WithPrompt(request.InitialPrompt!);
                 }
 
-                using (WhisperProcessor processor = builder.Build())
+                // Not a using block: Whisper.net throws "Cannot dispose while processing, please
+                // use DisposeAsync instead" when Dispose() lands while the native side is still
+                // winding down, which is exactly the state pressing Cancel leaves it in. The async
+                // dispose waits for the processing to stop before it releases the model.
+                WhisperProcessor processor = builder.Build();
+                try
                 {
                     int windowIndex = 0;
                     foreach (TranscriptionWindow window in windows)
@@ -263,6 +268,18 @@ namespace SubtitleForge.Services
                         }
 
                         progress?.Report((double)windowNumber / windows.Count);
+                    }
+                }
+                finally
+                {
+                    try
+                    {
+                        await processor.DisposeAsync().ConfigureAwait(false);
+                    }
+                    catch (Exception)
+                    {
+                        // A disposal that still fails must not replace the cancellation the caller
+                        // is waiting for: the model is going away either way.
                     }
                 }
             }

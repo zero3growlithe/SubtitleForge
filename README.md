@@ -24,7 +24,7 @@ Everything runs on your machine. No cloud, no API keys, no uploads.
   overlaps are removed, non-speech markers (`[Music]`, `(applause)`) are dropped.
 - **Re-transcribe just one span.** Set `Transcribe range` in the timeline toolbar — type the
   times (the same `00:01:20.000` or plain-seconds syntax the cue editor takes), or park the
-  playhead and press `In = playhead` / `Out = playhead`, or take the span of the cues selected
+  playhead and press `Set in` / `Set out`, or take the span of the cues selected
   in the list with `From selection`. The span is drawn on the ruler, and a click on `Transcribe`
   then sends **only that audio** to Whisper: the cues inside the span are erased and replaced
   with the new transcription, while everything outside it is left exactly as it was. A cue that

@@ -888,7 +888,9 @@ namespace SubtitleForge
                     continue;
                 }
 
-                if (positionSeconds <= endSeconds)
+                // Half-open on purpose: a cue ends where the next one begins, so the boundary
+                // instant belongs to the incoming line and the two can never draw at once.
+                if (positionSeconds < endSeconds)
                 {
                     active.Add(cue);
                     continue;

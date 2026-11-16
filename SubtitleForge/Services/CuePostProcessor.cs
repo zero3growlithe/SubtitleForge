@@ -364,10 +364,10 @@ namespace SubtitleForge.Services
         }
 
         /// <summary>
-        /// Guarantees that no two cues are on screen at the same moment. Cues are sorted by start,
-        /// so one pass is enough: an end that reaches past the next start is pulled back to it. The
-        /// guard is a single millisecond so a boundary frame cannot light up both cues, and nothing
-        /// else about the times is touched — starts are never moved and no cue is lengthened.
+        /// Guarantees that no two cues overlap. Cues are sorted by start, so one pass is enough: an
+        /// end that reaches past the next start is pulled back onto it. Nothing else about the times
+        /// is touched — starts are never moved and no cue is ever lengthened — and since a cue owns
+        /// its span half-open, a cue that ends exactly where the next begins is not a collision.
         /// </summary>
         private static void TrimOverlaps(List<SubtitleCue> cues)
         {
@@ -380,12 +380,12 @@ namespace SubtitleForge.Services
                     continue;
                 }
 
-                double end = next.Start.TotalSeconds - OverlapGuardSeconds;
-                if (end < current.Start.TotalSeconds + OverlapGuardSeconds)
+                double end = next.Start.TotalSeconds;
+                if (end <= current.Start.TotalSeconds)
                 {
-                    // A cue the next one covers completely keeps a sliver of its own, because the
-                    // text still has to be readable somewhere. A millisecond of overlap is below a
-                    // single frame and stays invisible.
+                    // A cue the next one covers completely keeps a sliver of its own, because its
+                    // text still has to be readable somewhere. One millisecond is below a frame, so
+                    // the two never share a visible moment.
                     end = current.Start.TotalSeconds + OverlapGuardSeconds;
                 }
 

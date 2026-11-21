@@ -17,6 +17,7 @@ namespace SubtitleForge.Models
         private string name;
         private Color backgroundColor;
         private bool isSelected;
+        private TimelineTrack? attachedHostTrack;
 
         public TimelineTrack(TrackKind kind, string name, Color backgroundColor)
         {
@@ -126,6 +127,27 @@ namespace SubtitleForge.Models
         public string KindText
         {
             get { return Kind == TrackKind.Video ? "V" : "A"; }
+        }
+
+        /// <summary>
+        /// The video track this audio lane rides inside, or null when the track has a row of its own.
+        /// The link lives on the track rather than on the clips because an imported video is one row
+        /// for the user: the picture and the sound are cut, moved and deleted together, and detaching
+        /// is a single decision about the whole lane.
+        /// </summary>
+        public TimelineTrack? AttachedHostTrack
+        {
+            get { return attachedHostTrack; }
+            set
+            {
+                if (ReferenceEquals(attachedHostTrack, value))
+                {
+                    return;
+                }
+
+                attachedHostTrack = value;
+                OnPropertyChanged();
+            }
         }
 
         public bool HasSegments

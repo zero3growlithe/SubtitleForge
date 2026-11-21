@@ -3425,6 +3425,10 @@ namespace SubtitleForge
             audioSegment.SourcePath = path;
             audioSegment.IsSelected = true;
             audioTrack.Segments.Add(audioSegment);
+
+            // The imported video's sound rides inside the video row as a slim lane instead of taking a
+            // row of its own; the track stays a real audio track, so detaching needs no rebuild.
+            audioTrack.AttachedHostTrack = videoTrack;
             tracks.Add(audioTrack);
 
             UpdateTimelineDuration();
@@ -4138,6 +4142,284 @@ namespace SubtitleForge
             return count;
         }
 
+        // ── Attached audio ─────────────────────────────────────────────────
+        //
+        // A video imported on its own arrives as two tracks that belong together: the picture and its
+        // sound. The sound is folded into the video's row as a slim lane, so everything structural has
+        // to treat the host and its lanes as one set — this is the one place that finds them.
+
+        /// <summary>
+        /// The track plus every audio track attached to it. Every edit that has to keep a video and its
+        /// sound in step walks this list instead of touching a single track.
+        /// </summary>
+        private List<TimelineTrack> TrackWithAttachments(TimelineTrack track)
+        {
+            List<TimelineTrack> group = new List<TimelineTrack>();
+            group.Add(track);
+
+            foreach (TimelineTrack candidate in tracks)
+            {
+                if (ReferenceEquals(candidate, track))
+                {
+                    continue;
+                }
+
+                if (ReferenceEquals(candidate.AttachedHostTrack, track))
+                {
+                    group.Add(candidate);
+                }
+            }
+
+            return group;
+        }
+
+        /// <summary>The audio lanes folded into <paramref name="host"/>'s row, in collection order.</summary>
+        private List<TimelineTrack> AttachedTracksOf(TimelineTrack host)
+        {
+            List<TimelineTrack> attached = TrackWithAttachments(host);
+            attached.RemoveAt(0);
+            return attached;
+        }
+
+        /// <summary>
+        /// True when the track has no row of its own. Such a track is never selected by itself: the
+        /// lane belongs to the video row, so a click on it selects the host.
+        /// </summary>
+        private bool IsAttachedLane(TimelineTrack track)
+        {
+            TimelineTrack? host = track.AttachedHostTrack;
+            if (host == null || ReferenceEquals(host, track))
+            {
+                return false;
+            }
+
+            if (track.Kind != TrackKind.Audio || host.Kind != TrackKind.Video)
+            {
+                return false;
+            }
+
+            return tracks.Contains(host);
+        }
+
+        /// <summary>
+        /// Cuts the audio of a split clip at the same second and gives the tail its own lane inside the
+        /// new row, so both halves keep their sound even though the picture half moved to a new track.
+        /// </summary>
+        private void SplitAttachedAudio(TimelineTrack host, TimelineTrack tailHost, double position)
+        {
+            foreach (TimelineTrack laneTrack in AttachedTracksOf(host))
+            {
+                TimelineSegment? laneSegment = laneTrack.SegmentAt(position);
+                if (laneSegment == null)
+                {
+                    continue;
+                }
+
+                TimelineSegment? laneTail = laneSegment.SplitAt(position);
+                if (laneTail == null)
+                {
+                    continue;
+                }
+
+                TimelineTrack laneTailTrack = new TimelineTrack(
+                    TrackKind.Audio,
+                    NextTrackName(TrackKind.Audio),
+                    laneTrack.BackgroundColor);
+                laneTailTrack.AttachedHostTrack = tailHost;
+                laneTailTrack.Segments.Add(laneTail);
+
+                int tailHostIndex = tracks.IndexOf(tailHost);
+                if (tailHostIndex < 0)
+                {
+                    tracks.Add(laneTailTrack);
+                }
+                else
+                {
+                    tracks.Insert(tailHostIndex + 1, laneTailTrack);
+                }
+
+                laneTrack.NotifyContentChanged();
+            }
+        }
+
+        /// <summary>
+        /// Carries the sound of a moved clip with it: the lane clip shifts by the same delta and, when
+        /// the clip lands on another video track, it moves into that row's lane so the picture and the
+        /// waveform never separate.
+        /// </summary>
+        private void MoveAttachedAudio(TimelineTrack sourceTrack, TimelineTrack targetTrack, double previousStartSeconds, double newStartSeconds)
+        {
+            List<TimelineTrack> laneTracks = AttachedTracksOf(sourceTrack);
+            if (laneTracks.Count == 0)
+            {
+                return;
+            }
+
+            double delta = newStartSeconds - previousStartSeconds;
+            bool sameRow = ReferenceEquals(sourceTrack, targetTrack) || targetTrack.Kind != TrackKind.Video;
+
+            foreach (TimelineTrack laneTrack in laneTracks)
+            {
+                TimelineSegment? laneSegment = null;
+                foreach (TimelineSegment candidate in laneTrack.Segments)
+                {
+                    if (candidate.Contains(previousStartSeconds + 0.0005))
+                    {
+                        laneSegment = candidate;
+                        break;
+                    }
+                }
+
+                if (laneSegment == null)
+                {
+                    continue;
+                }
+
+                laneSegment.StartSeconds = Math.Max(0.0, laneSegment.StartSeconds + delta);
+
+                if (sameRow)
+                {
+                    // The lane stays where it is; only the clip inside it slid along the timeline.
+                    laneTrack.NotifyContentChanged();
+                    continue;
+                }
+
+                laneTrack.Segments.Remove(laneSegment);
+                TimelineTrack destinationLane = EnsureAttachedLane(targetTrack, laneTrack);
+                destinationLane.Segments.Add(laneSegment);
+                destinationLane.PushAside(laneSegment);
+
+                if (laneTrack.Segments.Count == 0)
+                {
+                    // A lane without clips would still draw a strip under the row it was left in.
+                    tracks.Remove(laneTrack);
+                }
+            }
+
+            if (!sameRow)
+            {
+                targetTrack.NotifyContentChanged();
+            }
+        }
+
+        /// <summary>
+        /// The lane a clip's sound should live in when the clip moves to <paramref name="host"/>: the
+        /// one already attached there, or a fresh one placed right below the host.
+        /// </summary>
+        private TimelineTrack EnsureAttachedLane(TimelineTrack host, TimelineTrack template)
+        {
+            List<TimelineTrack> attached = AttachedTracksOf(host);
+            if (attached.Count > 0)
+            {
+                return attached[0];
+            }
+
+            TimelineTrack lane = new TimelineTrack(
+                TrackKind.Audio,
+                NextTrackName(TrackKind.Audio),
+                template.BackgroundColor);
+            lane.AttachedHostTrack = host;
+
+            int hostIndex = tracks.IndexOf(host);
+            if (hostIndex < 0)
+            {
+                tracks.Add(lane);
+            }
+            else
+            {
+                tracks.Insert(hostIndex + 1, lane);
+            }
+
+            return lane;
+        }
+
+        /// <summary>
+        /// Drops the sound of a deleted clip. The lane clip is matched by the span it covers, because a
+        /// clip and its waveform are cut and moved together but never share an object.
+        /// </summary>
+        private void RemoveAttachedAudioFor(TimelineTrack host, double startSeconds, double endSeconds)
+        {
+            foreach (TimelineTrack laneTrack in AttachedTracksOf(host))
+            {
+                List<TimelineSegment> matching = new List<TimelineSegment>();
+                foreach (TimelineSegment laneSegment in laneTrack.Segments)
+                {
+                    if (laneSegment.Overlaps(startSeconds, endSeconds))
+                    {
+                        matching.Add(laneSegment);
+                    }
+                }
+
+                foreach (TimelineSegment laneSegment in matching)
+                {
+                    laneTrack.Segments.Remove(laneSegment);
+                }
+
+                laneTrack.NotifyContentChanged();
+            }
+        }
+
+        /// <summary>
+        /// Gives the attached audio its own row again: the link is cleared, no clip changes, and undo
+        /// puts the lane back. The track keeps its name and colour, so from then on it behaves exactly
+        /// like an audio track that was never attached.
+        /// </summary>
+        private void DetachAudioTracks(TimelineTrack host)
+        {
+            List<TimelineTrack> attached = AttachedTracksOf(host);
+            if (attached.Count == 0)
+            {
+                return;
+            }
+
+            UndoStackPush(
+                "detach audio track",
+                delegate
+                {
+                    foreach (TimelineTrack track in attached)
+                    {
+                        track.AttachedHostTrack = host;
+                    }
+
+                    MarkProjectDirty();
+                    TrackTimelineView.Refresh();
+                },
+                delegate
+                {
+                    foreach (TimelineTrack track in attached)
+                    {
+                        track.AttachedHostTrack = null;
+                    }
+
+                    MarkProjectDirty();
+                    TrackTimelineView.Refresh();
+                });
+
+            foreach (TimelineTrack track in attached)
+            {
+                track.AttachedHostTrack = null;
+
+                // Its new row has to appear right under the video it came from, not wherever the
+                // collection happened to keep it.
+                tracks.Remove(track);
+                int hostIndex = tracks.IndexOf(host);
+                if (hostIndex < 0)
+                {
+                    tracks.Add(track);
+                }
+                else
+                {
+                    tracks.Insert(hostIndex + 1, track);
+                }
+            }
+
+            AfterTimelineStructureChanged();
+            SetStatus(attached.Count == 1
+                ? "Detached the audio track — it has a row of its own now and moves on its own. Ctrl+Z attaches it again."
+                : "Detached " + attached.Count.ToString(CultureInfo.InvariantCulture)
+                    + " audio tracks — they have rows of their own now. Ctrl+Z attaches them again.");
+        }
+
         // ── Timeline snapshots (undo of every structural edit) ─────────────
 
         private TimelineSnapshot CaptureTimeline()
@@ -4148,6 +4430,7 @@ namespace SubtitleForge
                 TrackSnapshot trackSnapshot = new TrackSnapshot();
                 trackSnapshot.Track = track;
                 trackSnapshot.WasSelected = track.IsSelected;
+                trackSnapshot.AttachedHostTrack = track.AttachedHostTrack;
                 foreach (TimelineSegment segment in track.Segments)
                 {
                     SegmentSnapshot segmentSnapshot = new SegmentSnapshot();
@@ -4193,6 +4476,7 @@ namespace SubtitleForge
                 }
 
                 trackSnapshot.Track.IsSelected = trackSnapshot.WasSelected;
+                trackSnapshot.Track.AttachedHostTrack = trackSnapshot.AttachedHostTrack;
                 tracks.Add(trackSnapshot.Track);
             }
 
@@ -4373,6 +4657,22 @@ namespace SubtitleForge
             tracks.RemoveAt(from);
             tracks.Insert(target, moved);
 
+            // The lanes of the moved row belong directly under it again: the collection order is what a
+            // detached track falls back to when it gets a row of its own.
+            foreach (TimelineTrack laneTrack in AttachedTracksOf(moved))
+            {
+                tracks.Remove(laneTrack);
+                int movedIndex = tracks.IndexOf(moved);
+                if (movedIndex < 0)
+                {
+                    tracks.Add(laneTrack);
+                }
+                else
+                {
+                    tracks.Insert(movedIndex + 1, laneTrack);
+                }
+            }
+
             UndoStackPushTimeline("reorder tracks", before);
 
             AfterTimelineStructureChanged();
@@ -4421,8 +4721,16 @@ namespace SubtitleForge
                 targetTrack.Segments.Add(segment);
             }
 
+            double previousStart = segment.StartSeconds;
             segment.StartSeconds = Math.Max(0.0, e.NewStartSeconds);
             targetTrack.PushAside(segment);
+
+            // The audio that came with the clip travels with it: same delta, and the lane follows the
+            // clip into the row it landed in.
+            if (!ReferenceEquals(sourceTrack, targetTrack) || Math.Abs(previousStart - segment.StartSeconds) > 0.0001)
+            {
+                MoveAttachedAudio(sourceTrack, targetTrack, previousStart, segment.StartSeconds);
+            }
 
             string label = createdTrack ? "move clip to new track " + createdName : "move clip";
             UndoStackPushTimeline(label, before);
@@ -4474,6 +4782,18 @@ namespace SubtitleForge
             colorItem.Header = "Background colour";
             AddColorEntries(colorItem.Items, track);
             menu.Items.Add(colorItem);
+
+            // Only offered when there is something to detach, so the menu does not advertise an entry
+            // that would do nothing on a standalone audio track or on a video that lost its lane.
+            if (AttachedTracksOf(track).Count > 0)
+            {
+                MenuItem detachItem = new MenuItem();
+                detachItem.Header = "Detach audio track";
+                detachItem.ToolTip = "Give the audio its own row: from then on it splits, moves and deletes on its own";
+                detachItem.Click += delegate { DetachAudioTracks(track); };
+                menu.Items.Add(new Separator());
+                menu.Items.Add(detachItem);
+            }
 
             MenuItem splitItem = new MenuItem();
             splitItem.Header = "Split at playhead (Ctrl+Shift+D)";
@@ -4675,6 +4995,14 @@ namespace SubtitleForge
             {
                 TimelineTrack track = entry.Key;
                 TimelineSegment segment = entry.Value;
+
+                // A lane is cut by its host, never on its own: splitting both would cut the same audio
+                // twice and leave the halves out of step with the picture.
+                if (IsAttachedLane(track))
+                {
+                    continue;
+                }
+
                 if (position <= segment.StartSeconds || position >= segment.EndSeconds)
                 {
                     continue;
@@ -4701,6 +5029,10 @@ namespace SubtitleForge
                 tracks.Insert(insertIndex + 1, tailTrack);
                 segment.IsSelected = false;
                 splitCount++;
+
+                // The sound of the clip is part of the clip: cut it at the same second and let the tail
+                // ride in the new row, so the two halves stay in step after the split.
+                SplitAttachedAudio(track, tailTrack, position);
             }
 
             if (splitCount == 0)
@@ -4741,6 +5073,17 @@ namespace SubtitleForge
             {
                 foreach (TimelineTrack track in selectedRows)
                 {
+                    if (!tracks.Contains(track))
+                    {
+                        // Already went away together with the row it was folded into.
+                        continue;
+                    }
+
+                    foreach (TimelineTrack laneTrack in AttachedTracksOf(track))
+                    {
+                        tracks.Remove(laneTrack);
+                    }
+
                     tracks.Remove(track);
                     removedTracks++;
                 }
@@ -4749,8 +5092,19 @@ namespace SubtitleForge
             {
                 foreach (KeyValuePair<TimelineTrack, TimelineSegment> entry in selectedSegments)
                 {
-                    entry.Key.Segments.Remove(entry.Value);
+                    TimelineTrack track = entry.Key;
+                    TimelineSegment segment = entry.Value;
+
+                    if (!track.Segments.Remove(segment))
+                    {
+                        continue;
+                    }
+
                     removedSegments++;
+
+                    // Deleting the picture deletes its sound; the lane clip is found by the span it
+                    // covers, which is the only link a clip and its waveform need.
+                    RemoveAttachedAudioFor(track, segment.StartSeconds, segment.EndSeconds);
                 }
 
                 List<TimelineTrack> emptied = new List<TimelineTrack>();
@@ -5072,6 +5426,17 @@ namespace SubtitleForge
                     trackData.Name = track.Name;
                     trackData.BackgroundColor = track.BackgroundColor.ToString(CultureInfo.InvariantCulture);
 
+                    // The link is stored as the host's position in this list, which is what a reader can
+                    // resolve before any track object exists. A standalone track simply omits it.
+                    if (track.AttachedHostTrack != null)
+                    {
+                        int hostIndex = tracks.IndexOf(track.AttachedHostTrack);
+                        if (hostIndex >= 0)
+                        {
+                            trackData.AttachedToTrackIndex = hostIndex;
+                        }
+                    }
+
                     int segmentIndex = 0;
                     foreach (TimelineSegment segment in track.Segments)
                     {
@@ -5195,6 +5560,11 @@ namespace SubtitleForge
                 nextAudioTrackNumber = 1;
                 int anonymousAudioIndex = 1;
 
+                // The attachment is an index into the file's own track list, so a host has to exist
+                // before a lane can point at it: the wanted hosts wait here until every track is built.
+                List<TimelineTrack> loadedTracks = new List<TimelineTrack>();
+                List<int> pendingAttachedHosts = new List<int>();
+
                 foreach (ProjectTrackData trackData in data.Tracks)
                 {
                     TrackKind kind = string.Equals(trackData.Kind, "Video", StringComparison.OrdinalIgnoreCase)
@@ -5245,6 +5615,27 @@ namespace SubtitleForge
                     }
 
                     tracks.Add(track);
+                    loadedTracks.Add(track);
+                    pendingAttachedHosts.Add(trackData.AttachedToTrackIndex ?? -1);
+                }
+
+                // Second pass: old projects carry no index at all, and a lane that points at itself or
+                // at something that is not a video track is left standing on its own rather than hidden.
+                for (int index = 0; index < loadedTracks.Count; index++)
+                {
+                    int hostIndex = pendingAttachedHosts[index];
+                    if (hostIndex < 0 || hostIndex >= loadedTracks.Count || hostIndex == index)
+                    {
+                        continue;
+                    }
+
+                    TimelineTrack host = loadedTracks[hostIndex];
+                    if (host.Kind != TrackKind.Video || loadedTracks[index].Kind != TrackKind.Audio)
+                    {
+                        continue;
+                    }
+
+                    loadedTracks[index].AttachedHostTrack = host;
                 }
 
                 string? ffmpeg = FfmpegLocator.Resolve("ffmpeg", App.Settings.FfmpegDirectory);
@@ -5633,6 +6024,8 @@ namespace SubtitleForge
 
         private List<TimelineSegment> ActiveAudioSegments(double seconds)
         {
+            // An attached lane has no row of its own, but it is still a track in this collection, so the
+            // kind stays the only test here: a video's sound comes from its lane and has to keep playing.
             List<TimelineSegment> active = new List<TimelineSegment>();
             foreach (TimelineTrack track in tracks)
             {
@@ -6283,6 +6676,10 @@ namespace SubtitleForge
                         videoAudioSegment.SourceDuration = fileDuration;
                         videoAudioSegment.SourcePath = path;
                         videoAudioTrack.Segments.Add(videoAudioSegment);
+
+                        // Dropped the same way as an imported file: the sound is a lane inside the
+                        // video row, not a second row the user has to keep in step by hand.
+                        videoAudioTrack.AttachedHostTrack = track;
 
                         if (insertRow >= 0 && insertRow <= tracks.Count)
                         {
@@ -7378,6 +7775,13 @@ namespace SubtitleForge
             {
                 if (!ReferenceEquals(rows[index], destination))
                 {
+                    // The clips of the merged-away row now live on the destination, so their sound has
+                    // to ride in the destination's row too instead of pointing at a track that is gone.
+                    foreach (TimelineTrack laneTrack in AttachedTracksOf(rows[index]))
+                    {
+                        laneTrack.AttachedHostTrack = destination;
+                    }
+
                     tracks.Remove(rows[index]);
                 }
             }
@@ -8210,6 +8614,12 @@ namespace SubtitleForge
         private class TrackSnapshot
         {
             public TimelineTrack Track = null!;
+
+            /// <summary>
+            /// The lane's host at the time of the snapshot, so attaching and detaching can be undone
+            /// like any other structural edit.
+            /// </summary>
+            public TimelineTrack? AttachedHostTrack;
 
             public bool WasSelected;
 

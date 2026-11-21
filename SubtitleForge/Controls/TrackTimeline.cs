@@ -163,6 +163,45 @@ namespace SubtitleForge.Controls
             public bool Selected { get; }
         }
 
+        /// <summary>
+        /// One visible row of the timeline: a host track plus the slim lanes of the audio tracks
+        /// attached to it. A row index is not a track index any more, because an attached track has
+        /// no row of its own, which is why every row carries its <see cref="Track"/> instead.
+        /// </summary>
+        private sealed class TimelineRow
+        {
+            public TimelineRow(TimelineTrack track, double top, double height, double laneHeight, List<TimelineTrack> attachedTracks)
+            {
+                Track = track;
+                Top = top;
+                Height = height;
+                LaneHeight = laneHeight;
+                AttachedTracks = attachedTracks;
+            }
+
+            public TimelineTrack Track { get; }
+
+            public double Top { get; }
+
+            public double Height { get; }
+
+            public double LaneHeight { get; }
+
+            public List<TimelineTrack> AttachedTracks { get; }
+
+            /// <summary>The part of the row the host's clips and the header text live in.</summary>
+            public double HostHeight
+            {
+                get { return Height - (LaneHeight * AttachedTracks.Count); }
+            }
+
+            /// <summary>Top of the attached lane at <paramref name="laneIndex"/>, stacked at the bottom.</summary>
+            public double LaneTop(int laneIndex)
+            {
+                return Top + HostHeight + (LaneHeight * laneIndex);
+            }
+        }
+
         private static Brush CreateFrozenBrush(Color color)
         {
             SolidColorBrush brush = new SolidColorBrush(color);
@@ -173,6 +212,15 @@ namespace SubtitleForge.Controls
         public const double AudioRowHeight = 58.0;
         public const double RowGap = 2.0;
         public const double EdgePadding = 2.0;
+
+        /// <summary>
+        /// Height of the slim lane an attached audio track is drawn in, before the vertical zoom.
+        /// It has to read as a strip under the clips of its host, not as a row of its own.
+        /// </summary>
+        public const double AttachedLaneHeight = 24.0;
+
+        /// <summary>Floor for the lane so the waveform still reads when the rows are squeezed.</summary>
+        public const double MinimumAttachedLaneHeight = 14.0;
 
         private const double SegmentSidePadding = 0.5;
         private const double SegmentCornerRadius = 1.5;
@@ -185,6 +233,19 @@ namespace SubtitleForge.Controls
         private static readonly Color SelectionColor = Color.FromRgb(0xF2, 0xF6, 0xFC);
         /// <summary>The span a range transcription rewrites, drawn in the ruler.</summary>
         private static readonly Brush RangeBandBrush = Frozen(Color.FromArgb(0x60, 0x2F, 0x6F, 0xE0));
+
+        /// <summary>
+        /// The lane keeps the default audio green whatever colour its own track carries: the strip is
+        /// part of the video row, so it borrows the audio palette instead of inventing a colour per
+        /// import. The waveform and the divider are derived from that same green to stay readable.
+        /// </summary>
+        private static readonly Brush AttachedLaneBrush = CreateFrozenBrush(TrackColors.AudioDefault);
+        private static readonly Brush AttachedLaneBackdropBrush = CreateFrozenBrush(Color.FromRgb(
+            (byte)(TrackColors.AudioDefault.R * 0.5),
+            (byte)(TrackColors.AudioDefault.G * 0.5),
+            (byte)(TrackColors.AudioDefault.B * 0.5)));
+        private static readonly Brush AttachedLaneWaveformBrush = CreateFrozenBrush(TrackColors.Contrasting(TrackColors.AudioDefault));
+        private static readonly Brush AttachedLaneDividerBrush = CreateFrozenBrush(Color.FromRgb(0x1B, 0x1F, 0x1C));
 
         private double stickyOffset;
         private double? rangeStartSeconds;
@@ -225,6 +286,7 @@ namespace SubtitleForge.Controls
 
         private int rowDragFromIndex = -1;
         private int rowDragInsertIndex = -1;
+        private double rowDragInsertLineY;
         private bool isRowDragging;
         private Point rowDragStartPoint;
 
@@ -556,20 +618,124 @@ namespace SubtitleForge.Controls
                 return height + AudioRowHeight;
             }
 
-            for (int index = 0; index < tracks.Count; index++)
+            foreach (TimelineRow row in BuildRows())
             {
-                height += RowHeight(tracks[index]) + RowGap;
+                height += row.Height + RowGap;
             }
 
             return Math.Max(height, RulerHeight + AudioRowHeight);
         }
 
-        private double RowHeight(TimelineTrack track)
+        /// <summary>Height of a track on its own, before any attached lane is folded in.</summary>
+        private double BaseRowHeight(TimelineTrack track)
         {
             double baseHeight = track.Kind == TrackKind.Video ? VideoRowHeight : AudioRowHeight;
             double scaled = baseHeight * verticalZoom;
             // Enough room for the header text to stay readable at any scale.
             return scaled < 26.0 ? 26.0 : scaled;
+        }
+
+        private double ScaledAttachedLaneHeight
+        {
+            get
+            {
+                double scaled = AttachedLaneHeight * verticalZoom;
+                return scaled < MinimumAttachedLaneHeight ? MinimumAttachedLaneHeight : scaled;
+            }
+        }
+
+        /// <summary>
+        /// Geometry of every visible row, top to bottom. An audio track attached to a video track is
+        /// folded into the host's row as a slim lane, so it produces no row of its own and the host
+        /// grows by one lane per attachment.
+        /// </summary>
+        private List<TimelineRow> BuildRows()
+        {
+            List<TimelineRow> rows = new List<TimelineRow>();
+            if (tracks == null)
+            {
+                return rows;
+            }
+
+            // The lanes are collected first: a host may carry more than one, and its height is only
+            // known once its lane count is.
+            Dictionary<TimelineTrack, List<TimelineTrack>> lanesByHost =
+                new Dictionary<TimelineTrack, List<TimelineTrack>>();
+            foreach (TimelineTrack track in tracks)
+            {
+                TimelineTrack? host = AttachedHost(track);
+                if (host == null)
+                {
+                    continue;
+                }
+
+                List<TimelineTrack> lanes;
+                if (!lanesByHost.TryGetValue(host, out lanes))
+                {
+                    lanes = new List<TimelineTrack>();
+                    lanesByHost[host] = lanes;
+                }
+
+                lanes.Add(track);
+            }
+
+            double laneHeight = ScaledAttachedLaneHeight;
+            double top = RulerHeight + EdgePadding;
+
+            foreach (TimelineTrack track in tracks)
+            {
+                if (AttachedHost(track) != null)
+                {
+                    // It lives inside its host's row.
+                    continue;
+                }
+
+                List<TimelineTrack> lanes;
+                if (!lanesByHost.TryGetValue(track, out lanes))
+                {
+                    lanes = new List<TimelineTrack>();
+                }
+
+                double height = BaseRowHeight(track) + (laneHeight * lanes.Count);
+                rows.Add(new TimelineRow(track, top, height, laneHeight, lanes));
+                top += height + RowGap;
+            }
+
+            return rows;
+        }
+
+        /// <summary>
+        /// The host a track rides in, or null when it stands alone. The link only counts while the
+        /// host is still on the timeline, is a video track and is not the track itself: a stale link
+        /// must never hide a lane.
+        /// </summary>
+        private TimelineTrack? AttachedHost(TimelineTrack track)
+        {
+            TimelineTrack? host = track.AttachedHostTrack;
+            if (host == null || tracks == null || ReferenceEquals(host, track))
+            {
+                return null;
+            }
+
+            if (track.Kind != TrackKind.Audio || host.Kind != TrackKind.Video)
+            {
+                return null;
+            }
+
+            return tracks.Contains(host) ? host : null;
+        }
+
+        private static TimelineRow? RowFor(List<TimelineRow> rows, TimelineTrack track)
+        {
+            foreach (TimelineRow row in rows)
+            {
+                if (ReferenceEquals(row.Track, track))
+                {
+                    return row;
+                }
+            }
+
+            return null;
         }
 
         private double ContentLeft
@@ -582,58 +748,51 @@ namespace SubtitleForge.Controls
             get { return Math.Max(1.0, ActualWidth - ContentLeft - 4.0); }
         }
 
-        private double RowTop(int index)
+        /// <summary>The visible row under the point, or null above and below the rows.</summary>
+        private TimelineRow? RowAt(Point point)
         {
-            double top = RulerHeight + EdgePadding;
-            if (tracks == null)
-            {
-                return top;
-            }
-
-            for (int row = 0; row < index && row < tracks.Count; row++)
-            {
-                top += RowHeight(tracks[row]) + RowGap;
-            }
-
-            return top;
+            return RowAt(BuildRows(), point);
         }
 
-        private int RowAt(Point point)
+        private static TimelineRow? RowAt(List<TimelineRow> rows, Point point)
         {
-            if (tracks == null)
+            foreach (TimelineRow row in rows)
             {
-                return -1;
-            }
-
-            for (int index = 0; index < tracks.Count; index++)
-            {
-                double top = RowTop(index);
-                double bottom = top + RowHeight(tracks[index]);
-                if (point.Y >= top && point.Y <= bottom)
+                if (point.Y >= row.Top && point.Y <= row.Top + row.Height)
                 {
-                    return index;
+                    return row;
                 }
             }
 
-            return -1;
+            return null;
         }
 
-        private int InsertIndexAt(double y)
+        /// <summary>
+        /// Where a new track would be inserted for a drop at <paramref name="y"/>, as an index into
+        /// <see cref="tracks"/> — rows and tracks are different lists now that an attached track has
+        /// no row of its own. <paramref name="lineY"/> is where the insertion line is drawn.
+        /// </summary>
+        private int InsertIndexAt(double y, out double lineY)
         {
+            List<TimelineRow> rows = BuildRows();
+            lineY = RulerHeight + EdgePadding;
+
             if (tracks == null || tracks.Count == 0)
             {
                 return 0;
             }
 
-            for (int index = 0; index < tracks.Count; index++)
+            foreach (TimelineRow row in rows)
             {
-                double top = RowTop(index);
-                double bottom = top + RowHeight(tracks[index]);
-                double middle = top + ((bottom - top) / 2.0);
+                double middle = row.Top + (row.Height / 2.0);
                 if (y < middle)
                 {
-                    return index;
+                    lineY = row.Top - (RowGap / 2.0);
+                    int index = tracks.IndexOf(row.Track);
+                    return index < 0 ? 0 : index;
                 }
+
+                lineY = row.Top + row.Height + (RowGap / 2.0);
             }
 
             return tracks.Count;
@@ -767,18 +926,16 @@ namespace SubtitleForge.Controls
                 return;
             }
 
-            for (int index = 0; index < tracks.Count; index++)
+            List<TimelineRow> rows = BuildRows();
+            for (int index = 0; index < rows.Count; index++)
             {
-                DrawTrack(drawingContext, tracks[index], index);
+                DrawRow(drawingContext, rows[index]);
             }
 
             if (isRowDragging && rowDragInsertIndex >= 0)
             {
-                double y = rowDragInsertIndex >= tracks.Count
-                    ? RowTop(tracks.Count - 1) + RowHeight(tracks[tracks.Count - 1])
-                    : RowTop(rowDragInsertIndex) - (RowGap / 2.0);
                 Pen pen = new Pen(new SolidColorBrush(AccentColor), 2.0);
-                drawingContext.DrawLine(pen, new Point(0, y), new Point(ActualWidth, y));
+                drawingContext.DrawLine(pen, new Point(0, rowDragInsertLineY), new Point(ActualWidth, rowDragInsertLineY));
             }
 
             if (isSegmentDragging)
@@ -1039,35 +1196,49 @@ namespace SubtitleForge.Controls
                 + tenths.ToString(CultureInfo.InvariantCulture);
         }
 
-        private void DrawTrack(DrawingContext drawingContext, TimelineTrack track, int index)
+        /// <summary>
+        /// One visible row: the host's own lane and clips, followed by the slim lanes of the audio
+        /// tracks attached to it. The picture keeps the full host height and the sound sits in the
+        /// strip underneath it, so a video track with its audio reads as a single row.
+        /// </summary>
+        private void DrawRow(DrawingContext drawingContext, TimelineRow row)
         {
-            double top = RowTop(index);
-            double height = RowHeight(track);
+            TimelineTrack track = row.Track;
+            double top = row.Top;
+            double height = row.Height;
+            double hostHeight = row.HostHeight;
 
             drawingContext.DrawRectangle(track.LaneBrush, null, new Rect(0, top, ActualWidth, height));
 
-            Rect headerRect = new Rect(4.0, top, HeaderWidth, height);
+            // The header only covers the host part: its text has no business sitting on the lane.
+            Rect headerRect = new Rect(4.0, top, HeaderWidth, hostHeight);
             DrawHeader(drawingContext, track, headerRect);
-
-            if (track.IsSelected)
-            {
-                Pen selectionPen = new Pen(new SolidColorBrush(SelectionColor), 2.0);
-                drawingContext.DrawRoundedRectangle(null, selectionPen, new Rect(1.0, top + 1.0, ActualWidth - 2.0, height - 2.0), 4.0, 4.0);
-            }
 
             // Zooming can push a segment past either edge of the panel; the clip keeps it off the
             // track headers and off whatever sits next to the timeline.
-            drawingContext.PushClip(new RectangleGeometry(new Rect(ContentLeft, top, Math.Max(0.0, ContentWidth), height)));
+            drawingContext.PushClip(new RectangleGeometry(new Rect(ContentLeft, top, Math.Max(0.0, ContentWidth), hostHeight)));
             try
             {
                 foreach (TimelineSegment segment in track.Segments)
                 {
-                    DrawSegment(drawingContext, track, segment, top, height);
+                    DrawSegment(drawingContext, track, segment, top, hostHeight);
                 }
             }
             finally
             {
                 drawingContext.Pop();
+            }
+
+            for (int laneIndex = 0; laneIndex < row.AttachedTracks.Count; laneIndex++)
+            {
+                DrawAttachedLane(drawingContext, row, laneIndex);
+            }
+
+            // Drawn last so the outline runs around the lane as well: the whole row is one selection.
+            if (track.IsSelected)
+            {
+                Pen selectionPen = new Pen(new SolidColorBrush(SelectionColor), 2.0);
+                drawingContext.DrawRoundedRectangle(null, selectionPen, new Rect(1.0, top + 1.0, ActualWidth - 2.0, height - 2.0), 4.0, 4.0);
             }
 
             if (!track.HasSegments)
@@ -1082,8 +1253,64 @@ namespace SubtitleForge.Controls
                     track.WaveformBrush,
                     pixelsPerDip);
                 double hintX = Math.Max(ContentLeft + 8.0, HeaderWidth + 8.0);
-                drawingContext.DrawText(hint, new Point(hintX, top + (height / 2.0) - 8.0));
+                drawingContext.DrawText(hint, new Point(hintX, top + (hostHeight / 2.0) - 8.0));
             }
+        }
+
+        /// <summary>
+        /// The strip an attached audio track is drawn in: waveform only, on the default audio green,
+        /// with no name and no colour swatch of its own — the row it is folded into owns those. Its
+        /// clips are drawn but never header-labelled, so the lane stays slimmer than a real row.
+        /// </summary>
+        private void DrawAttachedLane(DrawingContext drawingContext, TimelineRow row, int laneIndex)
+        {
+            TimelineTrack attachedTrack = row.AttachedTracks[laneIndex];
+            double laneTop = row.LaneTop(laneIndex);
+            double laneHeight = row.LaneHeight;
+            Rect laneArea = new Rect(ContentLeft, laneTop, Math.Max(0.0, ContentWidth), laneHeight);
+
+            drawingContext.DrawRectangle(AttachedLaneBackdropBrush, null, new Rect(0, laneTop, ActualWidth, laneHeight));
+
+            drawingContext.PushClip(new RectangleGeometry(laneArea));
+            try
+            {
+                foreach (TimelineSegment segment in attachedTrack.Segments)
+                {
+                    Rect rect = SegmentRect(segment, laneTop, laneHeight);
+                    if (rect.Width <= 0.5)
+                    {
+                        continue;
+                    }
+
+                    Rect onScreen = Rect.Intersect(rect, laneArea);
+                    if (onScreen.IsEmpty || onScreen.Width <= 0.5)
+                    {
+                        continue;
+                    }
+
+                    drawingContext.DrawRoundedRectangle(AttachedLaneBrush, null, rect, SegmentCornerRadius, SegmentCornerRadius);
+
+                    drawingContext.PushClip(new RectangleGeometry(onScreen));
+                    try
+                    {
+                        DrawWaveform(drawingContext, AttachedLaneWaveformBrush, segment, rect, onScreen);
+                    }
+                    finally
+                    {
+                        drawingContext.Pop();
+                    }
+                }
+            }
+            finally
+            {
+                drawingContext.Pop();
+            }
+
+            // A hairline keeps the lane from reading as the bottom of the clips above it.
+            drawingContext.DrawLine(
+                new Pen(AttachedLaneDividerBrush, 1.0),
+                new Point(0, laneTop),
+                new Point(ActualWidth, laneTop));
         }
 
         private void DrawHeader(DrawingContext drawingContext, TimelineTrack track, Rect headerRect)
@@ -1156,7 +1383,7 @@ namespace SubtitleForge.Controls
                 }
                 else
                 {
-                    DrawWaveform(drawingContext, track, segment, rect, onScreen);
+                    DrawWaveform(drawingContext, track.WaveformBrush, segment, rect, onScreen);
                 }
             }
             finally
@@ -1179,7 +1406,7 @@ namespace SubtitleForge.Controls
             return new Rect(left, rowTop + 1.0, width, rowHeight - 2.0);
         }
 
-        private void DrawWaveform(DrawingContext drawingContext, TimelineTrack track, TimelineSegment segment, Rect fullRect, Rect rect)
+        private void DrawWaveform(DrawingContext drawingContext, Brush waveformBrush, TimelineSegment segment, Rect fullRect, Rect rect)
         {
             if (segment.Samples.Length == 0)
             {
@@ -1235,7 +1462,7 @@ namespace SubtitleForge.Controls
             }
 
             geometry.Freeze();
-            drawingContext.DrawGeometry(track.WaveformBrush, null, geometry);
+            drawingContext.DrawGeometry(waveformBrush, null, geometry);
         }
 
         private static double PeakFor(TimelineSegment segment, double mediaSeconds, double samplesPerPixel)
@@ -1344,18 +1571,24 @@ namespace SubtitleForge.Controls
                 return;
             }
 
+            List<TimelineRow> rows = BuildRows();
+
             double rowTop;
             double rowHeight;
-            if (segmentDropKind == TrackDropKind.ExistingTrack && segmentDropTrack != null && segmentDropRowIndex >= 0)
+            if (segmentDropKind == TrackDropKind.ExistingTrack && segmentDropTrack != null)
             {
-                rowTop = RowTop(segmentDropRowIndex);
-                rowHeight = RowHeight(segmentDropTrack);
+                TimelineRow? target = RowFor(rows, segmentDropTrack);
+                if (target == null)
+                {
+                    return;
+                }
+
+                rowTop = target.Top;
+                rowHeight = target.HostHeight;
             }
             else if (segmentDropKind == TrackDropKind.NewTrack)
             {
-                double insertionY = segmentDropRowIndex >= 0 && tracks != null && segmentDropRowIndex < tracks.Count
-                    ? RowTop(segmentDropRowIndex)
-                    : (tracks != null && tracks.Count > 0 ? RowTop(tracks.Count - 1) + RowHeight(tracks[tracks.Count - 1]) : RulerHeight + EdgePadding);
+                double insertionY = NewTrackInsertionY(rows);
                 Pen gapPen = new Pen(new SolidColorBrush(AccentColor), 2.0);
                 drawingContext.DrawLine(gapPen, new Point(0, insertionY), new Point(ActualWidth, insertionY));
                 rowTop = insertionY + RowGap;
@@ -1374,6 +1607,30 @@ namespace SubtitleForge.Controls
             Brush fill = new SolidColorBrush(Color.FromArgb(190, 0x2F, 0x81, 0xF7));
             Pen outline = new Pen(new SolidColorBrush(Colors.White), 1.5);
             drawingContext.DrawRoundedRectangle(fill, outline, preview, 3.0, 3.0);
+        }
+
+        /// <summary>
+        /// Where a brand-new track would appear for the current drop: in front of the track at the
+        /// reported collection index, or under the last row when the drop is past the end.
+        /// </summary>
+        private double NewTrackInsertionY(List<TimelineRow> rows)
+        {
+            if (tracks != null && segmentDropRowIndex >= 0 && segmentDropRowIndex < tracks.Count)
+            {
+                TimelineRow? target = RowFor(rows, tracks[segmentDropRowIndex]);
+                if (target != null)
+                {
+                    return target.Top;
+                }
+            }
+
+            if (rows.Count == 0)
+            {
+                return RulerHeight + EdgePadding;
+            }
+
+            TimelineRow last = rows[rows.Count - 1];
+            return last.Top + last.Height + RowGap;
         }
 
         private void DrawCenteredHint(DrawingContext drawingContext, string text)
@@ -1401,19 +1658,16 @@ namespace SubtitleForge.Controls
             return y >= stickyOffset - 0.5 && y <= stickyOffset + RulerHeight;
         }
 
-        private TimelineSegment? SegmentAt(TimelineTrack track, Point point, out int rowIndex)
+        /// <summary>
+        /// The host clip under <paramref name="point"/>, or null. A hit inside a slim lane returns the
+        /// host's clip on purpose: the lane is part of the video row, so dragging there moves the clip
+        /// and its sound together instead of pretending the audio can be pulled out of the row.
+        /// </summary>
+        private TimelineSegment? SegmentAt(TimelineRow row, Point point)
         {
-            rowIndex = RowAt(point);
-            if (rowIndex < 0)
+            foreach (TimelineSegment segment in row.Track.Segments)
             {
-                return null;
-            }
-
-            double rowTop = RowTop(rowIndex);
-            double rowHeight = RowHeight(track);
-            foreach (TimelineSegment segment in track.Segments)
-            {
-                Rect rect = SegmentRect(segment, rowTop, rowHeight);
+                Rect rect = SegmentRect(segment, row.Top, row.HostHeight);
                 if (point.X >= rect.X && point.X <= rect.X + rect.Width)
                 {
                     return segment;
@@ -1441,15 +1695,15 @@ namespace SubtitleForge.Controls
                 return;
             }
 
-            int rowIndex = RowAt(point);
-            if (tracks == null || rowIndex < 0)
+            TimelineRow? row = RowAt(point);
+            if (tracks == null || row == null)
             {
                 SeekRequested?.Invoke(this, SecondsAt(point));
                 e.Handled = true;
                 return;
             }
 
-            TimelineTrack track = tracks[rowIndex];
+            TimelineTrack track = row.Track;
             bool controlPressed = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
             bool shiftPressed = (Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift;
 
@@ -1457,7 +1711,7 @@ namespace SubtitleForge.Controls
             {
                 TrackMouseDown?.Invoke(this, new TrackMouseDownEventArgs(track, controlPressed, SecondsAt(point), e.ClickCount));
 
-                rowDragFromIndex = rowIndex;
+                rowDragFromIndex = tracks.IndexOf(track);
                 rowDragInsertIndex = -1;
                 rowDragStartPoint = point;
                 isRowDragging = false;
@@ -1466,8 +1720,7 @@ namespace SubtitleForge.Controls
                 return;
             }
 
-            int segmentRow;
-            TimelineSegment? segment = SegmentAt(track, point, out segmentRow);
+            TimelineSegment? segment = SegmentAt(row, point);
             if (segment == null)
             {
                 isScrubbing = true;
@@ -1521,7 +1774,8 @@ namespace SubtitleForge.Controls
                 }
 
                 isRowDragging = true;
-                rowDragInsertIndex = InsertIndexAt(point.Y);
+                rowDragInsertIndex = InsertIndexAt(point.Y, out double insertLineY);
+                rowDragInsertLineY = insertLineY;
                 InvalidateVisual();
                 return;
             }
@@ -1643,7 +1897,13 @@ namespace SubtitleForge.Controls
             }
 
             Point point = e.GetPosition(this);
-            int rowIndex = RowAt(point);
+            int rowIndex = -1;
+            TimelineRow? row = RowAt(point);
+            if (row != null && tracks != null)
+            {
+                rowIndex = tracks.IndexOf(row.Track);
+            }
+
             double seconds = SecondsAt(point);
             e.Handled = true;
 
@@ -1656,13 +1916,13 @@ namespace SubtitleForge.Controls
             Focus();
 
             Point point = e.GetPosition(this);
-            int rowIndex = RowAt(point);
-            if (tracks == null || rowIndex < 0)
+            TimelineRow? row = RowAt(point);
+            if (row == null)
             {
                 return;
             }
 
-            TrackContextMenuRequested?.Invoke(this, tracks[rowIndex]);
+            TrackContextMenuRequested?.Invoke(this, row.Track);
             e.Handled = true;
         }
 
@@ -1757,26 +2017,29 @@ namespace SubtitleForge.Controls
                 return;
             }
 
-            int rowIndex = RowAt(point);
-            if (rowIndex >= 0)
+            List<TimelineRow> rows = BuildRows();
+            TimelineRow? row = RowAt(rows, point);
+            if (row != null)
             {
-                TimelineTrack candidate = tracks[rowIndex];
+                TimelineTrack candidate = row.Track;
                 if (candidate.Kind == segment.Kind)
                 {
                     segmentDropKind = TrackDropKind.ExistingTrack;
                     segmentDropTrack = candidate;
-                    segmentDropRowIndex = rowIndex;
+                    segmentDropRowIndex = tracks.IndexOf(candidate);
                     return;
                 }
 
-                // Wrong kind: dropping between rows is still allowed.
+                // Wrong kind: dropping between rows is still allowed. The insertion point is the
+                // candidate's own index in the collection, before it or right after it.
                 segmentDropKind = TrackDropKind.NewTrack;
-                segmentDropRowIndex = point.Y < RowTop(rowIndex) + (RowHeight(candidate) / 2.0) ? rowIndex : rowIndex + 1;
+                int candidateIndex = tracks.IndexOf(candidate);
+                segmentDropRowIndex = point.Y < row.Top + (row.Height / 2.0) ? candidateIndex : candidateIndex + 1;
                 return;
             }
 
             segmentDropKind = TrackDropKind.NewTrack;
-            segmentDropRowIndex = InsertIndexAt(point.Y);
+            segmentDropRowIndex = InsertIndexAt(point.Y, out _);
         }
 
         // ── Change tracking ────────────────────────────────────────────────
@@ -1890,6 +2153,13 @@ namespace SubtitleForge.Controls
 
         private void OnTrackChanged(object? sender, PropertyChangedEventArgs e)
         {
+            // An attachment appearing or leaving folds a lane into a row or takes it out again, so
+            // this is the one track property that moves rows instead of only repainting them.
+            if (string.Equals(e.PropertyName, nameof(TimelineTrack.AttachedHostTrack), StringComparison.Ordinal))
+            {
+                InvalidateMeasure();
+            }
+
             InvalidateVisual();
         }
 

@@ -37,6 +37,13 @@ namespace SubtitleForge.Services
 
         public string BackgroundColor { get; set; } = "#FF2B3A55";
 
+        /// <summary>
+        /// Index of the video track this audio lane rides inside, or null for a track with a row of
+        /// its own. Projects written before lanes existed have no value here, and they have to keep
+        /// loading exactly as they did, which is why this is nullable and the format version stays 1.
+        /// </summary>
+        public int? AttachedToTrackIndex { get; set; }
+
         public List<ProjectSegmentData> Segments { get; set; } = new List<ProjectSegmentData>();
     }
 

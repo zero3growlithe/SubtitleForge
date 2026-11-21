@@ -100,6 +100,12 @@ namespace SubtitleForge.Controls
 
         public double Scale { get; set; } = 1.0;
 
+        /// <summary>
+        /// Rotation of the whole block around its own centre, in degrees clockwise. The anchor
+        /// position keeps meaning "where this line sits", so rotating never moves the cue.
+        /// </summary>
+        public double Rotation { get; set; }
+
         public bool HasContent
         {
             get { return !string.IsNullOrEmpty(CueText) && TextStyle != null; }
@@ -391,6 +397,18 @@ namespace SubtitleForge.Controls
 
             drawingContext.PushOpacity(globalOpacity);
             drawingContext.PushTransform(new TranslateTransform(originX, originY));
+
+            // The rotation wraps every glyph, effect and composition shape together, so the whole
+            // line turns as one block. Pushing it only when there is an angle keeps an unrotated
+            // cue on exactly the same rasterisation path as before.
+            bool blockRotated = Math.Abs(Rotation) > 0.0005;
+            if (blockRotated)
+            {
+                drawingContext.PushTransform(new RotateTransform(
+                    Rotation,
+                    textBounds.Width * 0.5,
+                    textBounds.Y + (textBounds.Height * 0.5)));
+            }
 
             // Two passes: the effects that wrap the whole block are painted first, around one
             // silhouette of every glyph, then each glyph gets its own effects and fill. The first
@@ -710,6 +728,11 @@ namespace SubtitleForge.Controls
                     drawingContext.Pop();
                 }
 
+                drawingContext.Pop();
+            }
+
+            if (blockRotated)
+            {
                 drawingContext.Pop();
             }
 

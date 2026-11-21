@@ -100,6 +100,7 @@ namespace SubtitleForge
         private bool startMixed;
         private bool endMixed;
         private bool cueTextMixed;
+        private bool cueEditorCaretArmed;
         private bool suppressSliderSeek;
 
         private readonly ObservableCollection<TimelineTrack> tracks = new ObservableCollection<TimelineTrack>();
@@ -1109,6 +1110,7 @@ namespace SubtitleForge
             overlay.PositionX = cue.PositionX ?? App.Settings.OverlayPositionX;
             overlay.PositionY = cue.PositionY ?? App.Settings.OverlayPositionY;
             overlay.Scale = cue.Scale ?? App.Settings.OverlayScale;
+            overlay.Rotation = cue.Rotation ?? 0.0;
 
             string text = cue.Text ?? string.Empty;
             bool textChanged = !string.Equals(overlay.CueText, text, StringComparison.Ordinal);
@@ -1216,6 +1218,7 @@ namespace SubtitleForge
                 CuePositionXBox.IsEnabled = enabled;
                 CuePositionYBox.IsEnabled = enabled;
                 CueScaleBox.IsEnabled = enabled;
+                CueRotationBox.IsEnabled = enabled;
                 CuePlacementResetButton.IsEnabled = enabled;
 
                 if (!enabled)
@@ -1227,6 +1230,7 @@ namespace SubtitleForge
                     CuePositionXBox.SetValueSilently(0.0);
                     CuePositionYBox.SetValueSilently(0.0);
                     CueScaleBox.SetValueSilently(1.0);
+                    CueRotationBox.SetValueSilently(0.0);
                     return;
                 }
 
@@ -1240,6 +1244,7 @@ namespace SubtitleForge
                 SeedPlacement(CuePositionXBox, selection, cue => ((cue.PositionX ?? defaultX) - defaultX) * 100.0);
                 SeedPlacement(CuePositionYBox, selection, cue => ((cue.PositionY ?? defaultY) - defaultY) * 100.0);
                 SeedPlacement(CueScaleBox, selection, cue => cue.Scale ?? 1.0);
+                SeedPlacement(CueRotationBox, selection, cue => cue.Rotation ?? 0.0);
             }
             finally
             {
@@ -1523,6 +1528,12 @@ namespace SubtitleForge
                     double scale = CueScaleBox.Value;
                     cue.Scale = Math.Abs(scale - 1.0) < 0.0005 ? null : (double?)scale;
                 }
+
+                if (!CueRotationBox.IsMixed)
+                {
+                    double rotation = CueRotationBox.Value;
+                    cue.Rotation = Math.Abs(rotation) < 0.0005 ? null : (double?)rotation;
+                }
             }
             MarkProjectDirty();
             UpdateOverlay(CurrentPosition);
@@ -1626,6 +1637,7 @@ namespace SubtitleForge
                 cue.PositionX = null;
                 cue.PositionY = null;
                 cue.Scale = null;
+                cue.Rotation = null;
             }
 
             PushCueUndoIfChanged("reset cue placement", before);
@@ -1970,6 +1982,10 @@ namespace SubtitleForge
         /// </summary>
         private void UpdateCueEditorFields()
         {
+            // The field is being pointed at the current selection, so any caret that was placed for
+            // the previous cue must not decide where the next Split cuts.
+            cueEditorCaretArmed = false;
+
             List<SubtitleCue> selection = SelectedCueList();
             isUpdatingCueEditor = true;
             try
@@ -2095,6 +2111,12 @@ namespace SubtitleForge
 
         private void CueTextEditorGotFocusCore(object sender, RoutedEventArgs e)
         {
+            // From here until the field is pointed at another cue, Split cuts at the caret instead
+            // of in the middle. The intent has to be remembered rather than read when the button is
+            // pressed: this window drops the keyboard focus on every click that lands outside a
+            // text field, and that happens before the button's own mouse handler runs.
+            cueEditorCaretArmed = true;
+
             if (!cueTextMixed)
             {
                 return;
@@ -2303,7 +2325,12 @@ namespace SubtitleForge
             }
 
             int index = cues.IndexOf(cue);
-            List<SubtitleCue> parts = CuePostProcessor.SplitCue(cue);
+            List<SubtitleCue> parts = SplitSelectedCue(cue);
+            if (parts.Count == 0)
+            {
+                return;
+            }
+
             cues.RemoveAt(index);
             for (int partIndex = 0; partIndex < parts.Count; partIndex++)
             {
@@ -2314,6 +2341,72 @@ namespace SubtitleForge
             CueList.SelectedIndex = index;
             RefreshCueEditor();
             DrawTimeline();
+        }
+
+        /// <summary>
+        /// Splits the cue where the caret sat when Split was pressed, or in the middle when the
+        /// caret was not in the cue text field. The caller only ever sees the finished halves, so
+        /// the undo step and the selection handling stay in one place.
+        /// </summary>
+        private List<SubtitleCue> SplitSelectedCue(SubtitleCue cue)
+        {
+            int caretIndex;
+            if (!TryReadCueEditorCaret(cue, out caretIndex))
+            {
+                return CuePostProcessor.SplitCue(cue);
+            }
+
+            List<SubtitleCue> parts = CuePostProcessor.SplitCueAt(cue, caretIndex);
+            if (parts.Count == 0)
+            {
+                // The caret sat on an edge, so refusing keeps the cue intact instead of leaving an
+                // empty half behind. The undo step sees no change and adds nothing either.
+                SetStatus("Put the caret between two words — a split there would leave one half empty.");
+            }
+
+            return parts;
+        }
+
+        /// <summary>
+        /// Reads the caret out of the cue text field, but only when the field still shows the text
+        /// of the cue being split. The offset is translated into the cue's own line-break
+        /// convention, which is what <see cref="CuePostProcessor.SplitCueAt"/> measures against.
+        /// </summary>
+        private bool TryReadCueEditorCaret(SubtitleCue cue, out int caretIndex)
+        {
+            caretIndex = 0;
+            if (!cueEditorCaretArmed && !CueTextEditor.IsKeyboardFocusWithin)
+            {
+                return false;
+            }
+
+            if (cueTextMixed)
+            {
+                return false;
+            }
+
+            string editorText = CueTextEditor.Text ?? string.Empty;
+            if (!string.Equals(
+                    CuePostProcessor.NormalizeLineEndings(editorText),
+                    CuePostProcessor.NormalizeLineEndings(cue.Text),
+                    StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            int caret = CueTextEditor.CaretIndex;
+            if (caret < 0)
+            {
+                caret = 0;
+            }
+
+            if (caret > editorText.Length)
+            {
+                caret = editorText.Length;
+            }
+
+            caretIndex = CuePostProcessor.NormalizeLineEndings(editorText.Substring(0, caret)).Length;
+            return true;
         }
 
         private void MergeCueClickCore(object sender, RoutedEventArgs e)
@@ -4701,6 +4794,7 @@ namespace SubtitleForge
                     cueData.PositionX = cue.PositionX;
                     cueData.PositionY = cue.PositionY;
                     cueData.Scale = cue.Scale;
+                    cueData.Rotation = cue.Rotation;
                     data.Cues.Add(cueData);
                 }
 
@@ -4873,6 +4967,7 @@ namespace SubtitleForge
                     loadedCue.PositionX = cueData.PositionX;
                     loadedCue.PositionY = cueData.PositionY;
                     loadedCue.Scale = cueData.Scale;
+                    loadedCue.Rotation = cueData.Rotation;
                     cues.Add(loadedCue);
                 }
 
@@ -6249,7 +6344,8 @@ namespace SubtitleForge
                     PopOut = store.ResolvePopOut(cue.PopOutProfileId ?? App.Settings.DefaultPopOutProfileId),
                     PositionX = cue.PositionX ?? App.Settings.OverlayPositionX,
                     PositionY = cue.PositionY ?? App.Settings.OverlayPositionY,
-                    Scale = cue.Scale ?? App.Settings.OverlayScale
+                    Scale = cue.Scale ?? App.Settings.OverlayScale,
+                    Rotation = cue.Rotation ?? 0.0
                 });
             }
 
@@ -7143,7 +7239,8 @@ namespace SubtitleForge
                     || !string.Equals(left.PopOutProfileId, right.PopOutProfileId, StringComparison.Ordinal)
                     || !SameOptionalNumber(left.PositionX, right.PositionX)
                     || !SameOptionalNumber(left.PositionY, right.PositionY)
-                    || !SameOptionalNumber(left.Scale, right.Scale))
+                    || !SameOptionalNumber(left.Scale, right.Scale)
+                    || !SameOptionalNumber(left.Rotation, right.Rotation))
                 {
                     return false;
                 }

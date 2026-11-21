@@ -288,6 +288,137 @@ namespace SubtitleForge.Services
         }
 
         /// <summary>
+        /// Splits one cue where the caret sat in its text, sharing the time range by how much of
+        /// the line each half carries. The caret snaps to the nearest gap between two words,
+        /// because half a word on either side reads like a typo rather than a subtitle; a line
+        /// that is a single word has no gap and is cut exactly where the caret was.
+        /// Returns an empty list when one half would end up with no text, so the caller can leave
+        /// the cue untouched instead of creating an empty subtitle.
+        /// </summary>
+        public static List<SubtitleCue> SplitCueAt(SubtitleCue cue, int caretIndex)
+        {
+            List<SubtitleCue> parts = new List<SubtitleCue>();
+
+            // The caret is measured against the text the editor showed, which stores a line break
+            // as CRLF while the cue keeps it as LF. Working on the normalised form keeps every
+            // offset, and the halves come out in the same LF form the reader and writer use.
+            string text = NormalizeLineEndings(cue.Text);
+            if (caretIndex <= 0 || caretIndex >= text.Length)
+            {
+                return parts;
+            }
+
+            int splitIndex = ResolveSplitIndex(text, caretIndex);
+            string firstText = text.Substring(0, splitIndex).Trim();
+            string secondText = text.Substring(splitIndex).Trim();
+            if (firstText.Length == 0 || secondText.Length == 0)
+            {
+                return parts;
+            }
+
+            // Characters, not words: a long word takes longer to say than a short one, so the time
+            // the halves get is the share of the line they carry.
+            int totalCharacters = firstText.Length + secondText.Length;
+            double firstShare = (double)firstText.Length / totalCharacters;
+            TimeSpan splitPoint = cue.Start + TimeSpan.FromMilliseconds(cue.Duration.TotalMilliseconds * firstShare);
+            if (splitPoint <= cue.Start)
+            {
+                splitPoint = cue.Start + TimeSpan.FromMilliseconds(200);
+            }
+
+            if (splitPoint >= cue.End)
+            {
+                splitPoint = cue.End - TimeSpan.FromMilliseconds(1);
+            }
+
+            SubtitleCue first = new SubtitleCue(cue.Start, splitPoint, firstText, cue.Confidence);
+            SubtitleCue second = new SubtitleCue(splitPoint, cue.End, secondText, cue.Confidence);
+
+            // Both halves are the same line the user just styled, so they keep its look; the split
+            // would otherwise silently throw away the placement that was set on the cue.
+            CopyAppearance(cue, first);
+            CopyAppearance(cue, second);
+
+            parts.Add(first);
+            parts.Add(second);
+            return parts;
+        }
+
+        /// <summary>
+        /// Turns a caret offset into the place the text is actually cut: the nearest gap between
+        /// two words, or the raw offset when the line holds no such gap.
+        /// </summary>
+        private static int ResolveSplitIndex(string text, int caretIndex)
+        {
+            int splitIndex = caretIndex;
+            int bestDistance = int.MaxValue;
+            int index = 0;
+            while (index < text.Length)
+            {
+                if (!char.IsWhiteSpace(text[index]))
+                {
+                    index++;
+                    continue;
+                }
+
+                int gapStart = index;
+                while (index < text.Length && char.IsWhiteSpace(text[index]))
+                {
+                    index++;
+                }
+
+                int gapEnd = index;
+
+                // A gap that touches either end has no text on one side of it, so it can never be
+                // the cut — the caller's edge check already refused those carets.
+                if (gapStart == 0 || gapEnd >= text.Length)
+                {
+                    continue;
+                }
+
+                int distance;
+                if (caretIndex >= gapStart && caretIndex <= gapEnd)
+                {
+                    distance = 0;
+                }
+                else
+                {
+                    distance = Math.Min(Math.Abs(caretIndex - gapStart), Math.Abs(caretIndex - gapEnd));
+                }
+
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    splitIndex = gapStart;
+                }
+            }
+
+            return splitIndex;
+        }
+
+        /// <summary>
+        /// Copies everything that decides how a cue looks, so a split never costs the user the
+        /// styling they set on the line.
+        /// </summary>
+        private static void CopyAppearance(SubtitleCue source, SubtitleCue target)
+        {
+            target.StyleProfileId = source.StyleProfileId;
+            target.IdleProfileId = source.IdleProfileId;
+            target.PopInProfileId = source.PopInProfileId;
+            target.PopOutProfileId = source.PopOutProfileId;
+            target.PositionX = source.PositionX;
+            target.PositionY = source.PositionY;
+            target.Scale = source.Scale;
+            target.Rotation = source.Rotation;
+        }
+
+        /// <summary>One line-break convention everywhere: LF, the form the cue reader produces.</summary>
+        public static string NormalizeLineEndings(string? text)
+        {
+            return (text ?? string.Empty).Replace("\r\n", "\n").Replace("\r", "\n");
+        }
+
+        /// <summary>
         /// Moves the start of a cue and leaves the end alone, keeping a tiny minimum duration so the
         /// cue cannot turn inside out.
         /// </summary>

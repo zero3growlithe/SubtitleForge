@@ -41,6 +41,9 @@ namespace SubtitleForge.Services
         public double PositionY { get; set; } = 0.86;
 
         public double Scale { get; set; } = 1.0;
+
+        /// <summary>Rotation of the cue text around its own centre, in degrees clockwise.</summary>
+        public double Rotation { get; set; }
     }
 
     /// <summary>
@@ -266,6 +269,7 @@ namespace SubtitleForge.Services
                 overlay.PositionX = cue.PositionX;
                 overlay.PositionY = cue.PositionY;
                 overlay.Scale = cue.Scale;
+                overlay.Rotation = cue.Rotation;
                 overlay.CueText = string.Empty;
                 Slot slot = new Slot(cue, overlay);
                 slot.LeadSeconds = EntranceLeadSeconds(cue);

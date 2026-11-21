@@ -28,6 +28,7 @@ namespace SubtitleForge.Models
         private double? positionX;
         private double? positionY;
         private double? scale;
+        private double? rotation;
 
         public SubtitleCue(TimeSpan start, TimeSpan end, string text, double confidence = 1.0)
         {
@@ -229,6 +230,23 @@ namespace SubtitleForge.Models
         }
 
         /// <summary>
+        /// Rotation of the whole cue text around its own centre, in degrees clockwise
+        /// (null = not rotated).
+        /// </summary>
+        public double? Rotation
+        {
+            get { return rotation; }
+            set
+            {
+                if (rotation != value)
+                {
+                    rotation = value;
+                    OnPropertyChanged();
+                }
+            }
+        }
+
+        /// <summary>
         /// True when the cue does not simply use the defaults: it carries its own style, idle,
         /// pop-in or pop-out profile. The cue list colours these rows so overridden cues stand out.
         /// </summary>
@@ -380,6 +398,7 @@ namespace SubtitleForge.Models
             copy.PositionX = positionX;
             copy.PositionY = positionY;
             copy.Scale = scale;
+            copy.Rotation = rotation;
             return copy;
         }
 

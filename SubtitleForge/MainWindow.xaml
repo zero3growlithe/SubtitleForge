@@ -176,50 +176,6 @@
                     <Button x:Name="RenameTrackButton" Content="Rename…" Click="RenameTrackClick" />
                     <Button x:Name="TrackColorButton" Content="Colour…" Click="TrackColorClick" />
                     <Rectangle Width="1" Margin="10,2,10,2" Fill="{StaticResource PanelBorderBrush}" />
-                    <TextBlock Text="Transcribe range"
-                               Style="{StaticResource SectionLabelStyle}"
-                               ToolTip="With a range set, Transcribe re-does only that span: the cues inside it are erased and replaced. Both boxes empty means the whole video." />
-                    <TextBox x:Name="RangeStartBox"
-                             Width="96"
-                             FontFamily="Consolas"
-                             Margin="0,0,4,0"
-                             LostFocus="RangeBoxChanged"
-                             KeyDown="RangeBoxKeyDown"
-                             ToolTip="Start of the span — 00:01:20.000 or plain seconds" />
-                    <Button x:Name="RangeStartButton"
-                            Content="Set in"
-                            MinWidth="0"
-                            Padding="8,4"
-                            Margin="0,0,10,0"
-                            Click="RangeStartClick"
-                            ToolTip="The range starts at the playhead" />
-                    <TextBox x:Name="RangeEndBox"
-                             Width="96"
-                             FontFamily="Consolas"
-                             Margin="0,0,4,0"
-                             LostFocus="RangeBoxChanged"
-                             KeyDown="RangeBoxKeyDown"
-                             ToolTip="End of the span — 00:01:20.000 or plain seconds" />
-                    <Button x:Name="RangeEndButton"
-                            Content="Set out"
-                            MinWidth="0"
-                            Padding="8,4"
-                            Margin="0,0,10,0"
-                            Click="RangeEndClick"
-                            ToolTip="The range ends at the playhead" />
-                    <Button x:Name="RangeFromSelectionButton"
-                            Content="From selection"
-                            MinWidth="0"
-                            Padding="8,4"
-                            Margin="0,0,4,0"
-                            Click="RangeFromSelectionClick"
-                            ToolTip="Take the span from the cues selected in the list" />
-                    <Button x:Name="RangeClearButton"
-                            Content="Whole video"
-                            MinWidth="0"
-                            Padding="8,4"
-                            Click="RangeClearClick"
-                            ToolTip="Clear the range so Transcribe covers everything again" />
                     <Button x:Name="UndoTrackButton" Content="Undo" MinWidth="0" Padding="10,4" Click="UndoClick" ToolTip="Ctrl+Z" />
                     <Button x:Name="RedoTrackButton" Content="Redo" MinWidth="0" Padding="10,4" Click="RedoClick" ToolTip="Ctrl+Y" />
                     <CheckBox x:Name="ShowOverlappingCuesCheck"
@@ -408,7 +364,12 @@
                     <WrapPanel Grid.Row="2" Orientation="Horizontal" Margin="0,6,0,0">
                         <Button x:Name="NudgeBackButton" Content="-100 ms" MinWidth="0" Padding="8,4" Click="NudgeBackClick" />
                         <Button x:Name="NudgeForwardButton" Content="+100 ms" MinWidth="0" Padding="8,4" Click="NudgeForwardClick" />
-                        <Button x:Name="SplitCueButton" Content="Split" MinWidth="0" Padding="8,4" Click="SplitCueClick" />
+                        <Button x:Name="SplitCueButton"
+                                Content="Split"
+                                MinWidth="0"
+                                Padding="8,4"
+                                Click="SplitCueClick"
+                                ToolTip="Cut the selected cue in two. With the caret in the text above, it cuts there — otherwise it cuts in the middle." />
                         <Button x:Name="MergeCueButton" Content="Merge ↓" MinWidth="0" Padding="8,4" Click="MergeCueClick" />
                         <Button x:Name="AddCueButton" Content="+ New cue" MinWidth="0" Padding="8,4" Click="AddCueClick" />
                         <Button x:Name="DeleteCueButton" Content="Delete" MinWidth="0" Padding="8,4" Click="DeleteCueClick" />
@@ -440,6 +401,51 @@
                             <ComboBox x:Name="CuePopOutCombo"
                                       Width="118"
                                       SelectionChanged="CuePopOutSelectionChanged" />
+                            <Rectangle Width="1" Margin="10,2,10,2" Fill="{StaticResource PanelBorderBrush}" />
+                            <TextBlock Text="Transcribe range"
+                                       Style="{StaticResource SectionLabelStyle}"
+                                       ToolTip="With a range set, Transcribe re-does only that span: the cues inside it are erased and replaced. Both boxes empty means the whole video." />
+                            <TextBox x:Name="RangeStartBox"
+                                     Width="96"
+                                     FontFamily="Consolas"
+                                     Margin="0,0,4,0"
+                                     LostFocus="RangeBoxChanged"
+                                     KeyDown="RangeBoxKeyDown"
+                                     ToolTip="Start of the span — 00:01:20.000 or plain seconds" />
+                            <Button x:Name="RangeStartButton"
+                                    Content="Set in"
+                                    MinWidth="0"
+                                    Padding="8,4"
+                                    Margin="0,0,10,0"
+                                    Click="RangeStartClick"
+                                    ToolTip="The range starts at the playhead" />
+                            <TextBox x:Name="RangeEndBox"
+                                     Width="96"
+                                     FontFamily="Consolas"
+                                     Margin="0,0,4,0"
+                                     LostFocus="RangeBoxChanged"
+                                     KeyDown="RangeBoxKeyDown"
+                                     ToolTip="End of the span — 00:01:20.000 or plain seconds" />
+                            <Button x:Name="RangeEndButton"
+                                    Content="Set out"
+                                    MinWidth="0"
+                                    Padding="8,4"
+                                    Margin="0,0,10,0"
+                                    Click="RangeEndClick"
+                                    ToolTip="The range ends at the playhead" />
+                            <Button x:Name="RangeFromSelectionButton"
+                                    Content="From selection"
+                                    MinWidth="0"
+                                    Padding="8,4"
+                                    Margin="0,0,4,0"
+                                    Click="RangeFromSelectionClick"
+                                    ToolTip="Take the span from the cues selected in the list" />
+                            <Button x:Name="RangeClearButton"
+                                    Content="Whole video"
+                                    MinWidth="0"
+                                    Padding="8,4"
+                                    Click="RangeClearClick"
+                                    ToolTip="Clear the range so Transcribe covers everything again" />
                         </WrapPanel>
 
                         <WrapPanel Grid.Row="1" Orientation="Horizontal" Margin="0,6,0,0">
@@ -476,6 +482,17 @@
                                                      DragStep="0.005"
                                                      Format="0.###"
                                                      ToolTip="Size multiplier. 1 = the size set in the text style profile."
+                                                     ValueChanged="CuePlacementChanged"
+                                                     LostFocus="CuePlacementCommit" />
+                            <TextBlock Text="Rotation" Style="{StaticResource SectionLabelStyle}" />
+                            <controls:NumericDragBox x:Name="CueRotationBox"
+                                                     Width="56"
+                                                     Margin="0,0,6,0"
+                                                     Minimum="-180"
+                                                     Maximum="180"
+                                                     DragStep="0.5"
+                                                     Format="0.#"
+                                                     ToolTip="Rotation of the cue text in degrees, clockwise. 0 = not rotated."
                                                      ValueChanged="CuePlacementChanged"
                                                      LostFocus="CuePlacementCommit" />
                             <Button x:Name="CuePlacementResetButton"

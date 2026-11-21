@@ -63,6 +63,9 @@ namespace SubtitleForge.Services
         public double? PositionY { get; set; }
 
         public double? Scale { get; set; }
+
+        /// <summary>Rotation of the cue text around its own centre, in degrees clockwise.</summary>
+        public double? Rotation { get; set; }
     }
 
     public class ProjectFileData

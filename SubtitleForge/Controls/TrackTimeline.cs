@@ -200,12 +200,21 @@ namespace SubtitleForge.Controls
         public const double MaximumVerticalZoom = 2.4;
         private const double ZoomStep = 1.18;
 
+        /// <summary>How many pixels wide one preview frame is drawn, at any zoom level.</summary>
+        private const double ThumbnailSpacingPixels = 72.0;
+
         /// <summary>Raised when zooming or scrolling changed what part of the timeline is on screen.</summary>
         public event EventHandler? ViewChanged;
 
         private static readonly Color RulerColor = Color.FromRgb(0x2A, 0x2A, 0x31);
         private static readonly Brush ReadyBandBrush = CreateFrozenBrush(AccentColor);
         private static readonly Brush CueMarkBrush = CreateFrozenBrush(Color.FromRgb(0x27, 0x56, 0x8F));
+        /// <summary>
+        /// The second cue shade. Cues that touch leave no gap between their bars, so a single
+        /// colour made a row of them read as one long bar; alternating two blues keeps every cue
+        /// countable without moving any of the marks.
+        /// </summary>
+        private static readonly Brush CueMarkAlternateBrush = CreateFrozenBrush(Color.FromRgb(0x1B, 0x3F, 0x6B));
         private static readonly Color RulerTextColor = Color.FromRgb(0x9A, 0xA0, 0xAC);
 
         private ObservableCollection<TimelineTrack>? tracks;
@@ -353,6 +362,9 @@ namespace SubtitleForge.Controls
                 {
                     viewStartSeconds = updated;
                     InvalidateVisual();
+                    // A programmatic scroll (the scrollbar, following the playhead) has to reach the
+                    // scrollbar synchronisation and the thumbnail debounce exactly like a wheel does.
+                    RaiseViewChanged();
                 }
             }
         }
@@ -364,6 +376,28 @@ namespace SubtitleForge.Controls
             {
                 double visible = totalDuration / Math.Max(1.0, horizontalZoom);
                 return visible <= 0.05 ? 0.05 : visible;
+            }
+        }
+
+        /// <summary>
+        /// Seconds of the timeline one preview frame stands for at the current zoom: the visible
+        /// span divided by how many 72 px frames fit across the track area. Zooming in shrinks it,
+        /// which is what makes the owner request more frames instead of stretching the few it has.
+        /// </summary>
+        public double ThumbnailSpacingSeconds
+        {
+            get
+            {
+                // Before the first layout the width is zero; assuming a normal panel keeps the
+                // first strip from being asked for at a nonsense density.
+                double contentWidth = ActualWidth > 240.0 ? ContentWidth : 900.0;
+                double framesAcross = Math.Floor(contentWidth / ThumbnailSpacingPixels);
+                if (framesAcross < 1.0)
+                {
+                    framesAcross = 1.0;
+                }
+
+                return VisibleSeconds / framesAcross;
             }
         }
 
@@ -396,6 +430,7 @@ namespace SubtitleForge.Controls
             viewStartSeconds = startSeconds;
             ClampViewStart();
             InvalidateVisual();
+            RaiseViewChanged();
         }
 
         private void ClampViewStart()
@@ -643,21 +678,36 @@ namespace SubtitleForge.Controls
         {
             base.OnMouseWheel(e);
 
-            int steps = e.Delta / 120;
+            // The window routes the wheel by where the cursor is, so this only runs when nothing
+            // above the control claimed the notch.
+            if (HandleMouseWheel(e.Delta, Keyboard.Modifiers))
+            {
+                e.Handled = true;
+            }
+        }
+
+        /// <summary>
+        /// Applies one wheel notch at the cursor: Alt zooms around the pointer, Ctrl changes the row
+        /// height, Shift scrolls along the timeline. Returns true when the notch was used, so the
+        /// caller can keep the enclosing scroll viewer from scrolling as well.
+        /// </summary>
+        public bool HandleMouseWheel(int delta, ModifierKeys modifiers)
+        {
+            int steps = delta / 120;
             if (steps == 0)
             {
-                steps = e.Delta > 0 ? 1 : -1;
+                steps = delta > 0 ? 1 : -1;
             }
 
             double factor = steps > 0 ? ZoomStep : 1.0 / ZoomStep;
-            bool alt = (Keyboard.Modifiers & ModifierKeys.Alt) == ModifierKeys.Alt;
-            bool control = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
-            bool shift = (Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift;
+            bool alt = (modifiers & ModifierKeys.Alt) == ModifierKeys.Alt;
+            bool control = (modifiers & ModifierKeys.Control) == ModifierKeys.Control;
+            bool shift = (modifiers & ModifierKeys.Shift) == ModifierKeys.Shift;
 
             if (alt && !control)
             {
                 // Zoom around the pointer: whatever second is under the cursor stays under it.
-                double anchorX = e.GetPosition(this).X;
+                double anchorX = Mouse.GetPosition(this).X;
                 double anchorSeconds = SecondsAt(new Point(anchorX, 0.0));
                 double offsetFraction = ContentWidth <= 0.0 ? 0.0 : (anchorX - ContentLeft) / ContentWidth;
 
@@ -666,15 +716,13 @@ namespace SubtitleForge.Controls
                 ClampViewStart();
                 InvalidateVisual();
                 RaiseViewChanged();
-                e.Handled = true;
-                return;
+                return true;
             }
 
             if (control && !alt)
             {
                 VerticalZoom *= factor;
-                e.Handled = true;
-                return;
+                return true;
             }
 
             if (shift && !control && !alt && horizontalZoom > 1.0001)
@@ -683,8 +731,10 @@ namespace SubtitleForge.Controls
                 ViewStartSeconds += -steps * VisibleSeconds * 0.12;
                 InvalidateVisual();
                 RaiseViewChanged();
-                e.Handled = true;
+                return true;
             }
+
+            return false;
         }
 
         /// <summary>Puts the middle of the visible span on the playhead. Used while playing when zoomed.</summary>
@@ -899,8 +949,9 @@ namespace SubtitleForge.Controls
             double markHeight = 5.0;
             double markTop = top + RulerHeight - markHeight - 1.0;
 
-            foreach (CueMark mark in marks)
+            for (int index = 0; index < marks.Count; index++)
             {
+                CueMark mark = marks[index];
                 double left = XForSeconds(mark.StartSeconds);
                 double right = XForSeconds(mark.EndSeconds);
                 if (right - left < 2.0)
@@ -916,8 +967,24 @@ namespace SubtitleForge.Controls
                     continue;
                 }
 
-                // Fully opaque, same as the seek strip: the bars have to read clearly against the ruler.
-                Brush brush = mark.Selected ? ReadyBandBrush : CueMarkBrush;
+                // Fully opaque, same as the seek strip: the bars have to read clearly against the
+                // ruler. A selected cue keeps the bright ready colour; the others alternate by cue
+                // order, so two neighbours that touch never merge into one bar. The parity follows
+                // the cue, not the neighbours, which keeps the shades still while selecting.
+                Brush brush;
+                if (mark.Selected)
+                {
+                    brush = ReadyBandBrush;
+                }
+                else if (index % 2 == 0)
+                {
+                    brush = CueMarkBrush;
+                }
+                else
+                {
+                    brush = CueMarkAlternateBrush;
+                }
+
                 drawingContext.DrawRectangle(
                     brush,
                     null,
@@ -1212,6 +1279,18 @@ namespace SubtitleForge.Controls
                 return;
             }
 
+            // The strip carries the range it was sampled from: a zoomed-in strip covers a slice of
+            // the file, and both halves of a split share one strip over the clip they came from.
+            double stripStart = segment.ThumbnailSourceStartSeconds;
+            if (stripStart < 0.0)
+            {
+                stripStart = 0.0;
+            }
+
+            double stripSpan = segment.ThumbnailSourceSpanSeconds > 0.0005
+                ? segment.ThumbnailSourceSpanSeconds
+                : sourceDuration;
+
             double visibleFraction = fullRect.Width <= 0.0 ? 1.0 : Math.Min(1.0, rect.Width / fullRect.Width);
             if (visibleFraction <= 0.0)
             {
@@ -1224,8 +1303,8 @@ namespace SubtitleForge.Controls
             int count = segment.Thumbnails.Length;
             for (int index = 0; index < count; index++)
             {
-                double thumbnailStart = sourceDuration * index / count;
-                double thumbnailEnd = sourceDuration * (index + 1) / count;
+                double thumbnailStart = stripStart + (stripSpan * index / count);
+                double thumbnailEnd = stripStart + (stripSpan * (index + 1) / count);
 
                 double visibleStart = Math.Max(thumbnailStart, segment.SourceOffsetSeconds);
                 double visibleEnd = Math.Min(thumbnailEnd, segment.SourceOffsetSeconds + segment.DurationSeconds);

@@ -17,6 +17,9 @@
         <SolidColorBrush x:Key="AccentHoverBrush" Color="#FF4A93F8" />
         <SolidColorBrush x:Key="SelectionBrush" Color="#FF2B4F80" />
         <SolidColorBrush x:Key="CueMarkIdleBrush" Color="#FF27568F" />
+        <!-- Second cue shade for the seek strip: neighbouring cues touch, so one colour made them
+             read as a single bar. It matches TrackTimeline's CueMarkAlternateBrush. -->
+        <SolidColorBrush x:Key="CueMarkAlternateBrush" Color="#FF1B3F6B" />
 
         <!-- ── Text ──────────────────────────────────────────────────────── -->
         <Style TargetType="TextBlock">

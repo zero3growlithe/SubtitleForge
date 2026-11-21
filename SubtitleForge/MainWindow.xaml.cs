@@ -106,6 +106,36 @@ namespace SubtitleForge
         private readonly ObservableCollection<TimelineTrack> tracks = new ObservableCollection<TimelineTrack>();
         private readonly Stopwatch overlayClock = Stopwatch.StartNew();
         private readonly DispatcherTimer overlayTimer;
+
+        /// <summary>How long a zoom gesture has to pause before the frames for it are fetched.</summary>
+        private const int ThumbnailRefreshDelayMilliseconds = 1200;
+
+        /// <summary>A clip shorter than this keeps whatever strip it has instead of asking again.</summary>
+        private const double ThumbnailSpanFloorSeconds = 0.5;
+
+        /// <summary>Floor for the frame count so a tiny clip still shows more than one picture.</summary>
+        private const int MinimumThumbnailCount = 2;
+
+        /// <summary>
+        /// Ceiling for one extraction. Each frame is a separate ffmpeg seek, so an hour of video
+        /// zoomed to the last notch would otherwise queue thousands of processes.
+        /// </summary>
+        private const int MaximumThumbnailCount = 96;
+
+        /// <summary>Height of one preview frame, in pixels.</summary>
+        private const int ThumbnailHeight = 56;
+
+        /// <summary>
+        /// Re-extracts the preview frames once a zoom settles. Zooming changes the seconds a frame
+        /// stands for, so the old strip would just be stretched thinner and thinner.
+        /// </summary>
+        private readonly DispatcherTimer thumbnailRefreshTimer;
+
+        /// <summary>Last strip per segment, so scrolling inside one zoom level fetches nothing.</summary>
+        private readonly ThumbnailBatchCache thumbnailBatches = new ThumbnailBatchCache();
+
+        private CancellationTokenSource? thumbnailCancellation;
+        private double scheduledThumbnailSpacingSeconds;
         private double idleSeconds;
         private bool suppressCueAppearanceEvents;
         private readonly UndoStack undoStack = new UndoStack();
@@ -173,6 +203,18 @@ namespace SubtitleForge
             overlayTimer.Interval = TimeSpan.FromMilliseconds(16);
             overlayTimer.Tick += OnOverlayTimerTick;
             overlayTimer.Start();
+
+            // Zooming is a continuous gesture and every notch would otherwise start its own
+            // extraction, so the frames for the final zoom are only asked for once it settles.
+            thumbnailRefreshTimer = new DispatcherTimer(DispatcherPriority.Background);
+            thumbnailRefreshTimer.Interval = TimeSpan.FromMilliseconds(ThumbnailRefreshDelayMilliseconds);
+            thumbnailRefreshTimer.Tick += OnThumbnailRefreshTimerTick;
+
+            // A pending refresh would fire against a control that no longer has a window.
+            Closed += delegate
+            {
+                StopThumbnailRefresh();
+            };
 
             Title = "SubtitleForge — " + App.VersionDescription;
 
@@ -513,6 +555,9 @@ namespace SubtitleForge
             sourceProxies.Clear();
             sourceReadyFractions.Clear();
             sourceAudioFiles.Clear();
+            // The strips belong to the segments of the old file; keeping them would pin their
+            // bitmaps in memory for nothing.
+            thumbnailBatches.Clear();
             videoMetrics = new VideoMetrics();
             projectDirty = false;
             UpdateTitleState();
@@ -1646,6 +1691,85 @@ namespace SubtitleForge
             UpdateOverlay(CurrentPosition);
         }
 
+        // ── Wheel routing ──────────────────────────────────────────────────
+
+        /// <summary>
+        /// Sends a wheel notch to the view under the cursor instead of to the view that happens to
+        /// have the keyboard focus. Zooming the tracks used to need a click on them first, which is
+        /// not how a wheel is expected to behave.
+        /// </summary>
+        private void WindowPreviewMouseWheel(object sender, MouseWheelEventArgs e)
+        {
+            if (e.Handled)
+            {
+                return;
+            }
+
+            // Hit test rather than OriginalSource: the point under the cursor is the only thing the
+            // user aimed at, and this runs before any inner element sees the event.
+            IInputElement? hit = InputHitTest(e.GetPosition(this));
+            DependencyObject? target = hit as DependencyObject;
+            if (target == null)
+            {
+                return;
+            }
+
+            // A numeric field scrolls its own value while it has the focus and must keep the notch.
+            if (IsWithin(target, CuePositionXBox) || IsWithin(target, CuePositionYBox)
+                || IsWithin(target, CueScaleBox) || IsWithin(target, CueRotationBox))
+            {
+                return;
+            }
+
+            // The cue list scrolls itself; the wheel over it never means anything else.
+            if (IsWithin(target, CueList))
+            {
+                return;
+            }
+
+            if (!IsWithin(target, TracksPanelBorder))
+            {
+                return;
+            }
+
+            // The view only claims the notch when a modifier did something. A plain wheel has to
+            // keep scrolling the rows, so that case is left unhandled on purpose.
+            if (TrackTimelineView.HandleMouseWheel(e.Delta, Keyboard.Modifiers))
+            {
+                // Handled in the tunnelling phase, so the scroll viewer around the tracks does not
+                // also scroll and the control's own OnMouseWheel never runs a second time.
+                e.Handled = true;
+            }
+        }
+
+        /// <summary>
+        /// True when <paramref name="child"/> sits somewhere below <paramref name="ancestor"/> in
+        /// the element tree. A hit can land on a text run inside a block, which has only a logical
+        /// parent, so both trees are walked.
+        /// </summary>
+        private static bool IsWithin(DependencyObject? child, DependencyObject ancestor)
+        {
+            DependencyObject? current = child;
+            while (current != null)
+            {
+                if (ReferenceEquals(current, ancestor))
+                {
+                    return true;
+                }
+
+                if (current is Visual || current is System.Windows.Media.Media3D.Visual3D)
+                {
+                    current = VisualTreeHelper.GetParent(current);
+                }
+                else
+                {
+                    current = LogicalTreeHelper.GetParent(current);
+                }
+            }
+
+            return false;
+        }
+
         // ── Timeline strip ─────────────────────────────────────────────────
 
         private void DrawTimeline()
@@ -1677,6 +1801,7 @@ namespace SubtitleForge
             Brush subtle = (Brush)FindResource("SubtleTextBrush");
             Brush accent = (Brush)FindResource("AccentBrush");
             Brush idleCueBrush = (Brush)FindResource("CueMarkIdleBrush");
+            Brush alternateCueBrush = (Brush)FindResource("CueMarkAlternateBrush");
 
             double markerHeight = Math.Max(4.0, Math.Min(8.0, height - 8.0));
 
@@ -1711,8 +1836,9 @@ namespace SubtitleForge
 
             List<SubtitleCue> selectedCues = SelectedCueList();
             HashSet<SubtitleCue> selectedLookup = new HashSet<SubtitleCue>(selectedCues);
-            foreach (SubtitleCue cue in cues)
+            for (int index = 0; index < cues.Count; index++)
             {
+                SubtitleCue cue = cues[index];
                 TimeSpan markStart = ShiftedStart(cue);
                 TimeSpan markEnd = ShiftedEnd(cue);
                 double left = (markStart.TotalSeconds / total) * width;
@@ -1731,7 +1857,20 @@ namespace SubtitleForge
                 block.Width = blockWidth;
                 block.Height = markerHeight;
                 // Fully opaque by request: the bars have to read clearly against the slider.
-                block.Fill = selectedLookup.Contains(cue) ? accent : idleCueBrush;
+                // Selected cues keep the bright accent; the rest alternate by cue order, the same
+                // way the ruler does, so a run of touching cues is still countable.
+                if (selectedLookup.Contains(cue))
+                {
+                    block.Fill = accent;
+                }
+                else if (index % 2 == 0)
+                {
+                    block.Fill = idleCueBrush;
+                }
+                else
+                {
+                    block.Fill = alternateCueBrush;
+                }
                 block.Opacity = 1.0;
                 block.RadiusX = 2.0;
                 block.RadiusY = 2.0;
@@ -2537,6 +2676,8 @@ namespace SubtitleForge
         private void TrackTimelineViewChanged(object? sender, EventArgs e)
         {
             SyncTimelineScrollBar();
+            // Only a zoom needs new frames; a scroll keeps the spacing and the strip it already has.
+            ScheduleThumbnailRefresh();
         }
 
         private void SyncTimelineScrollBar()
@@ -3332,7 +3473,7 @@ namespace SubtitleForge
             // Waveform and thumbnails used to run one after the other, which is why the timeline
             // took so long. They are independent ffmpeg jobs, so run them together.
             Task waveformTask = BuildWaveformAsync(ffmpeg, path, audioSegment);
-            Task thumbnailTask = LoadThumbnailsAsync(ffmpeg, videoSegment, total);
+            Task thumbnailTask = LoadSegmentThumbnailsAsync(ffmpeg, videoSegment, CancellationToken.None);
             await Task.WhenAll(waveformTask, thumbnailTask).ConfigureAwait(true);
 
             UpdateBackgroundTask(timelineBuildTask, 100.0, "Done.");
@@ -3631,40 +3772,218 @@ namespace SubtitleForge
             Dispatcher.BeginInvoke(action);
         }
 
-        private async Task LoadThumbnailsAsync(string ffmpegPath, TimelineSegment segment, double sourceDuration)
+        /// <summary>
+        /// Builds the preview strip of one video clip for the current zoom. The frames are spread
+        /// over the clip's own source range at <see cref="TrackTimeline.ThumbnailSpacingSeconds"/>,
+        /// so zooming in asks for more pictures instead of stretching the few already there.
+        /// </summary>
+        private async Task LoadSegmentThumbnailsAsync(string ffmpegPath, TimelineSegment segment, CancellationToken cancellationToken)
         {
             try
             {
-                double width = TrackTimelineView.ActualWidth > 240.0 ? TrackTimelineView.ActualWidth : 900.0;
-                int thumbnailCount = (int)Math.Round(width / 72.0);
-                if (thumbnailCount < 6)
-                {
-                    thumbnailCount = 6;
-                }
-
-                if (thumbnailCount > 48)
-                {
-                    thumbnailCount = 48;
-                }
-
                 string? sourcePath = segment.SourcePath;
                 if (string.IsNullOrEmpty(sourcePath) || !File.Exists(sourcePath))
                 {
                     return;
                 }
 
+                double sourceDuration = segment.EffectiveSourceDuration;
+                if (sourceDuration <= ThumbnailSpanFloorSeconds)
+                {
+                    return;
+                }
+
+                // Only the seconds this clip can show matter. Spreading the strip over the whole
+                // file wasted every frame outside a split tail's own range.
+                double stripStart = segment.SourceOffsetSeconds;
+                if (stripStart < 0.0)
+                {
+                    stripStart = 0.0;
+                }
+
+                if (stripStart >= sourceDuration)
+                {
+                    return;
+                }
+
+                double stripSpan = segment.DurationSeconds;
+                if (stripStart + stripSpan > sourceDuration)
+                {
+                    stripSpan = sourceDuration - stripStart;
+                }
+
+                if (stripSpan <= ThumbnailSpanFloorSeconds)
+                {
+                    return;
+                }
+
+                double secondsPerFrame = TrackTimelineView.ThumbnailSpacingSeconds;
+                if (secondsPerFrame <= 0.0001)
+                {
+                    return;
+                }
+
+                int thumbnailCount = (int)Math.Round(stripSpan / secondsPerFrame);
+                if (thumbnailCount < MinimumThumbnailCount)
+                {
+                    thumbnailCount = MinimumThumbnailCount;
+                }
+
+                if (thumbnailCount > MaximumThumbnailCount)
+                {
+                    thumbnailCount = MaximumThumbnailCount;
+                }
+
+                // What the strip really ends up with, after the count was clamped.
+                double effectiveSecondsPerFrame = stripSpan / thumbnailCount;
+
+                ThumbnailBatch? cached = thumbnailBatches.Find(segment, stripStart, stripSpan, effectiveSecondsPerFrame);
+                if (cached != null)
+                {
+                    ApplyThumbnailBatch(segment, cached);
+                    return;
+                }
+
                 List<BitmapSource> extracted = await ThumbnailExtractor
-                    .ExtractAsync(ffmpegPath, sourcePath, sourceDuration, thumbnailCount, 56, CancellationToken.None)
+                    .ExtractAsync(ffmpegPath, sourcePath, stripStart, stripSpan, thumbnailCount, ThumbnailHeight, cancellationToken)
                     .ConfigureAwait(true);
 
-                if (extracted.Count > 0)
+                if (cancellationToken.IsCancellationRequested || extracted.Count == 0)
                 {
-                    segment.Thumbnails = extracted.ToArray();
+                    // Nothing usable came back: the frames already on screen stay there rather than
+                    // the lane blinking empty while the next attempt runs.
+                    return;
                 }
+
+                ThumbnailBatch batch = new ThumbnailBatch(stripStart, stripSpan, extracted.ToArray());
+                thumbnailBatches.Store(segment, batch);
+                ApplyThumbnailBatch(segment, batch);
             }
             catch (Exception exception)
             {
                 CrashLog.Write(exception, "TimelineThumbnails");
+            }
+        }
+
+        private void ApplyThumbnailBatch(TimelineSegment segment, ThumbnailBatch batch)
+        {
+            if (!ReferenceEquals(segment.Thumbnails, batch.Frames)
+                || Math.Abs(segment.ThumbnailSourceSpanSeconds - batch.SourceSpanSeconds) > 0.0001)
+            {
+                segment.Thumbnails = batch.Frames;
+                segment.ThumbnailSourceStartSeconds = batch.SourceStartSeconds;
+                segment.ThumbnailSourceSpanSeconds = batch.SourceSpanSeconds;
+                TrackTimelineView.Refresh();
+            }
+        }
+
+        /// <summary>
+        /// Rebuilds the preview strips of every video lane for the current zoom. Runs after the zoom
+        /// settled; the old frames stay on screen for the whole extraction, so nothing blinks.
+        /// </summary>
+        private async Task RefreshVideoThumbnailsAsync()
+        {
+            string? ffmpeg = FfmpegLocator.Resolve("ffmpeg", App.Settings.FfmpegDirectory);
+            if (ffmpeg == null)
+            {
+                return;
+            }
+
+            // A newer zoom cancels the batch the previous one is still extracting. The old source is
+            // cancelled, never disposed: an in-flight ffmpeg wait may still be registered on it.
+            thumbnailCancellation?.Cancel();
+            thumbnailCancellation = new CancellationTokenSource();
+            CancellationToken token = thumbnailCancellation.Token;
+
+            // The lanes are copied first: the loop below awaits, and a track added or deleted while
+            // it runs would otherwise end the enumeration with an exception nothing catches.
+            List<TimelineSegment> videoSegments = new List<TimelineSegment>();
+            foreach (TimelineTrack track in tracks)
+            {
+                if (track.Kind != TrackKind.Video)
+                {
+                    continue;
+                }
+
+                foreach (TimelineSegment segment in track.Segments)
+                {
+                    videoSegments.Add(segment);
+                }
+            }
+
+            foreach (TimelineSegment segment in videoSegments)
+            {
+                if (token.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                await LoadSegmentThumbnailsAsync(ffmpeg, segment, token).ConfigureAwait(true);
+            }
+        }
+
+        /// <summary>
+        /// Starts the settle timer when the zoom changed. A scroll or a playhead follow keeps the
+        /// same spacing, and the strip already on hand covers it, so those never schedule anything.
+        /// </summary>
+        private void ScheduleThumbnailRefresh()
+        {
+            if (thumbnailRefreshTimer == null || TrackTimelineView == null || tracks.Count == 0)
+            {
+                return;
+            }
+
+            double spacing = TrackTimelineView.ThumbnailSpacingSeconds;
+            if (scheduledThumbnailSpacingSeconds > 0.0
+                && Math.Abs(spacing - scheduledThumbnailSpacingSeconds) <= Math.Max(0.0001, scheduledThumbnailSpacingSeconds * 0.02))
+            {
+                return;
+            }
+
+            scheduledThumbnailSpacingSeconds = spacing;
+
+            // Every notch restarts the wait, so only the zoom the user stopped at is fetched.
+            thumbnailRefreshTimer.Stop();
+            thumbnailRefreshTimer.Start();
+        }
+
+        private async void OnThumbnailRefreshTimerTick(object? sender, EventArgs e)
+        {
+            thumbnailRefreshTimer.Stop();
+            if (!IsLoaded)
+            {
+                return;
+            }
+
+            try
+            {
+                await RefreshVideoThumbnailsAsync().ConfigureAwait(true);
+            }
+            catch (Exception exception)
+            {
+                // This runs from a timer, so an escaping exception would take the window down
+                // instead of showing up anywhere useful.
+                CrashLog.Write(exception, "ThumbnailRefresh");
+            }
+        }
+
+        /// <summary>
+        /// Stops the settle timer and drops the in-flight extraction. Called when the window goes
+        /// away so nothing runs against controls that are already gone.
+        /// </summary>
+        private void StopThumbnailRefresh()
+        {
+            if (thumbnailRefreshTimer != null)
+            {
+                thumbnailRefreshTimer.Stop();
+            }
+
+            if (thumbnailCancellation != null)
+            {
+                // Cancel only: a running ffmpeg wait may still hold a registration on the source,
+                // and disposing it under that registration would throw in a background task.
+                thumbnailCancellation.Cancel();
+                thumbnailCancellation = null;
             }
         }
 
@@ -3681,6 +4000,10 @@ namespace SubtitleForge
 
             TrackTimelineView.TotalDuration = total > 0.0 ? total : 1.0;
             TrackTimelineView.Refresh();
+
+            // The strips are sized from the timeline length, so a changed length is a changed zoom
+            // as far as the frames are concerned.
+            ScheduleThumbnailRefresh();
         }
 
         private void AfterTimelineStructureChanged()
@@ -4939,6 +5262,10 @@ namespace SubtitleForge
                     }
                 }
 
+                // The strips below are sized from the zoom, and that needs the real timeline length:
+                // until here TotalDuration still holds whatever the previous project left in it.
+                UpdateTimelineDuration();
+
                 foreach (TimelineTrack track in tracks)
                 {
                     if (track.Kind != TrackKind.Video || ffmpeg == null)
@@ -4948,7 +5275,7 @@ namespace SubtitleForge
 
                     foreach (TimelineSegment segment in track.Segments)
                     {
-                        await LoadThumbnailsAsync(ffmpeg, segment, segment.EffectiveSourceDuration).ConfigureAwait(true);
+                        await LoadSegmentThumbnailsAsync(ffmpeg, segment, CancellationToken.None).ConfigureAwait(true);
                     }
                 }
 
@@ -4979,6 +5306,7 @@ namespace SubtitleForge
                 projectPath = path;
                 pendingProxyJobs.Clear();
                 sourceProxies.Clear();
+                thumbnailBatches.Clear();
                 sourceReadyFractions.Clear();
                 sourceAudioFiles.Clear();
                 videoMetrics = new VideoMetrics();
@@ -5929,15 +6257,9 @@ namespace SubtitleForge
                     {
                         try
                         {
-                            int thumbnailCount = 16;
-                            List<BitmapSource> extracted = await ThumbnailExtractor
-                                .ExtractAsync(ffmpeg, path, fileDuration, thumbnailCount, 56, CancellationToken.None)
-                                .ConfigureAwait(true);
-
-                            if (extracted.Count > 0)
-                            {
-                                segment.Thumbnails = extracted.ToArray();
-                            }
+                            // Same strip builder as every other lane, so the frames cover this
+                            // clip's own range at the spacing the current zoom asks for.
+                            await LoadSegmentThumbnailsAsync(ffmpeg, segment, CancellationToken.None).ConfigureAwait(true);
                         }
                         catch (Exception exception)
                         {
@@ -8327,6 +8649,10 @@ namespace SubtitleForge
 
         private void WindowClosing(object? sender, System.ComponentModel.CancelEventArgs e)
         {
+            // Nothing may run after the window is gone, whether or not the close is cancelled: the
+            // next zoom schedules a fresh refresh on its own.
+            StopThumbnailRefresh();
+
             if (isRecording)
             {
                 StopRecording();

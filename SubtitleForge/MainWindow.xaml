@@ -10,6 +10,7 @@
         Background="{StaticResource WindowBackgroundBrush}"
         WindowStartupLocation="CenterScreen"
         PreviewKeyDown="WindowPreviewKeyDown"
+        PreviewMouseWheel="WindowPreviewMouseWheel"
         Closing="WindowClosing"
         AllowDrop="True"
         DragOver="WindowDragOver"
@@ -228,7 +229,8 @@
                               Cursor="SizeNS" />
 
                 <!-- ── Multitrack timeline (waveforms + video thumbnails) ── -->
-                <Border Grid.Row="2"
+                <Border x:Name="TracksPanelBorder"
+                        Grid.Row="2"
                         Background="{StaticResource PanelBackgroundBrush}"
                         BorderBrush="{StaticResource PanelBorderBrush}"
                         BorderThickness="1">

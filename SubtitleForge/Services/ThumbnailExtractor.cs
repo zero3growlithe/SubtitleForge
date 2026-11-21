@@ -21,18 +21,30 @@ namespace SubtitleForge.Services
     {
         private const int MaxParallelSeeks = 4;
 
+        /// <summary>
+        /// Extracts <paramref name="count"/> frames spread evenly over the span
+        /// [<paramref name="startSeconds"/>, <paramref name="startSeconds"/> + <paramref name="spanSeconds"/>].
+        /// The span matters: a split clip only ever shows its own range, and asking for the whole
+        /// movie to draw eight seconds of it wastes every frame outside that range.
+        /// </summary>
         public static async Task<List<BitmapSource>> ExtractAsync(
             string ffmpegPath,
             string mediaPath,
-            double durationSeconds,
+            double startSeconds,
+            double spanSeconds,
             int count,
             int thumbnailHeight,
             CancellationToken cancellationToken)
         {
             List<BitmapSource> thumbnails = new List<BitmapSource>();
-            if (count <= 0 || durationSeconds <= 0.5 || thumbnailHeight <= 0)
+            if (count <= 0 || spanSeconds <= 0.05 || thumbnailHeight <= 0)
             {
                 return thumbnails;
+            }
+
+            if (startSeconds < 0.0)
+            {
+                startSeconds = 0.0;
             }
 
             string folder = Path.Combine(Path.GetTempPath(), "SubtitleForge", "thumbs-" + Guid.NewGuid().ToString("N"));
@@ -43,7 +55,8 @@ namespace SubtitleForge.Services
                 await ExtractBySeekingAsync(
                     ffmpegPath,
                     mediaPath,
-                    durationSeconds,
+                    startSeconds,
+                    spanSeconds,
                     count,
                     thumbnailHeight,
                     folder,
@@ -63,7 +76,8 @@ namespace SubtitleForge.Services
                     files = await ExtractByScanAsync(
                         ffmpegPath,
                         mediaPath,
-                        durationSeconds,
+                        startSeconds,
+                        spanSeconds,
                         count,
                         thumbnailHeight,
                         folder,
@@ -111,7 +125,8 @@ namespace SubtitleForge.Services
         private static async Task ExtractBySeekingAsync(
             string ffmpegPath,
             string mediaPath,
-            double durationSeconds,
+            double startSeconds,
+            double spanSeconds,
             int count,
             int thumbnailHeight,
             string folder,
@@ -123,7 +138,7 @@ namespace SubtitleForge.Services
 
                 for (int index = 0; index < count; index++)
                 {
-                    double seconds = durationSeconds * (index + 0.5) / count;
+                    double seconds = startSeconds + (spanSeconds * (index + 0.5) / count);
                     string target = Path.Combine(folder, "thumb_" + index.ToString("000", CultureInfo.InvariantCulture) + ".jpg");
 
                     workers.Add(Task.Run(async delegate
@@ -181,13 +196,14 @@ namespace SubtitleForge.Services
         private static async Task<string[]> ExtractByScanAsync(
             string ffmpegPath,
             string mediaPath,
-            double durationSeconds,
+            double startSeconds,
+            double spanSeconds,
             int count,
             int thumbnailHeight,
             string folder,
             CancellationToken cancellationToken)
         {
-            double framesPerSecond = count / durationSeconds;
+            double framesPerSecond = count / spanSeconds;
             string filter = "fps="
                 + framesPerSecond.ToString("0.######", CultureInfo.InvariantCulture)
                 + ",scale=-2:"
@@ -199,7 +215,11 @@ namespace SubtitleForge.Services
                 "-hide_banner",
                 "-loglevel", "error",
                 "-y",
+                // Seeking before the input makes ffmpeg jump to the keyframe, and the duration
+                // stops the decode at the end of the span this strip covers.
+                "-ss", startSeconds.ToString("0.###", CultureInfo.InvariantCulture),
                 "-i", mediaPath,
+                "-t", spanSeconds.ToString("0.###", CultureInfo.InvariantCulture),
                 "-vf", filter,
                 "-frames:v", count.ToString(CultureInfo.InvariantCulture),
                 "-an",

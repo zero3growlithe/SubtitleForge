@@ -294,6 +294,19 @@ namespace SubtitleForge.Models
         public BitmapSource[] Thumbnails { get; set; } = Array.Empty<BitmapSource>();
 
         /// <summary>
+        /// First second of the source the <see cref="Thumbnails"/> strip was sampled from. The range
+        /// has to travel with the frames: a split keeps both halves on the strip of the clip they
+        /// were cut from, and a zoomed-in strip covers only a slice of the file.
+        /// </summary>
+        public double ThumbnailSourceStartSeconds { get; set; }
+
+        /// <summary>
+        /// How many seconds of the source the strip spans. Zero means "the whole source", which is
+        /// what a segment with no strip of its own falls back to.
+        /// </summary>
+        public double ThumbnailSourceSpanSeconds { get; set; }
+
+        /// <summary>
         /// Total length of the source media (video segments; audio derives it from Samples).
         /// </summary>
         public double SourceDuration { get; set; }
@@ -335,6 +348,8 @@ namespace SubtitleForge.Models
             tail.ClipFile = ClipFile;
             tail.HasRecordedAudio = HasRecordedAudio;
             tail.Thumbnails = Thumbnails;
+            tail.ThumbnailSourceStartSeconds = ThumbnailSourceStartSeconds;
+            tail.ThumbnailSourceSpanSeconds = ThumbnailSourceSpanSeconds;
             tail.SourceDuration = SourceDuration;
 
             DurationSeconds = headDuration;
@@ -357,6 +372,8 @@ namespace SubtitleForge.Models
             copy.ClipFile = ClipFile;
             copy.HasRecordedAudio = HasRecordedAudio;
             copy.Thumbnails = Thumbnails;
+            copy.ThumbnailSourceStartSeconds = ThumbnailSourceStartSeconds;
+            copy.ThumbnailSourceSpanSeconds = ThumbnailSourceSpanSeconds;
             copy.SourceDuration = SourceDuration;
             copy.IsSelected = isSelected;
             return copy;

@@ -3487,7 +3487,8 @@ namespace SubtitleForge
             TrackTimelineView.Refresh();
             UpdateTimelineDuration();
             UpdateCommandStates();
-            SetStatus("Timeline ready. Space plays, Ctrl+Shift+D splits, Ctrl+Z undoes.");
+            SetStatus("Timeline ready. Space plays, Ctrl+Shift+D splits in place, Ctrl+Alt+Shift+D splits"
+                + " into a new track, Ctrl+Z undoes. The Hotkeys button lists the rest.");
 
             // Decoding 1080p+ frames is what makes scrubbing stutter: give the preview a cached
             // 540p proxy in the background and switch to it when it is ready.
@@ -4202,11 +4203,15 @@ namespace SubtitleForge
         }
 
         /// <summary>
-        /// Cuts the audio of a split clip at the same second and gives the tail its own lane inside the
-        /// new row, so both halves keep their sound even though the picture half moved to a new track.
+        /// Cuts the audio of a split clip at the same second. When <paramref name="tailHost"/> is the
+        /// host itself the two halves share the lane that is already there; otherwise the tail gets a
+        /// lane of its own inside the new row, so both halves keep their sound even though the picture
+        /// half moved to a new track.
         /// </summary>
         private void SplitAttachedAudio(TimelineTrack host, TimelineTrack tailHost, double position)
         {
+            bool sameRow = ReferenceEquals(host, tailHost);
+
             foreach (TimelineTrack laneTrack in AttachedTracksOf(host))
             {
                 TimelineSegment? laneSegment = laneTrack.SegmentAt(position);
@@ -4218,6 +4223,15 @@ namespace SubtitleForge
                 TimelineSegment? laneTail = laneSegment.SplitAt(position);
                 if (laneTail == null)
                 {
+                    continue;
+                }
+
+                if (sameRow)
+                {
+                    // One row, one lane, two clips: the waveform of each half is drawn from its own
+                    // span, so an in-place split needs neither a new lane nor a new host.
+                    InsertSegmentAfter(laneTrack, laneSegment, laneTail);
+                    laneTrack.NotifyContentChanged();
                     continue;
                 }
 
@@ -4418,6 +4432,209 @@ namespace SubtitleForge
                 ? "Detached the audio track — it has a row of its own now and moves on its own. Ctrl+Z attaches it again."
                 : "Detached " + attached.Count.ToString(CultureInfo.InvariantCulture)
                     + " audio tracks — they have rows of their own now. Ctrl+Z attaches them again.");
+        }
+
+        /// <summary>
+        /// True when some of the clip's sound still rides in a lane of its own row, which is the only
+        /// case where detaching the audio of one clip has anything to move. The lane clip only has to
+        /// overlap the picture: a lane clip that starts before the clip and runs into it covers part
+        /// of the clip too.
+        /// </summary>
+        private bool HasAttachedAudioInside(TimelineTrack track, TimelineSegment clip)
+        {
+            if (track.Kind != TrackKind.Video || IsAttachedLane(track))
+            {
+                return false;
+            }
+
+            foreach (TimelineTrack laneTrack in AttachedTracksOf(track))
+            {
+                foreach (TimelineSegment laneSegment in laneTrack.Segments)
+                {
+                    if (laneSegment.Overlaps(clip.StartSeconds, clip.EndSeconds))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// True when at least one of the selected clips would give up some sound, so the clip menu can
+        /// hide the entry instead of offering one that does nothing.
+        /// </summary>
+        private bool CanDetachAudioFromSelection(List<KeyValuePair<TimelineTrack, TimelineSegment>> selection)
+        {
+            foreach (KeyValuePair<TimelineTrack, TimelineSegment> entry in selection)
+            {
+                if (HasAttachedAudioInside(entry.Key, entry.Value))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Gives the sound heard *inside* the selected video clips a row of its own and leaves the rest
+        /// of the lane attached, so one clip can lose its audio without taking the sound of every other
+        /// clip on the row with it. The new track lands directly under the picture it came from and its
+        /// clips keep their position and their source offsets, because nothing about the media changes —
+        /// only the track that owns it. A lane clip reaching past the picture is cut at the edge: only
+        /// what the clip actually plays may travel, and the caller reports that it happened.
+        /// </summary>
+        private void DetachAudioForClips(List<KeyValuePair<TimelineTrack, TimelineSegment>> clips)
+        {
+            TimelineSnapshot before = CaptureTimeline();
+
+            // Two clips of the same row each get their own track, in clip order, which only works if
+            // the second insert goes below the first one instead of pushing it down again.
+            Dictionary<TimelineTrack, int> insertionIndexByHost = new Dictionary<TimelineTrack, int>();
+            int detachedClipCount = 0;
+            int splitLaneClipCount = 0;
+
+            foreach (KeyValuePair<TimelineTrack, TimelineSegment> entry in clips)
+            {
+                TimelineTrack host = entry.Key;
+                TimelineSegment clip = entry.Value;
+
+                // Only a video row can carry lanes, and a lane clip never owns a lane of its own.
+                if (host.Kind != TrackKind.Video || IsAttachedLane(host))
+                {
+                    continue;
+                }
+
+                List<KeyValuePair<TimelineTrack, TimelineSegment>> moving =
+                    new List<KeyValuePair<TimelineTrack, TimelineSegment>>();
+
+                foreach (TimelineTrack laneTrack in AttachedTracksOf(host))
+                {
+                    // Collected first: the cuts below rewrite the collection that is being walked.
+                    List<TimelineSegment> overlapping = new List<TimelineSegment>();
+                    foreach (TimelineSegment laneSegment in laneTrack.Segments)
+                    {
+                        if (laneSegment.Overlaps(clip.StartSeconds, clip.EndSeconds))
+                        {
+                            overlapping.Add(laneSegment);
+                        }
+                    }
+
+                    foreach (TimelineSegment laneSegment in overlapping)
+                    {
+                        TimelineSegment travelling = laneSegment;
+                        bool cutLaneClip = false;
+
+                        if (laneSegment.StartSeconds < clip.StartSeconds - 0.0005)
+                        {
+                            // The lane clip began before the picture did: keep that head on the lane,
+                            // it belongs to whatever plays before this clip, and let the rest travel.
+                            TimelineSegment? covered = laneSegment.SplitAt(clip.StartSeconds);
+                            if (covered == null)
+                            {
+                                continue;
+                            }
+
+                            travelling = covered;
+                            cutLaneClip = true;
+                            laneTrack.Segments.Add(travelling);
+                        }
+
+                        if (travelling.EndSeconds > clip.EndSeconds + 0.0005)
+                        {
+                            // The lane clip ran past the picture: cut the tail off and leave it on the
+                            // lane, still in step with the part of the timeline it covers.
+                            TimelineSegment? remainder = travelling.SplitAt(clip.EndSeconds);
+                            if (remainder != null)
+                            {
+                                laneTrack.Segments.Add(remainder);
+                                cutLaneClip = true;
+                            }
+                        }
+
+                        if (cutLaneClip)
+                        {
+                            splitLaneClipCount++;
+                        }
+
+                        moving.Add(new KeyValuePair<TimelineTrack, TimelineSegment>(laneTrack, travelling));
+                    }
+                }
+
+                if (moving.Count == 0)
+                {
+                    continue;
+                }
+
+                moving.Sort(delegate (KeyValuePair<TimelineTrack, TimelineSegment> left, KeyValuePair<TimelineTrack, TimelineSegment> right)
+                {
+                    return left.Value.StartSeconds.CompareTo(right.Value.StartSeconds);
+                });
+
+                TimelineTrack detachedTrack = new TimelineTrack(
+                    TrackKind.Audio,
+                    NextTrackName(TrackKind.Audio),
+                    NextTrackColor(TrackKind.Audio));
+
+                foreach (KeyValuePair<TimelineTrack, TimelineSegment> pair in moving)
+                {
+                    // The lane owns the clip until this moment, so the removal is what breaks the link;
+                    // the media arrays are shared, never copied, exactly as a split shares them.
+                    pair.Key.Segments.Remove(pair.Value);
+                    detachedTrack.Segments.Add(pair.Value);
+                }
+
+                int insertIndex;
+                if (!insertionIndexByHost.TryGetValue(host, out insertIndex))
+                {
+                    int hostIndex = tracks.IndexOf(host);
+                    insertIndex = hostIndex < 0 ? tracks.Count : hostIndex + 1;
+                }
+
+                if (insertIndex > tracks.Count)
+                {
+                    insertIndex = tracks.Count;
+                }
+
+                tracks.Insert(insertIndex, detachedTrack);
+                insertionIndexByHost[host] = insertIndex + 1;
+                detachedClipCount++;
+
+                // A lane that lost every clip would still draw an empty strip under the picture.
+                foreach (TimelineTrack laneTrack in AttachedTracksOf(host))
+                {
+                    if (laneTrack.Segments.Count == 0)
+                    {
+                        tracks.Remove(laneTrack);
+                    }
+                }
+            }
+
+            if (detachedClipCount == 0)
+            {
+                return;
+            }
+
+            UndoStackPushTimeline("detach clip audio", before);
+
+            AfterTimelineStructureChanged();
+
+            string detachedText = detachedClipCount == 1
+                ? "Detached the audio of this clip — it has a row of its own right below the picture. Ctrl+Z attaches it again."
+                : "Detached the audio of " + detachedClipCount.ToString(CultureInfo.InvariantCulture)
+                    + " clips — each has a row of its own right below its picture. Ctrl+Z attaches them again.";
+
+            if (splitLaneClipCount == 0)
+            {
+                SetStatus(detachedText);
+                return;
+            }
+
+            SetStatus(detachedText + " " + splitLaneClipCount.ToString(CultureInfo.InvariantCulture)
+                + " lane clip(s) ran past the picture, so they were cut at its edges: what the clip plays"
+                + " moved, the rest stayed on the track.");
         }
 
         // ── Timeline snapshots (undo of every structural edit) ─────────────
@@ -4789,7 +5006,8 @@ namespace SubtitleForge
             {
                 MenuItem detachItem = new MenuItem();
                 detachItem.Header = "Detach audio track";
-                detachItem.ToolTip = "Give the audio its own row: from then on it splits, moves and deletes on its own";
+                detachItem.ToolTip = "Give the whole audio track a row of its own — every clip it holds is"
+                    + " detached, not just the one under the pointer (right-click a clip for that)";
                 detachItem.Click += delegate { DetachAudioTracks(track); };
                 menu.Items.Add(new Separator());
                 menu.Items.Add(detachItem);
@@ -4839,6 +5057,66 @@ namespace SubtitleForge
             fitItem.Click += delegate { ZoomTimelineToWholeVideo(); TrackTimelineView.VerticalZoom = 1.0; };
             menu.Items.Add(new Separator());
             menu.Items.Add(fitItem);
+
+            menu.PlacementTarget = TrackTimelineView;
+            menu.IsOpen = true;
+        }
+
+        /// <summary>
+        /// The menu for a right-click on a clip. It speaks for the selection when the clicked clip is
+        /// already part of it, and for that one clip otherwise, so a selection the user built up is
+        /// never thrown away — and never quietly applied to a clip that was not clicked either.
+        /// </summary>
+        private void TrackTimelineSegmentContextMenu(object? sender, TimelineSegmentContextEventArgs e)
+        {
+            TimelineSegment clicked = e.Segment;
+
+            // A selected row would turn "Delete clip" into "delete the track", so a right-click on a
+            // clip always narrows the selection down to clips before the menu is built.
+            if (!clicked.IsSelected || SelectedTrackRows().Count > 0)
+            {
+                SelectSegment(e.Track, clicked, false);
+            }
+
+            List<KeyValuePair<TimelineTrack, TimelineSegment>> selection = SelectedSegments();
+            bool canDetach = CanDetachAudioFromSelection(selection);
+
+            ContextMenu menu = new ContextMenu();
+
+            MenuItem splitItem = new MenuItem();
+            splitItem.Header = "Split at playhead (Ctrl+Shift+D)";
+            splitItem.ToolTip = "Cuts the selected clips at the playhead; both halves stay in the row they were cut in";
+            // The default is the in-place cut, which is what Ctrl+Shift+D does: the variant that moves
+            // the second half into a row of its own is a separate shortcut and not part of this label.
+            splitItem.Click += delegate { SplitSelectedSegments(); };
+            menu.Items.Add(splitItem);
+
+            MenuItem joinItem = new MenuItem();
+            joinItem.Header = "Join clips (Ctrl+Shift+J)";
+            joinItem.IsEnabled = CanJoinSelection();
+            joinItem.Click += delegate { JoinSelectedSegments(); };
+            menu.Items.Add(joinItem);
+
+            // Offered only for a clip that still has sound in a lane of its row, so the entry never
+            // promises a move it would have nothing to perform.
+            if (canDetach)
+            {
+                MenuItem detachItem = new MenuItem();
+                detachItem.Header = "Detach audio track";
+                detachItem.ToolTip = "Move the sound heard inside the selected clip onto a row of its own;"
+                    + " the audio of the other clips on the track stays attached";
+                detachItem.Click += delegate { DetachAudioForClips(selection); };
+                menu.Items.Add(new Separator());
+                menu.Items.Add(detachItem);
+            }
+
+            menu.Items.Add(new Separator());
+
+            MenuItem deleteItem = new MenuItem();
+            deleteItem.Header = "Delete clip (Del)";
+            deleteItem.ToolTip = "Removes the selected clips together with the sound that came with them";
+            deleteItem.Click += delegate { DeleteSelection(); };
+            menu.Items.Add(deleteItem);
 
             menu.PlacementTarget = TrackTimelineView;
             menu.IsOpen = true;
@@ -4975,10 +5253,21 @@ namespace SubtitleForge
 
         private void SplitTrackClick(object sender, RoutedEventArgs e)
         {
-            SplitSelectedSegments();
+            // The toolbar button keeps both halves in the row they were cut in: growing the timeline
+            // by a row is the deliberate variant, so it lives behind its own key combination.
+            SplitSelectedSegments(false);
         }
 
-        private void SplitSelectedSegments()
+        /// <summary>
+        /// Splits every selected clip at the playhead. <paramref name="moveTailToNewTrack"/> decides
+        /// where the second half lands: false keeps it in the same row, true gives it a new track of
+        /// the same kind directly below — the two keyboard shortcuts are exactly this flag.
+        /// </summary>
+        /// <remarks>
+        /// The flag defaults to false so every older caller (the track context menu among them)
+        /// keeps compiling and keeps the in-place behaviour its own label promises.
+        /// </remarks>
+        private void SplitSelectedSegments(bool moveTailToNewTrack = false)
         {
             List<KeyValuePair<TimelineTrack, TimelineSegment>> selection = SelectedSegments();
             if (selection.Count == 0)
@@ -5014,24 +5303,37 @@ namespace SubtitleForge
                     continue;
                 }
 
-                // The second half keeps its own row: a new track of the same kind right below.
-                string name = NextTrackName(track.Kind);
-                TimelineTrack tailTrack = new TimelineTrack(track.Kind, name, track.BackgroundColor);
-                tailTrack.Segments.Add(tail);
                 tail.IsSelected = true;
+                segment.IsSelected = false;
 
-                int insertIndex = tracks.IndexOf(track);
-                if (insertIndex < 0)
+                TimelineTrack tailTrack = track;
+                if (moveTailToNewTrack)
                 {
-                    insertIndex = tracks.Count;
+                    // The second half gets a row of its own: a new track of the same kind right below.
+                    string name = NextTrackName(track.Kind);
+                    tailTrack = new TimelineTrack(track.Kind, name, track.BackgroundColor);
+                    tailTrack.Segments.Add(tail);
+
+                    int insertIndex = tracks.IndexOf(track);
+                    if (insertIndex < 0)
+                    {
+                        insertIndex = tracks.Count;
+                    }
+
+                    tracks.Insert(insertIndex + 1, tailTrack);
+                }
+                else
+                {
+                    // Both halves stay in the row that was cut: a row holding two clips draws them side
+                    // by side from their spans, so no structural change is needed at all.
+                    InsertSegmentAfter(track, segment, tail);
                 }
 
-                tracks.Insert(insertIndex + 1, tailTrack);
-                segment.IsSelected = false;
                 splitCount++;
 
-                // The sound of the clip is part of the clip: cut it at the same second and let the tail
-                // ride in the new row, so the two halves stay in step after the split.
+                // The sound of the clip is part of the clip: cut it at the same second. With a new row
+                // the tail gets a lane inside it; in place the tail clip joins the lane that is
+                // already there — either way the picture and the waveform stay in step.
                 SplitAttachedAudio(track, tailTrack, position);
             }
 
@@ -5044,8 +5346,28 @@ namespace SubtitleForge
             UndoStackPushTimeline("split clip", before);
 
             AfterTimelineStructureChanged();
-            SetStatus("Split " + splitCount.ToString(CultureInfo.InvariantCulture) + " clip(s) at "
-                + SubtitleCue.FormatTimestamp(TimeSpan.FromSeconds(position)) + ".");
+
+            string where = moveTailToNewTrack
+                ? " and moved the second half to a new track"
+                : " in place";
+            SetStatus("Split " + splitCount.ToString(CultureInfo.InvariantCulture) + " clip(s)"
+                + where + " at " + SubtitleCue.FormatTimestamp(TimeSpan.FromSeconds(position)) + ".");
+        }
+
+        /// <summary>
+        /// Puts <paramref name="segment"/> right behind <paramref name="anchor"/> in the same lane, so a
+        /// split row keeps its halves next to each other in collection order as well as on screen.
+        /// </summary>
+        private static void InsertSegmentAfter(TimelineTrack lane, TimelineSegment anchor, TimelineSegment segment)
+        {
+            int index = lane.Segments.IndexOf(anchor);
+            if (index < 0)
+            {
+                lane.Segments.Add(segment);
+                return;
+            }
+
+            lane.Segments.Insert(index + 1, segment);
         }
 
         private void DeleteTrackClick(object sender, RoutedEventArgs e)
@@ -8172,6 +8494,27 @@ namespace SubtitleForge
             return false;
         }
 
+        /// <summary>
+        /// Opens the shortcut list. The dialog is built in code and owns its own table, so this
+        /// handler only has to place it over the window.
+        /// </summary>
+        private void HotkeysClick(object sender, RoutedEventArgs e)
+        {
+            HotkeysWindow dialog = new HotkeysWindow();
+            dialog.Owner = this;
+            dialog.ShowDialog();
+        }
+
+        /// <summary>
+        /// The length the playhead may travel: the probed media length, or the end of the last cue
+        /// when the media length is unknown. Home and End clamp against exactly this number, which is
+        /// also what every other seek uses.
+        /// </summary>
+        private double PlayableDurationSeconds
+        {
+            get { return durationSeconds > 0.0 ? durationSeconds : EstimatedDuration(); }
+        }
+
         private void WindowPreviewKeyDown(object sender, KeyEventArgs e)
         {
             bool control = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
@@ -8227,9 +8570,18 @@ namespace SubtitleForge
                 return;
             }
 
-            if (control && shift && key == Key.D)
+            // Alt first: the plain Ctrl+Shift+D check just below would otherwise swallow the variant
+            // that has to move the second half into a new track.
+            if (control && alt && shift && key == Key.D)
             {
-                SplitSelectedSegments();
+                SplitSelectedSegments(true);
+                e.Handled = true;
+                return;
+            }
+
+            if (control && !alt && shift && key == Key.D)
+            {
+                SplitSelectedSegments(false);
                 e.Handled = true;
                 return;
             }
@@ -8352,6 +8704,16 @@ namespace SubtitleForge
                     break;
                 case Key.OemPeriod:
                     StepFrames(1);
+                    e.Handled = true;
+                    break;
+                case Key.Home:
+                    // Both ends of the video: the seek funnel clamps to [0, length] and redraws the
+                    // playhead, overlay and slider, so the jump lands wherever the arrows could.
+                    SeekToSeconds(0.0);
+                    e.Handled = true;
+                    break;
+                case Key.End:
+                    SeekToSeconds(PlayableDurationSeconds);
                     e.Handled = true;
                     break;
                 case Key.Left:

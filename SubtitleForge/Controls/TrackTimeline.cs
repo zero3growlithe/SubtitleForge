@@ -59,6 +59,23 @@ namespace SubtitleForge.Controls
         public int ClickCount { get; }
     }
 
+    /// <summary>
+    /// One clip was right-clicked. The track travels with it because a clip is only meaningful inside
+    /// the row it is drawn in: the host decides which lanes its sound can be split off from.
+    /// </summary>
+    public class TimelineSegmentContextEventArgs : EventArgs
+    {
+        public TimelineSegmentContextEventArgs(TimelineTrack track, TimelineSegment segment)
+        {
+            Track = track;
+            Segment = segment;
+        }
+
+        public TimelineTrack Track { get; }
+
+        public TimelineSegment Segment { get; }
+    }
+
     public class SegmentDroppedEventArgs : EventArgs
     {
         public SegmentDroppedEventArgs(
@@ -540,6 +557,13 @@ namespace SubtitleForge.Controls
         public event EventHandler<TrackReorderEventArgs>? TrackReorderRequested;
 
         public event EventHandler<TimelineTrack>? TrackContextMenuRequested;
+
+        /// <summary>
+        /// Raised for a right-click on a clip. Empty lane space and the header raise
+        /// <see cref="TrackContextMenuRequested"/> instead, so the two menus can never both answer
+        /// the same click: the clip menu speaks for what was clicked, the track menu for the row.
+        /// </summary>
+        public event EventHandler<TimelineSegmentContextEventArgs>? SegmentContextMenuRequested;
 
         public event EventHandler<double>? SeekRequested;
 
@@ -1919,6 +1943,18 @@ namespace SubtitleForge.Controls
             TimelineRow? row = RowAt(point);
             if (row == null)
             {
+                return;
+            }
+
+            // The header names the row and empty lane space belongs to the row as a whole, so only a
+            // hit on a clip itself is offered the clip menu. SegmentAt resolves a hit inside a slim
+            // lane to the host's clip on purpose, which is what makes a right-click on the waveform
+            // behave like one on the picture whose sound it is.
+            TimelineSegment? segment = point.X < HeaderWidth ? null : SegmentAt(row, point);
+            if (segment != null)
+            {
+                SegmentContextMenuRequested?.Invoke(this, new TimelineSegmentContextEventArgs(row.Track, segment));
+                e.Handled = true;
                 return;
             }
 

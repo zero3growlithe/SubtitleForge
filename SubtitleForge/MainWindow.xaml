@@ -74,6 +74,13 @@
             <CheckBox x:Name="TranslateCheckBox" Content="Translate → EN" />
             <Button x:Name="TranscribeButton" Content="Transcribe" Style="{StaticResource AccentButtonStyle}" Click="TranscribeClick" />
             <Button x:Name="CancelButton" Content="Cancel" Click="CancelClick" IsEnabled="False" />
+            <Rectangle Width="1" Margin="12,2,12,2" Fill="{StaticResource PanelBorderBrush}" />
+            <Button x:Name="HotkeysButton"
+                    Content="Hotkeys…"
+                    MinWidth="0"
+                    Padding="10,4"
+                    Click="HotkeysClick"
+                    ToolTip="Every keyboard shortcut in one window: playback, splitting, cues, tracks and saving" />
         </StackPanel>
 
         <!-- ── Export toolbar ────────────────────────────────────────────── -->
@@ -253,6 +260,7 @@
                                                     AudioFilesDropped="TrackTimelineAudioFilesDropped"
                                                     TrackReorderRequested="TrackTimelineReorder"
                                                     TrackContextMenuRequested="TrackTimelineContextMenu"
+                                                    SegmentContextMenuRequested="TrackTimelineSegmentContextMenu"
                                                     SeekRequested="TrackTimelineSeek"
                                                     ViewChanged="TrackTimelineViewChanged" />
                         </ScrollViewer>
